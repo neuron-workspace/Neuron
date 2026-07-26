@@ -121,6 +121,57 @@ rule vs. design tokens vs. the dead sidebar block).
 **Authorship:** every commit is `Shivam Khetan <shivkhetan18@gmail.com>`, no
 `Co-Authored-By` trailer — this applies to pushes as well (D5).
 
+### D12 — UI and frontend tasks are done with the `impeccable` skill
+**Approved:** user (2026-07-26).
+**Consequence:** any task that designs, redesigns, critiques, audits, or polishes
+a Neuron interface loads `impeccable` first (the pack is also vendored at
+`.agents/skills/impeccable/`) rather than being approached ad hoc. Related packs
+from ui-skills.com are chosen per task; `impeccable` is the default.
+**Scope note, so this is not over-applied:** it governs *interface* work. T-002
+(CI config), T-003 (governance Markdown), and T-008 (protocol/transport
+architecture) are not UI tasks and do not use it. The first genuine candidates
+are the deferred design-system and graph-interaction items in
+`docs/roadmap/deferred-work.md`.
+
+### D13 — T-002, T-003 and T-008 run in parallel, one git worktree each
+**Approved:** user (2026-07-26).
+**Consequence:** this is the `AGENTS.md` §8 gate being exercised deliberately,
+not bypassed. The three rows have zero overlap: T-002 owns
+`.github/workflows/ci.yml` + `package.json` `scripts`; T-003 owns *new* files
+under `.github/` only; T-008 writes one new design document and no code. Each
+gets its own branch **and** its own worktree under `../neuron-worktrees/`, one
+Codex job per worktree, because two writing agents in one checkout can leave a
+half-written file that still compiles. Review and merge are sequential, and the
+four standing checks re-run in the primary checkout after each merge.
+
+### D14 — Worktrees deliberately have no `node_modules`; a delegated agent must not create one
+**Approved:** Claude (2026-07-26).
+**Consequence:** this is the direct collision between `AGENTS.md` §4 ("never
+install") and §3 ("a job that cannot verify has FAILED"), and it is resolved in
+favour of §4. A worktree cannot run `npm test` or `npm run build`, and an agent
+that tries will hit a missing-module error that looks exactly like a broken
+workspace and invites the reinstall D4 forbids. So: every packet for a worktree
+job states that npm is unavailable there **by design**, that this is not a
+defect to report or repair, and that verification is Claude's job in the primary
+checkout. Only tasks whose acceptance can be judged structurally (config,
+Markdown, a design document) may be delegated this way. Anything needing a real
+test run stays in the primary checkout, sequential.
+
+### D15 — T-008 produces a decision record only; no production code
+**Approved:** user (2026-07-26, implicit in "before coding, produce a concise
+implementation decision record").
+**Consequence:** the `neuron://` evaluation ships exactly one artifact —
+`docs/architecture/neuron-protocol-api.md` — containing the compatibility
+findings with citations, the transport decision (custom-protocol-only /
+loopback-only / hybrid), the route table, the session and authorization model,
+the files that would change, the tests to add, and a rollback plan. The HTMX
+platform is working, tested, and is the repo's strongest security asset; the
+standing rule against "speculative rewrites of stable subsystems" means the
+rewrite is not authorized by the investigation. Implementation is separate rows,
+opened only after the user accepts the record. **If HTMX cannot work correctly
+over `neuron://` with standard request semantics, "keep the loopback server" is
+a successful outcome of this task, not a failure.**
+
 ---
 
 ## Proposed
