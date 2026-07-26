@@ -19,6 +19,39 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-001 — Commit the pre-existing working tree
+
+- Job / session: n/a — Claude, no delegation.
+- Delegated: nothing. This was the D6 precondition: the tree must be clean
+  before any Codex job, or the "inspect the complete diff" review step cannot
+  separate Codex's changes from the user's.
+- Result: branch `dev` created from `main` (D10); ten topic-focused commits:
+
+  | SHA | Commit |
+  | --- | --- |
+  | `86765ba` | `chore(dev): move the dev server to port 5174` |
+  | `dc29f0d` | `feat(views): folder mini-apps, .ndash scripting dashboards, manifests under .neuron` |
+  | `7cd2965` | `feat(views): rebuild the HTMX view stylesheet as a token-driven component kit` |
+  | `1f20699` | `feat(sidebar): collapse folders by default and show mini-app folders as one entry` |
+  | `c6fe9f9` | `feat(mdx): embed .db databases inline with <DbView />` |
+  | `c8f0b79` | `feat(graph): theme-aware nodes, degree-based sizing, and three-tier focus` |
+  | `c4d3394` | `refactor(design): add shared spacing/type tokens; delete the unused shadcn sidebar` |
+  | `978aff8` | `docs(examples): demo content for mini-apps, .ndash dashboards, and DbView` |
+  | `407e1db` | `docs: cover mini-apps, .ndash, and the design-system research; add a deferred-work index` |
+  | `0ab7bd6` | `docs(workflow): add AGENTS, SHARED_TASKS, DECISIONS, and HANDOFF` |
+
+- Corrected: nothing — this was the user's own existing work, committed as
+  found. `main.ts` and `index.css` each carried two unrelated topics and were
+  split at hunk level so the commits stayed honest.
+  Kept: all of it; no behaviour was changed while committing.
+- Verification (re-run on the committed state, not the working tree):
+  `tsc` main clean · `tsc` renderer clean · 5/5 suites pass · `npm run build`
+  succeeds. The ~1.8 MB CodeMirror chunk warning is pre-existing and tracked.
+- Not pushed. `origin` still points at the pre-existing `main`; pushing needs
+  explicit authorization.
+
+---
+
 ## 2026-07-26 — Dual-agent workflow initialized
 
 - Job / session: n/a — Claude, no delegation.

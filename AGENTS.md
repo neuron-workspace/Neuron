@@ -167,7 +167,24 @@ serialization points.
 
 ---
 
-## 9. Review and commit (Claude)
+## 9. Branches (D10)
+
+```
+feature/T-xxx-<slug>  →  dev  →  test  →  main
+```
+
+- `dev` is the integration branch and the base for every feature branch.
+- Delegated work happens on `feature/T-xxx-<slug>`, cut from `dev`. Claude
+  creates and claims the branch **before** the delegation goes out.
+- Merge to `dev` only after review and after all four standing checks pass.
+- `test` holds release candidates; the full suite plus a packaging check runs
+  there.
+- **`main` receives no direct commits** — only a verified `test` state merges in.
+- Never push without the user's explicit authorization for that push.
+
+---
+
+## 10. Review and commit (Claude)
 
 1. Retrieve the result; inspect `git status` and the **complete** diff.
 2. Confirm nothing unrelated, generated, or out-of-scope crept in.
@@ -190,7 +207,7 @@ Claude, not for Codex.
 
 ---
 
-## 10. Repository non-goals
+## 11. Repository non-goals
 
 Arbitrary code execution; a generic filesystem proxy; raw `ipcRenderer` in the
 renderer; unsafe template evaluation; unrestricted third-party plugins with Node

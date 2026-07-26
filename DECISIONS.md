@@ -81,39 +81,48 @@ genuinely on the table (`d3-force`, for graph layout), and it is not approved �
 it needs its own decision entry first. Any delegation that finds itself wanting a
 package must stop and report, not add one.
 
+### D9 — Next milestone: M0 (CI gates), then M1 (command & keyboard architecture)
+**Approved:** user (2026-07-26).
+**Consequence:** M0 goes first because risk **R7** ("CI merges regressions") is
+rated High likelihood with *no* control — CI runs `npm run build` only, so
+neither type check nor any of the five test suites gates a merge. Until that
+lands, every delegated diff is guarded only by Claude re-running the checks by
+hand, and a mistake between reviews reaches `dev` unnoticed. M1 then follows:
+central command registry first, dispatcher second, consumers third. M2's layout
+engine is deliberately blocked behind M1 — it needs the registry as its entry
+point, and building layout commands on the current scattered `keydown` wiring
+would extend exactly the anti-pattern M1 exists to remove.
+
+### D10 — Branch model: `feature/* → dev → test → main`
+**Approved:** user (2026-07-26).
+**Consequence:** `main` is now release-only and never receives direct commits.
+Delegated work lands on `feature/T-xxx-<slug>` off `dev`, is reviewed, then
+merges to `dev`; a release candidate promotes `dev → test`, and only a `test`
+state with all four standing checks green may merge to `main`. Every task row in
+`SHARED_TASKS.md` therefore carries a branch. `.agents/BRANCH_RULES.md`
+described this flow but it had never been adopted — only `main` existed locally
+and on `origin`. It is real as of this decision.
+**One-time exception, recorded so it is not read as precedent:** the
+pre-existing working tree (D6) was committed directly to a newly created `dev`,
+not through a feature branch. It was not one feature — it was five unrelated
+efforts finished before this flow existed, and routing it through a feature
+branch would have been ceremony over already-complete work. Every task from
+T-002 onward uses a feature branch.
+
+### D11 — The pre-existing tree lands as topic-focused commits
+**Approved:** user (2026-07-26).
+**Consequence:** ten atomic commits on `dev` (`86765ba`…`0ab7bd6`) rather than
+one mixed commit. This repo's history is deliberately atomic; a single ~800-line
+commit spanning the HTMX platform, the graph, the sidebar, the design system and
+docs is the one shape that makes a future `git bisect` through this range
+useless. Two files needed hunk-level splitting to keep the topics honest —
+`main.ts` (dev port vs. the workspace-file regex) and `index.css` (graph hover
+rule vs. design tokens vs. the dead sidebar block).
+**Authorship:** every commit is `Shivam Khetan <shivkhetan18@gmail.com>`, no
+`Co-Authored-By` trailer — this applies to pushes as well (D5).
+
 ---
 
 ## Proposed
 
-*(nothing may be implemented from this section)*
-
-### P1 — Next milestone: M0 (CI gates) then M1 (command & keyboard architecture)
-**Rationale:** `docs/roadmap/production-readiness-plan.md` §11 names M0 as the
-exact next task, and risk **R7** ("CI merges regressions") is rated High
-likelihood with no control at all — CI currently runs `npm run build` only, so
-neither the type checks nor the five test suites gate a merge. M0 is also the
-cheapest possible first delegation: it is mechanical, it touches files nothing
-else touches, and it makes every later delegation's review cheaper.
-**Awaiting:** user approval, and confirmation that M1 (not a UI/graph item) is
-the follow-on.
-
-### P2 — Branch model: keep working directly on `main`, or adopt the `feature/* → dev → test → main` flow
-**Rationale:** `.agents/BRANCH_RULES.md` describes a `feature/* → dev → test →
-main` promotion model, but only `main` has ever existed locally or on
-`origin` — the flow was documented and never adopted. This must be settled
-before the first delegation, because it determines whether reviewed work lands
-on `main` directly or via a branch.
-**Consequence either way:** if `main` stays the working branch, `.agents/BRANCH_RULES.md`
-is aspirational and should say so, so a future agent does not try to follow it.
-If the flow is adopted, every task row gains a branch and the release docs need
-updating.
-**Awaiting:** user decision.
-
-### P3 — How to commit the existing working tree (see D6)
-**Rationale:** the uncommitted work spans several unrelated efforts (HTMX theme
-system + app paths, GraphCanvas highlighting, sidebar collapse, `.ndash`
-dashboards + `DbView`, docs). It can land as one "work in progress" commit or as
-a handful of topic-focused commits matching this repo's existing history style.
-**Awaiting:** user decision. Claude's recommendation: topic-focused commits,
-because the repo's history is deliberately atomic and a single 800-line
-mixed commit is the one thing that makes a future bisect useless.
+*(nothing may be implemented from this section — the section is currently empty)*

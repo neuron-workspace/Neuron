@@ -12,17 +12,23 @@ is owned by Claude (`AGENTS.md` §1).
 
 ---
 
+Branch model is `feature/T-xxx-<slug>` → `dev` → `test` → `main` (D10). Claude
+cuts and claims the branch before the delegation goes out.
+
 ## Active
 
-| ID | Task | Owner | Status | Touch scope | Acceptance evidence |
-| --- | --- | --- | --- | --- | --- |
-| T-001 | Commit the pre-existing working tree so `git status` is clean before any delegation (D6) | Claude | `NEEDS_USER` | whole existing diff; no new code | Working tree clean; four standing checks green; commit SHAs recorded in `HANDOFF.md` |
-| T-002 | **M0a** — repo-wide `typecheck` script + CI gates on typecheck, `npm test`, and build (closes risk R7) | Codex | `BACKLOG` | `.github/workflows/ci.yml`, `package.json` (**`scripts` block only**, D7) | CI config runs all four standing commands; a deliberate type error and a deliberate test failure each fail the job locally-equivalent; four standing checks green |
-| T-003 | **M0b** — add `CODE_OF_CONDUCT.md`, issue templates, PR template | Codex | `BACKLOG` | `.github/**` (new files only) | Files exist and are valid YAML/Markdown; `npm run build` unaffected; no source file touched |
-| T-004 | **M0c** — reconcile `docs/roadmap/production-readiness-plan.md` with reality (its §11 "next task" and several inventory rows are stale — e.g. the `.vw` README fix is already done) | Claude | `BACKLOG` | `docs/roadmap/*` | Every claim in the plan's inventory table re-verified against the tree; §11 points at this board |
-| T-005 | **M1a** — central typed command registry `{ id, title, scope, when(), run(), defaultKeys[] }` | Codex | `NEEDS_USER` | TBD at packet time; **serializes on `src/renderer/App.tsx`** | Registry unit tests (registration, duplicate id, scope precedence); palette behaviour unchanged; four standing checks green |
-| T-006 | **M1b** — focus-scoped keyboard dispatcher + versioned hotkey schema + migration from the current flat map | Codex | `BACKLOG` (depends on T-005) | `src/renderer/lib/keybindings.ts`, `App.tsx` dispatcher; **serializes on `App.tsx`** | Chord-normalization, conflict-detection, scope-precedence and migration tests; existing user bindings preserved; no double-fire; IME composition and `defaultPrevented` respected |
-| T-007 | **M1c** — command palette + settings hotkey editor consume the registry; delete the scattered wiring | Codex | `BACKLOG` (depends on T-005, T-006) | `components/CommandPalette.tsx`, `views/SettingsPage.tsx`; **serializes on `App.tsx`** | No `keydown` handler outside the dispatcher; add/remove/disable/reset all work; four standing checks green |
+| ID | Task | Owner | Status | Branch | Touch scope | Acceptance evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| T-002 | **M0a** — repo-wide `typecheck` script + CI gates on typecheck, `npm test`, and build (closes risk R7) | Codex | `READY` | `feature/T-002-ci-gates` | `.github/workflows/ci.yml`, `package.json` (**`scripts` block only**, D7) | CI runs all four standing commands; a deliberate type error and a deliberate test failure each fail the job; four standing checks green |
+| T-003 | **M0b** — add `CODE_OF_CONDUCT.md`, issue templates, PR template | Codex | `READY` | `feature/T-003-governance` | `.github/**` (new files only) | Files exist and are valid YAML/Markdown; no source file touched; four standing checks green |
+| T-004 | **M0c** — reconcile `docs/roadmap/production-readiness-plan.md` with reality (its §11 "next task" and several inventory rows are stale — e.g. the `.vw` README fix is already done) | Claude | `BACKLOG` | `feature/T-004-roadmap-sync` | `docs/roadmap/*` | Every claim in the plan's inventory table re-verified against the tree; §11 points at this board |
+| T-005 | **M1a** — central typed command registry `{ id, title, scope, when(), run(), defaultKeys[] }` | Codex | `NEEDS_USER` | `feature/T-005-command-registry` | TBD at packet time; **serializes on `src/renderer/App.tsx`** | Registry unit tests (registration, duplicate id, scope precedence); palette behaviour unchanged; four standing checks green |
+| T-006 | **M1b** — focus-scoped keyboard dispatcher + versioned hotkey schema + migration from the current flat map | Codex | `BACKLOG` (depends on T-005) | `feature/T-006-key-dispatcher` | `src/renderer/lib/keybindings.ts`, `App.tsx` dispatcher; **serializes on `App.tsx`** | Chord-normalization, conflict-detection, scope-precedence and migration tests; existing user bindings preserved; no double-fire; IME composition and `defaultPrevented` respected |
+| T-007 | **M1c** — command palette + settings hotkey editor consume the registry; delete the scattered wiring | Codex | `BACKLOG` (depends on T-005, T-006) | `feature/T-007-registry-consumers` | `components/CommandPalette.tsx`, `views/SettingsPage.tsx`; **serializes on `App.tsx`** | No `keydown` handler outside the dispatcher; add/remove/disable/reset all work; four standing checks green |
+
+T-005 is `NEEDS_USER` because the registry's scope list and the `Ctrl/Cmd+L`
+default (plan §7) are product decisions that must be recorded in `DECISIONS.md`
+before a packet can be written — a non-interactive agent would otherwise guess.
 
 **Serialization note:** T-005, T-006 and T-007 all touch `src/renderer/App.tsx`
 and must run strictly one at a time in this checkout (`AGENTS.md` §8). They are
@@ -52,4 +58,6 @@ Source material, with the reason each is still here:
 
 ## Done
 
-*(nothing yet — this board was created 2026-07-26)*
+| ID | Task | Owner | Evidence |
+| --- | --- | --- | --- |
+| T-001 | Commit the pre-existing working tree so `git status` is clean before any delegation (D6, D11) | Claude | 10 topic commits on `dev`, `86765ba`…`0ab7bd6`; `git status` clean; both `tsc` projects clean, 5/5 test suites pass, `npm run build` succeeds — all re-run on the committed state |
