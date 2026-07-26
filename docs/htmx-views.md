@@ -20,21 +20,26 @@ content**; every filesystem operation is **privileged and policy-checked**.
 ### Writing a view
 
 A view file is HTML **body content** (no `<html>`/`<head>` needed). Neuron
-wraps it, injects the bundled htmx runtime and the `neuron.css` design-system
-stylesheet, and serves it. Use htmx attributes for interactivity:
+wraps it, injects the bundled htmx runtime, and **attaches the `neuron.css`
+stylesheet for you** — so you write plain semantic HTML and it comes out
+styled to match the app:
 
 ```html
-<section id="summary" class="neuron-grid cols-3"
-         hx-get="/api/v1/fragments/workspace-summary"
-         hx-trigger="load" hx-swap="innerHTML">
-  <div class="neuron-card">Loading…</div>
-</section>
+<header>
+  <h1>My dashboard</h1>
+</header>
 
-<section class="neuron-card">
+<div class="neuron-grid cols-3">
+  <section hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">
+    Loading…
+  </section>
+</div>
+
+<section>
   <form hx-get="/api/v1/search" hx-target="#search-results"
         hx-trigger="submit, input changed delay:300ms from:#query">
     <label for="query">Search notes</label>
-    <input id="query" class="neuron-input" name="query" type="search" autocomplete="off" />
+    <input id="query" name="query" type="search" autocomplete="off" />
   </form>
   <div id="search-results"></div>
 </section>
@@ -44,11 +49,32 @@ No token handling is required — authentication is injected by Neuron at
 runtime (an HttpOnly session cookie scoped to the view's isolated partition).
 Never paste tokens into view source; there is nothing to paste.
 
-Design-system classes: `neuron-card`, `neuron-button` (+ `.secondary`),
-`neuron-input`, `neuron-table`, `neuron-badge`, `neuron-stack`,
-`neuron-grid` (+ `cols-2/3/4`), `neuron-toolbar`, `neuron-alert`,
-`neuron-empty`, `neuron-metric`, `neuron-metric-label`, `neuron-list`.
-They follow the app's light/dark theme automatically.
+**Semantic HTML is styled directly.** A bare `<section>`/`<article>` is a
+card; `<button>` is a primary button; `<input>`, `<select>`, `<textarea>`,
+`<table>`, `<label>`, `<code>` all inherit the Neuron look. `<header>` and the
+layout classes below stay transparent so they can wrap cards. Everything
+follows the app's light/dark theme automatically.
+
+On top of the semantic defaults, `neuron.css` is a small **shadcn-style
+component library** (class-based, so you compose richer UI than bare elements
+give you):
+
+- **Card** — `card` with `card-header`, `card-title`, `card-description`,
+  `card-content`, `card-footer`. (A bare `<section>` is a pre-padded card if you
+  don't need the sub-parts.)
+- **Button** — `btn` with variants `btn-secondary`, `btn-outline`, `btn-ghost`,
+  `btn-destructive` and sizes `btn-sm`, `btn-lg`, `btn-icon`.
+- **Badge** — `badge` with `badge-primary`, `badge-outline`, `badge-destructive`.
+- **Form** — `input`, `label` (a bare `<input>`/`<select>`/`<textarea>` already
+  gets the field style).
+- **Layout & bits** — `grid` (+ `cols-2/3/4`), `stack`, `row`, `toolbar`,
+  `separator`, `metric` / `metric-label`, `muted`, and `kbd` (a bare `<kbd>` or
+  `class="kbd"`/`neuron-kbd` renders a keyboard-hint cap).
+
+The legacy `neuron-*` classes (`neuron-card`, `neuron-button`, `neuron-input`,
+`neuron-table`, `neuron-badge`, `neuron-grid`, `neuron-stack`, `neuron-toolbar`,
+`neuron-metric`, `neuron-list`, `neuron-alert`, `neuron-empty`) are kept as
+aliases, so existing views and the server-rendered fragments keep working.
 
 `{{ variables.name }}` in a view or fragment is replaced server-side with the
 variable's value, always HTML-escaped. It is a key lookup, not an expression
@@ -60,6 +86,7 @@ language — no code, no prototypes, unknown keys render as nothing.
 .neuron/
   config.json        # feature config (schema version)
   variables.json     # typed variables exposed to views
+  manifests/         # per-view permission manifests → "My view.nhtml" ⇒ manifests/My view.json
   fragments/         # reusable HTML partials → GET /api/v1/fragments/<name>
   styles/            # optional CSS; "My view.nhtml" auto-loads "My view.css"
   templates/         # starter views to copy
@@ -84,8 +111,9 @@ Custom CSS is local-only: `@import` and remote `url()` references are blocked.
 ### Manifests and permissions
 
 Views are **read-only by default** (read files/notes/tags/variables, search,
-list). To write, add a manifest next to the view — `projects.nhtml` →
-`projects.neuron.json`:
+list). To write, add a manifest under `.neuron/manifests/`, mirroring the
+view's path — `projects.nhtml` → `.neuron/manifests/projects.json` (a legacy
+`projects.neuron.json` sidecar next to the view is still read if present):
 
 ```json
 {
@@ -235,8 +263,34 @@ connect to the port — is mitigated by the unguessable per-view tokens.
 | Manifest self-escalation | Manifests only *request*; write grants require user approval bound to the manifest hash; approvals live in app settings, not the workspace |
 | View impersonation after edit | Manifest hash change invalidates prior approval; source/manifest changes reload the tab with a fresh session |
 
-Known limitations (deliberate, documented): no user-scripting capability (no
-trusted-script mode yet), no remote-content capability, no
+Known limitations (deliberate, documented): no remote-content capability, no
 `commands.execute`/actions bridge, search is a bounded workspace scan rather
 than an index, and the request inspector devtool is not built — the standard
 webview devtools plus server error codes cover debugging today.
+
+## Scripting dashboards (`.ndash`)
+
+`.nhtml` views never run user JavaScript (CSP `script-src 'self'` — only the
+bundled htmx). When you need a fully custom dashboard that runs its own JS, use
+a **`.ndash`** file: a self-contained document that lists its **own CSS and JS**
+inline. Neuron serves it verbatim (no injected `neuron.css`/htmx — opt in with
+`<link href="neuron.css">` / `<script src="htmx.js">` if you want them) and its
+JS reaches the same `/api/v1` surface, gated by the same manifest + approval
+(`.neuron/manifests/<name>.json`).
+
+The only CSP change from a view is `script-src 'self' 'unsafe-inline'`.
+Everything else is identical, and that is what keeps it safe:
+
+- **No network egress** — `connect-src` stays `'self'`, so a dashboard's JS can
+  call the loopback API but cannot reach the internet. Reads and writes stay on
+  the machine; there is no exfiltration path (`img-src 'self' data:`, no
+  remote loads, `window.open` denied, navigation pinned to the view origin).
+- **Same capability gate** — the dashboard can only read/write what its manifest
+  grants, and any write capability triggers the approval dialog bound to the
+  manifest hash. Untrusted (synced/shared) `.ndash` files start read-only.
+- **Same isolation** — its own sandboxed `<webview>` and per-session partition,
+  no preload, no Node.
+
+So the trade is scoped: authored JS runs and can drive the API, but it is
+airgapped from the network and bounded by capabilities. The bundled example is
+`examples/demo-repo/Custom dashboard.ndash`.
