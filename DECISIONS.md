@@ -172,6 +172,23 @@ opened only after the user accepts the record. **If HTMX cannot work correctly
 over `neuron://` with standard request semantics, "keep the loopback server" is
 a successful outcome of this task, not a failure.**
 
+### D16 — On this account, model routing is effort-only
+**Approved:** Claude (2026-07-26), forced by the environment.
+**Consequence:** the `AGENTS.md` §7 routing table assumes a small/mid/top-tier
+model choice. This Codex install authenticates with a ChatGPT account, and the
+small tier is refused:
+`400 invalid_request_error — The 'gpt-5.3-codex-spark' model is not supported
+when using Codex with a ChatGPT account.` Two jobs (T-002, T-003) failed on this
+in ~20s each before being relaunched.
+So: **do not pass `--model` unless a specific model is known to work on this
+account.** Route by `--effort` instead — `low` for mechanical edits and docs,
+`medium` for default implementation, `high` for architecture, security, data
+loss, rendering, undo/history, a failed prior attempt, or adversarial review.
+The trap: the failure is fast and returns a *job* that reports `failed` rather
+than an error at launch, so a job launched with a bad model looks like it
+started normally and can sit unnoticed in `running` for the seconds before it
+flips.
+
 ---
 
 ## Proposed

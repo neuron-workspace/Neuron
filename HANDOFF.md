@@ -19,6 +19,31 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-002 / T-003 / T-008 — three parallel Codex jobs dispatched
+
+- Approved by the user for parallel execution (D13). One worktree per task under
+  `C:/Workspace/Projects/neuron-worktrees/`, one Codex job per worktree, all cut
+  from `dev` at `1b0b632`.
+
+  | Task | Job | Codex session | Effort | Branch / worktree |
+  | --- | --- | --- | --- | --- |
+  | T-002 CI gates | `task-ms1u0pem-sedo3y` | `019f9e9b-4db5-78c3-9794-5d837f011995` | medium | `feature/T-002-ci-gates` |
+  | T-003 governance files | `task-ms1u0qj6-dw2oxj` | `019f9e9b-52f8-7330-89c0-f86016555e00` | low | `feature/T-003-governance` |
+  | T-008 `neuron://` decision record | `task-ms1tzcr3-cho0ue` | `019f9e9a-5886-7de2-a340-74ed15ff4398` | high | `feature/T-008-protocol-research` |
+
+- **Two dead jobs, superseded — do not resume these:**
+  `task-ms1tz3ip-d4v2dw` (T-002) and `task-ms1tzbsu-0siqzo` (T-003) both failed
+  in under 25s with `The 'gpt-5.3-codex-spark' model is not supported when using
+  Codex with a ChatGPT account`. Neither wrote anything; both worktrees were
+  clean afterwards. Recorded as D16 — route by effort, not by `--model`.
+- `/codex:status` checked before dispatch (no jobs running) and after (exactly
+  three, one per worktree, no duplicate forwarder launches).
+- Packets stated explicitly that npm is absent from the worktrees **by design**
+  (D14), so a missing-module error is not a blocker to report or repair.
+- Not yet reviewed. Nothing merged, nothing committed by Codex, nothing pushed.
+
+---
+
 ## 2026-07-26 T-001 — Commit the pre-existing working tree
 
 - Job / session: n/a — Claude, no delegation.
