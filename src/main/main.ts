@@ -192,7 +192,7 @@ function createWindow() {
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5174');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
@@ -736,7 +736,7 @@ app.on('web-contents-created', (_event, contents) => {
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = url.startsWith('http://localhost:5173') || url.startsWith('file://');
+    const allowed = url.startsWith('http://localhost:5174') || url.startsWith('file://');
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);

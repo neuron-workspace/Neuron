@@ -9,7 +9,7 @@ const deadline = Date.now() + 30_000;
 
 function rendererReady() {
   return new Promise((resolve) => {
-    const request = http.get('http://localhost:5173', (response) => {
+    const request = http.get('http://localhost:5174', (response) => {
       response.resume();
       resolve(response.statusCode >= 200 && response.statusCode < 500);
     });
