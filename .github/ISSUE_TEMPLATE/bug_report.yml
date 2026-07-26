@@ -1,0 +1,110 @@
+name: Bug report
+description: Report a reproducible problem with Neuron
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Neuron. Remove personal notes, workspace paths, API keys, and other sensitive information from screenshots and logs.
+
+        **Do not report security vulnerabilities here.** Use [GitHub private vulnerability reporting](https://github.com/shiv-khetan/Neuron/security/advisories/new) instead.
+  - type: input
+    id: app-version
+    attributes:
+      label: Neuron version
+      description: Find the app version in Neuron's About screen or package metadata.
+      placeholder: "For example: 1.4.1"
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system and version
+      placeholder: "For example: Windows 11 24H2, macOS 15.5, or Ubuntu 24.04"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-form
+    attributes:
+      label: Install form
+      options:
+        - NSIS installer
+        - Portable
+        - DMG
+        - AppImage
+        - deb
+        - Run from source
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: workspace-file-type
+    attributes:
+      label: Workspace file type involved
+      description: Choose the primary file type affected.
+      options:
+        - .md
+        - .mdx
+        - .canvas
+        - .db
+        - .nhtml
+        - .ndash
+        - Multiple file types
+        - Not file-specific
+    validations:
+      required: true
+  - type: dropdown
+    id: data-loss
+    attributes:
+      label: Did this problem cause data loss?
+      description: Select Yes even if only part of a note, canvas, database, or view was lost.
+      options:
+        - "Yes — data was lost or overwritten"
+        - "No"
+        - "Unsure"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest reliable sequence, including the file type and any crash or restart.
+      placeholder: |
+        1. Open …
+        2. Change …
+        3. Restart …
+        4. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? State exactly what data changed or disappeared, if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs, screenshots, or other context
+      description: Add sanitized console output, screenshots, frequency, and anything else that may help. Do not include private note contents, paths, credentials, or API keys.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed personal or sensitive information from this report.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
