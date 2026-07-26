@@ -19,6 +19,42 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-008 — `neuron://` vs. loopback transport decision record
+
+- Job / session: `task-ms1tzcr3-cho0ue` / `019f9e9a-5886-7de2-a340-74ed15ff4398`
+- Model / effort: account default, **high** (architecture + security). 15m 36s.
+- Delegated: settle whether an Electron custom protocol should replace the
+  loopback HTTP transport for HTMX views — document only, no code (D15).
+- Result: `docs/architecture/neuron-protocol-api.md`, 730 lines, all 12 required
+  sections. **Decision: C — hybrid.** `neuron://` ships, loopback survives only
+  behind a development-only flag, both behind one dispatcher. "Keep loopback" is
+  recorded as the fail-closed fallback if the E2E gate fails.
+- Corrected: nothing. Kept entirely as delivered — one added file, zero
+  modifications, no code, and the citations hold up.
+- Verification: 14 citations (Electron 42.4.1 source, htmx docs, release
+  record); 5 facts explicitly marked unverified and framed as gates, not
+  assumptions; no `bypassCSP` anywhere. Post-merge: typecheck clean, 5/5 suites,
+  build OK.
+- Commit: `8d2026d`, merged to `dev` as `b23c919`.
+
+### Two current-code defects it surfaced — both confirmed by Claude, neither fixed
+
+1. **`will-navigate` prefix match** (`src/main/main.ts`). Reproduced:
+   `http://localhost:5174@evil.com/` passes `url.startsWith(...)` and its real
+   host is `evil.com`; `http://localhost:51740/` passes too. This guard protects
+   the **privileged app frame** (webviews return early), the one with the
+   preload bridge attached. → row **T-009**.
+2. **`apiFragment` skips `variables.read`** (`src/main/htmx/server.ts:575`).
+   Confirmed by reading the file: the variables API gates at `:373`/`:380` and
+   document interpolation gates at `:271`, but fragment interpolation loads
+   variables unconditionally — so a view denied the capability reads the values
+   through any fragment. → row **T-010**.
+
+Both are independent of the transport decision and live in shipped code today.
+They are **not** deferred to the migration.
+
+---
+
 ## 2026-07-26 T-003 — Code of conduct, issue forms, PR template
 
 - Job / session: `task-ms1u0qj6-dw2oxj` / `019f9e9b-52f8-7330-89c0-f86016555e00`
