@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 permissions:
@@ -21,5 +21,9 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Type-check main and renderer
+        run: npm run typecheck
+      - name: Run test suites
+        run: npm test
       - name: Build application
         run: npm run build
