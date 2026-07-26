@@ -1,0 +1,34 @@
+<header>
+  <h1>Launch board</h1>
+  <p>A <strong>folder mini-app</strong> — this whole folder renders as one app,
+  not a file listing, because it contains a <code>neuron.app.json</code>. The UI
+  lives in <code>neuron.app</code> (plain HTML + htmx). Edit either file with the
+  <strong>Source</strong> toggle.</p>
+</header>
+
+<div class="neuron-grid cols-3">
+  <section hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">
+    <span class="neuron-metric-label">Workspace</span>
+    <p>Loading summary…</p>
+  </section>
+
+  <section>
+    <span class="neuron-metric-label">Tags</span>
+    <div hx-get="/api/v1/tags" hx-trigger="load" hx-swap="innerHTML" style="margin-top:0.5rem">Loading tags…</div>
+  </section>
+
+  <section>
+    <h2 style="margin:0 0 0.5rem">Search</h2>
+    <form hx-get="/api/v1/search" hx-target="#results"
+          hx-trigger="submit, input changed delay:300ms from:#q">
+      <label for="q">Search notes</label>
+      <input id="q" name="query" type="search" autocomplete="off" placeholder="Search notes" />
+    </form>
+    <div id="results"></div>
+  </section>
+</div>
+
+<section>
+  <h2>Recent notes</h2>
+  <div hx-get="/api/v1/notes?limit=12" hx-trigger="load" hx-swap="innerHTML">Loading recent notes…</div>
+</section>

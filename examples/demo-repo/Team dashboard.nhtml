@@ -1,39 +1,63 @@
-<h1>{{ variables.dashboardTitle }}</h1>
-<p>An HTMX view: plain HTML served in an isolated tab, talking to Neuron's
-local API. Edit this file with the <strong>Source</strong> toggle in the tab header.</p>
+<header>
+  <h1>{{ variables.dashboardTitle }}</h1>
+  <p>A live HTMX view built with Neuron's shadcn-style component library — plain
+  HTML with <code>card</code>, <code>btn</code>, <code>badge</code> and
+  <code>input</code> classes, styled in the tab and tracking light/dark. Edit
+  this file with the <strong>Source</strong> toggle.</p>
+</header>
 
-<section class="neuron-grid cols-3">
-  <div class="neuron-card" hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">
-    Loading workspace summary…
+<div class="grid cols-3">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Workspace</span>
+      <span class="card-description">Notes and tags at a glance</span>
+    </div>
+    <div class="card-content" hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">Loading summary…</div>
   </div>
-  <div class="neuron-card">
-    <div class="neuron-metric-label">Project status</div>
-    <div class="neuron-metric">{{ variables.projectStatus }}</div>
-    <form hx-put="/api/v1/variables/projectStatus" hx-target="closest .neuron-card" hx-swap="none">
-      <input class="neuron-input" name="value" placeholder="active / paused / done" />
-      <button class="neuron-button" style="margin-top:0.5rem" type="submit">Update</button>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Project status</span>
+    </div>
+    <div class="card-content">
+      <div class="metric">{{ variables.projectStatus }}</div>
+      <form class="stack" hx-put="/api/v1/variables/projectStatus" hx-target="#status-msg" hx-swap="innerHTML" style="margin-top:0.9rem">
+        <div>
+          <label class="label" for="status">Set status</label>
+          <input class="input" id="status" name="value" placeholder="active / paused / done" autocomplete="off" />
+        </div>
+        <button class="btn" type="submit">Update status</button>
+      </form>
+      <div id="status-msg" aria-live="polite" style="margin-top:0.5rem"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Tags</span>
+    </div>
+    <div class="card-content" hx-get="/api/v1/tags" hx-trigger="load" hx-swap="innerHTML">Loading tags…</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Search notes</span>
+    <span class="card-description">Type to search across the workspace</span>
+  </div>
+  <div class="card-content">
+    <form hx-get="/api/v1/search" hx-target="#results"
+          hx-trigger="submit, input changed delay:300ms from:#query">
+      <label class="label" for="query">Search</label>
+      <input class="input" id="query" name="query" type="search" autocomplete="off" placeholder="Try “markdown”" />
     </form>
+    <div id="results" style="margin-top:0.85rem"></div>
   </div>
-  <div class="neuron-card">
-    <div class="neuron-metric-label">Tags in this workspace</div>
-    <div hx-get="/api/v1/tags" hx-trigger="load" hx-swap="innerHTML">Loading…</div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Recent notes</span>
   </div>
-</section>
-
-<section class="neuron-card" hx-get="/api/v1/fragments/project-note" hx-trigger="load" hx-swap="innerHTML">
-  Loading fragment…
-</section>
-
-<section class="neuron-card">
-  <h2>Search notes</h2>
-  <form hx-get="/api/v1/search" hx-target="#search-results"
-        hx-trigger="submit, input changed delay:300ms from:#query">
-    <label for="query">Query</label>
-    <input id="query" class="neuron-input" name="query" type="search" autocomplete="off" placeholder="Try “markdown”" />
-  </form>
-  <div id="search-results"></div>
-</section>
-
-<section class="neuron-card" hx-get="/api/v1/notes?limit=15" hx-trigger="load" hx-swap="innerHTML">
-  Loading recent notes…
-</section>
+  <div class="card-content" hx-get="/api/v1/notes?limit=12" hx-trigger="load" hx-swap="innerHTML">Loading recent notes…</div>
+</div>

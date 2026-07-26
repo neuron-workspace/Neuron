@@ -9,7 +9,7 @@
     },
     "projectStatus": {
       "type": "string",
-      "value": "paused",
+      "value": "done",
       "writable": true,
       "description": "Editable from the dashboard's status form."
     }

@@ -62,8 +62,8 @@
 		{
 			"id": "jsoncanvas",
 			"type": "link",
-			"x": -846,
-			"y": 815,
+			"x": 89,
+			"y": 71,
 			"width": 340,
 			"height": 80,
 			"url": "https://jsoncanvas.org"

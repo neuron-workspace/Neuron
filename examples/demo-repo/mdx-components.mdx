@@ -22,6 +22,16 @@ Every keystroke is written to disk locally — there is no save button.
 If you forget a closing tag, the preview shows a clear compilation error with a fix.
 </Callout>
 
+## DbView
+
+Embed a `.db` database inline by `@path` from the workspace root. It stays live
+— editing the database in its own tab updates the embed. Use `view` to pick
+`table` (default), `board`, or `card`:
+
+<DbView path="@Projects.db" view="board" />
+
+The embed is read-only; open the `.db` file itself to edit rows and schema.
+
 ## Want more components?
 
 The plugin framework can register additional components — see [[plugins-and-ai]].
