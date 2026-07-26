@@ -19,6 +19,51 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-003 — Code of conduct, issue forms, PR template
+
+- Job / session: `task-ms1u0qj6-dw2oxj` / `019f9e9b-52f8-7330-89c0-f86016555e00`
+- Model / effort: account default, low (Markdown + YAML scaffolding).
+- Delegated: give a first-time contributor a code of conduct and templates that
+  collect what a maintainer needs without a follow-up round trip.
+- Result: five files, additions only, in scope. Bug form collects app version,
+  OS, install form, workspace file type, and an explicit data-loss dropdown.
+  Blank issues disabled; security routed to private vulnerability reporting from
+  both the config and the top of the bug form.
+- Corrected: contribution contact link pointed at `blob/dev` — a branch that does
+  not exist on `origin` and would have 404'd — changed to `blob/main`; PR
+  testing checklist listed the two raw `tsc` invocations that T-002 replaced
+  with `npm run typecheck` in this same batch.
+  Kept: the visible `[MAINTAINER: ...]` enforcement placeholder (correct call —
+  a fabricated address silently drops reports), the Contributor Covenant 2.1
+  text, and the Electron-specific checklist items on the preload bridge and
+  `nodeIntegration`.
+- Verification: all three issue YAMLs parse as issue-forms (11 / 7 / config).
+  Post-merge in the primary checkout: typecheck clean, 5/5 suites, build OK.
+- Commit: `5507990`, merged to `dev` as `e36c109`.
+
+---
+
+## 2026-07-26 T-002 — CI gates on typecheck and tests
+
+- Job / session: `task-ms1u0pem-sedo3y` / `019f9e9b-4db5-78c3-9794-5d837f011995`
+- Model / effort: account default, medium (mechanical config).
+- Delegated: make a type error or a failing suite fail CI (risk R7).
+- Result: `typecheck` script covering both tsconfig projects; CI runs
+  install → typecheck → test → build; push coverage extended to `dev`.
+- Corrected: nothing. Kept as delivered — the diff was two files and minimal,
+  and Node 20 plus the least-privilege `permissions` block were correctly left
+  alone.
+- Verification: **the gate was proven to bite, not merely to exist.** A
+  `const x: number = "nope"` injected into `src/renderer/lib/keybindings.ts` made
+  `npm run typecheck` exit 2 — which also proves the chain reaches the *second*
+  tsc project, the specific way a half-covering typecheck script fails silently.
+  A broken assertion in `tools/frontmatter.test.mjs` made `npm test` exit 1.
+  Both probes reverted; tree clean. Post-merge: typecheck clean, 5/5 suites,
+  build OK.
+- Commit: `9bdbf04`, merged to `dev` as `9726d31`.
+
+---
+
 ## 2026-07-26 T-002 / T-003 / T-008 — three parallel Codex jobs dispatched
 
 - Approved by the user for parallel execution (D13). One worktree per task under
