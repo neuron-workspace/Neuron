@@ -16,6 +16,9 @@ function noteLabel(path: string) {
   if (isUrl(path)) {
     try { return new URL(path).hostname.replace(/^www\./, ''); } catch { return path; }
   }
+  // A folder mini-app's entry is <folder>/neuron.app — label it by the folder.
+  const appFolder = path.match(/(^|\/)([^/]+)\/neuron\.app$/i);
+  if (appFolder) return appFolder[2];
   return path.split('/').pop()?.replace(/\.(md|mdx)$/, '') ?? path;
 }
 

@@ -59,11 +59,17 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   // Reload the tab (not the app) when this view's source or .neuron config
   // changes on disk. A fresh session re-reads manifest and permissions.
   useEffect(() => {
+    // A folder app (…/neuron.app) keeps its manifest beside it; a .nhtml view's
+    // manifest lives under .neuron/manifests/. Reload the tab when either changes.
+    const isApp = /(^|\/)neuron\.app$/i.test(path);
+    const manifestPath = isApp ? `${path}.json` : `.neuron/manifests/${path.replace(/\.(nhtml|ndash)$/i, '.json')}`;
+    const legacyManifest = path.replace(/\.nhtml$/i, '.neuron.json');
     return window.electronAPI.onNotesChanged((_event, changed) => {
       // Not variables.json: views write variables through the API and a reload
       // on every variable change would wipe in-page form state.
       const mine = changed === path
-        || changed === path.replace(/\.nhtml$/i, '.neuron.json')
+        || changed === manifestPath
+        || changed === legacyManifest
         || changed.startsWith('.neuron/fragments/')
         || changed.startsWith('.neuron/styles/')
         || changed === '.neuron/config.json';
@@ -136,7 +142,7 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
     <div className="flex h-full w-full flex-col bg-[var(--canvas)]">
       <div className="flex items-center gap-2 border-b divider-color px-3 py-1.5">
         <span className="truncate text-xs font-medium text-[var(--ink)]">{phase.name}</span>
-        <span className="text-[10px] text-[var(--ink-muted)]">HTMX view · isolated</span>
+        <span className="text-[10px] text-[var(--ink-muted)]">{/\.ndash$/i.test(path) ? 'Scripting dashboard · isolated' : 'HTMX view · isolated'}</span>
         <button
           type="button"
           title="Reload view"
@@ -160,5 +166,7 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
 }
 
 registerSurface('nhtml', HtmxViewSurface);
+registerSurface('ndash', HtmxViewSurface); // scripting dashboards: self-contained HTML + inline JS
+registerSurface('app', HtmxViewSurface); // folder mini-apps open their neuron.app entry as a view
 
 export default HtmxViewSurface;

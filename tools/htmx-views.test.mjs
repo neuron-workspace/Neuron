@@ -18,6 +18,7 @@ await build({
     contents: `
       export * from './src/main/htmx/pathPolicy';
       export * from './src/main/htmx/manifest';
+      export * from './src/main/htmx/appPaths';
       export * from './src/main/htmx/sessions';
       export * from './src/main/htmx/html';
       export * from './src/main/htmx/server';
@@ -85,6 +86,26 @@ assert.ok(!m.validateManifest({ allowedReadPaths: ['../outside/**'] }).ok, 'trav
 const grants = m.effectiveGrants(good.value);
 assert.ok(grants.needsApproval, 'write permissions require approval');
 assert.ok(!m.effectiveGrants(null).needsApproval, 'manifest-less views are read-only, no approval');
+
+// --- view + manifest paths (folder apps vs .nhtml) ----------------------------
+assert.ok(m.isViewPath('Team dashboard.nhtml'), '.nhtml opens as a view');
+assert.ok(m.isViewPath('Custom dashboard.ndash'), '.ndash opens as a view');
+assert.ok(m.isViewPath('Launch board/neuron.app'), 'neuron.app opens as a view');
+assert.ok(!m.isViewPath('notes/readme.md'), 'plain notes are not views');
+assert.ok(!m.isViewPath('neuron.apple'), 'neuron.app is matched exactly, not as a prefix');
+// Only .ndash runs scripts; .nhtml and folder apps do not:
+assert.ok(m.allowsScripts('Custom dashboard.ndash'), '.ndash allows scripting');
+assert.ok(!m.allowsScripts('Team dashboard.nhtml'), '.nhtml does not allow scripting');
+assert.ok(!m.allowsScripts('Launch board/neuron.app'), 'folder apps do not allow scripting');
+// .nhtml/.ndash manifests move into .neuron/manifests, mirroring the path:
+assert.equal(m.manifestPathFor('projects/tracker.nhtml'), '.neuron/manifests/projects/tracker.json');
+assert.equal(m.manifestPathFor('Custom dashboard.ndash'), '.neuron/manifests/Custom dashboard.json');
+// A folder app's manifest is the co-located marker, never under .neuron:
+assert.equal(m.manifestPathFor('Launch board/neuron.app'), 'Launch board/neuron.app.json');
+assert.equal(m.legacyManifestPathFor('projects/tracker.nhtml'), 'projects/tracker.neuron.json');
+assert.equal(m.defaultViewName('Launch board/neuron.app'), 'Launch board', 'folder app is named for its folder');
+assert.equal(m.defaultViewName('a/b/Report.nhtml'), 'Report', '.nhtml view is named for its file');
+assert.equal(m.defaultViewName('Custom dashboard.ndash'), 'Custom dashboard', '.ndash is named for its file');
 
 // --- variables validation ---------------------------------------------------------
 const vars = m.validateVariablesFile({ version: 1, variables: { status: { type: 'string', value: 'active', writable: true } } });
@@ -165,6 +186,26 @@ const docHtml = await docRes.text();
 assert.ok(docHtml.includes('Ops &lt;Dash&gt;'), 'document interpolates + escapes variables');
 assert.ok(docHtml.includes(`/views/${reader.id}/htmx.js`), 'htmx served locally');
 assert.equal((await fetch(`${srv.origin}/views/${reader.id}/document?boot=x`)).status, 403, 'boot token replay/forgery -> 403');
+// A normal view keeps the strict no-script CSP.
+assert.match(docRes.headers.get('content-security-policy') ?? '', /script-src 'self'(?! 'unsafe-inline')/, 'views cannot run inline scripts');
+
+// Scripting dashboard (.ndash): inline scripts allowed, but airgapped and self-contained.
+writeFileSync(join(ws, 'panel.ndash'), '<h1>panel</h1><script>window.__ok = 1;</script>\n');
+const dash = sessions.create({
+  viewPath: 'panel.ndash', root: ws, name: 'Panel', theme: 'dark',
+  caps: new Set(['notes.read', 'variables.write']),
+  readPolicy: ['**'].map(m.compileGlob), writePolicy: [], allowScripts: true,
+});
+const dashRes = await fetch(`${srv.origin}/views/${dash.id}/document?boot=${dash.bootToken}`);
+const dashCsp = dashRes.headers.get('content-security-policy') ?? '';
+assert.match(dashCsp, /script-src 'self' 'unsafe-inline'/, 'dashboards may run inline scripts');
+assert.match(dashCsp, /connect-src 'self'/, 'dashboards reach the loopback API only — no network');
+assert.doesNotMatch(dashCsp, /connect-src[^;]*https?:/, 'dashboards have no network egress');
+const dashHtml = await dashRes.text();
+assert.ok(!dashHtml.includes('htmx.js'), 'dashboards are self-contained: htmx not auto-injected');
+assert.ok(!dashHtml.includes('/neuron.css'), 'dashboards are self-contained: neuron.css not auto-injected');
+assert.ok(dashHtml.includes('window.__ok'), 'the authored inline script is served verbatim');
+sessions.revoke(dash.id);
 
 // Cross-view isolation: writer's cookie cannot pull reader's assets
 assert.equal((await api(writer, `/views/${reader.id}/htmx.js`)).status, 403, 'cross-view asset access -> 403');
@@ -207,6 +248,13 @@ assert.equal((await api(reader, '/api/v1/variables/projectStatus', { method: 'PU
 assert.equal((await api(writer, '/api/v1/variables/dashboardTitle', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'x' }) })).status, 403, 'non-writable variable protected');
 assert.equal((await api(writer, '/api/v1/variables/projectStatus', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'paused' }) })).status, 200);
 assert.equal((await (await api(writer, '/api/v1/variables/projectStatus')).json()).value, 'paused');
+// htmx callers get an HTML confirmation to swap in (feedback), not silent JSON.
+{
+  const res = await api(writer, '/api/v1/variables/projectStatus', { method: 'PUT', headers: { 'content-type': 'application/json', 'HX-Request': 'true' }, body: JSON.stringify({ value: 'done' }) });
+  assert.match(res.headers.get('content-type') ?? '', /text\/html/, 'htmx PUT returns HTML');
+  const frag = await res.text();
+  assert.ok(frag.includes('done'), 'confirmation names the new value for the view to announce');
+}
 
 // File writes: create, conflict detection, delete; write policy enforced
 assert.equal((await api(writer, '/api/v1/files', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'notes/new.md', content: 'x' }) })).status, 403, 'outside write policy -> 403');

@@ -27,21 +27,30 @@ export function interpolate(template: string, scopes: Record<string, Record<stri
   });
 }
 
-/** Wrap a user-authored .nhtml body in the full served document. */
-export function wrapDocument(opts: { body: string; title: string; sessionId: string; theme: 'light' | 'dark'; styles: string[] }): string {
+/**
+ * Wrap a user-authored view body in the full served document. `runtime`
+ * (default true) injects the neuron.css design system and the htmx runtime —
+ * turned off for scripting dashboards, which list their own CSS/JS in the file
+ * (they can still opt in via <link href="neuron.css"> / <script src="htmx.js">).
+ */
+export function wrapDocument(opts: { body: string; title: string; sessionId: string; theme: 'light' | 'dark'; styles: string[]; runtime?: boolean }): string {
   const base = `/views/${opts.sessionId}`;
+  const runtime = opts.runtime !== false;
   const styleLinks = opts.styles
     .map((name) => `  <link rel="stylesheet" href="${base}/styles/${esc(name)}">`)
     .join('\n');
+  const head = [
+    runtime ? `  <link rel="stylesheet" href="${base}/neuron.css">` : '',
+    styleLinks,
+    runtime ? `  <script src="${base}/htmx.js" defer></script>` : '',
+  ].filter(Boolean).join('\n');
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(opts.title)}</title>
-  <link rel="stylesheet" href="${base}/neuron.css">
-${styleLinks}
-  <script src="${base}/htmx.js" defer></script>
+${head}
 </head>
 <body class="neuron-view theme-${opts.theme}">
 ${opts.body}
@@ -81,5 +90,5 @@ export function noteRowsFragment(rows: NoteRow[]): string {
   const body = rows
     .map((r) => `<tr><td>${esc(r.title)}</td><td>${r.tags.map((t) => `<span class="neuron-badge">${esc(t)}</span>`).join(' ')}</td><td class="neuron-file-path">${esc(r.path)}</td></tr>`)
     .join('\n');
-  return `<table class="neuron-table"><thead><tr><th>Note</th><th>Tags</th><th>Path</th></tr></thead><tbody>\n${body}\n</tbody></table>`;
+  return `<div class="neuron-scroll"><table class="neuron-table"><thead><tr><th>Note</th><th>Tags</th><th>Path</th></tr></thead><tbody>\n${body}\n</tbody></table></div>`;
 }

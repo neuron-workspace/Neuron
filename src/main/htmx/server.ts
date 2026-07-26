@@ -43,6 +43,12 @@ const DOC_CSP = [
   "frame-src 'none'",
 ].join('; ');
 
+// Scripting dashboards (.ndash) additionally allow inline <script>. Every other
+// directive is unchanged — crucially connect-src stays 'self', so a dashboard's
+// JS can reach the loopback API but has no path to the network: reads and writes
+// stay on the machine, gated by the same capability + approval model as views.
+const DASH_CSP = DOC_CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'");
+
 export interface ViewServer {
   server: http.Server;
   origin: string;
@@ -268,12 +274,15 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     }
     // Workspace styles the document opts into: <link href="styles/x.css"> works
     // via relative resolution, but we also honor .neuron/styles/<view-name>.css.
-    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.nhtml$/i, '')}.css`;
+    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.(nhtml|ndash)$/i, '')}.css`;
     const styles = fs.existsSync(path.join(session.root, '.neuron', 'styles', autoStyle)) ? [autoStyle] : [];
-    const html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles });
+    // A scripting dashboard is self-contained: it lists its own CSS/JS in the
+    // file, so Neuron does not inject neuron.css or htmx (the author can still
+    // opt in with <link href="neuron.css"> / <script src="htmx.js">).
+    const html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles, runtime: !session.allowScripts });
     send(ctx.res, 200, {
       'Content-Type': 'text/html; charset=utf-8',
-      'Content-Security-Policy': DOC_CSP,
+      'Content-Security-Policy': session.allowScripts ? DASH_CSP : DOC_CSP,
       // HttpOnly + SameSite=Strict: the token is invisible to view scripts and
       // never sent by an outside browser page, killing CSRF against loopback.
       'Set-Cookie': `nv=${session.id}:${session.cookieToken}; Path=/; HttpOnly; SameSite=Strict`,
@@ -403,7 +412,9 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
 
     doc.variables[key] = { ...(doc.variables[key] as Record<string, unknown>), value };
     atomicWrite(file, JSON.stringify(doc, null, 2));
-    sendJson(ctx.res, 200, { key, value });
+    // htmx callers get a small confirmation to swap into a live region; others get JSON.
+    if (isHx(ctx.req)) send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, `<p class="neuron-empty">Saved — now “${esc(String(value))}”.</p>`);
+    else sendJson(ctx.res, 200, { key, value });
   }
 
   function apiFilesList(ctx: Ctx): void {
