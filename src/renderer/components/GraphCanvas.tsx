@@ -10,6 +10,7 @@ interface PlacedNode {
   label: string;
   x: number;
   y: number;
+  degree: number;
 }
 
 interface Link {
@@ -40,7 +41,6 @@ function hexSpiral(count: number): Array<{ q: number; r: number }> {
   const cells: Array<{ q: number; r: number }> = [{ q: 0, r: 0 }];
   let ring = 1;
   while (cells.length < count) {
-    // Start each ring at the corner `ring` steps along direction 4.
     let q = dirs[4][0] * ring;
     let r = dirs[4][1] * ring;
     for (let side = 0; side < 6 && cells.length < count; side++) {
@@ -55,19 +55,26 @@ function hexSpiral(count: number): Array<{ q: number; r: number }> {
   return cells;
 }
 
+// Node radius grows with degree (link count) so hubs read as more important.
+function radiusFor(degree: number): number {
+  return 4.5 + Math.min(8, Math.sqrt(degree) * 2);
+}
+
 /**
- * Static hex-grid wiki-link graph. Nodes sit on a honeycomb lattice and never
- * move; links are straight lines between them.
+ * Wiki-link graph on a deterministic hex lattice. Theme-aware (CSS variables),
+ * node size scales with link count, and — when a note is active — the graph
+ * focuses attention in three tiers: the active note is highlighted, its directly
+ * connected notes stay a step lighter, and the rest of the graph dims but stays
+ * visible so the wider structure is never lost.
  */
 export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emptyHint }: GraphCanvasProps) {
   const { nodes, links, viewBox } = useMemo(() => {
     const cells = hexSpiral(notesData.length);
     const placed: PlacedNode[] = notesData.map((note, i) => {
       const { q, r } = cells[i];
-      // Axial → pixel (pointy-top hexagons).
       const x = HEX * Math.sqrt(3) * (q + r / 2);
       const y = HEX * 1.5 * r;
-      return { id: note.path, label: note.path.replace(/\.(md|mdx)$/, ''), x, y };
+      return { id: note.path, label: note.path.replace(/\.(md|mdx)$/, ''), x, y, degree: 0 };
     });
 
     const byLabel = new Map<string, string>();
@@ -78,17 +85,23 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
     });
 
     const computedLinks: Link[] = [];
+    const degree = new Map<string, number>();
+    const bump = (id: string) => degree.set(id, (degree.get(id) ?? 0) + 1);
     notesData.forEach((note) => {
       const re = /\[\[(.*?)\]\]/g;
       let match;
       while ((match = re.exec(note.content)) !== null) {
         const target = byLabel.get(match[1].trim().toLowerCase());
-        if (target && target !== note.path) computedLinks.push({ source: note.path, target });
+        if (target && target !== note.path) {
+          computedLinks.push({ source: note.path, target });
+          bump(note.path);
+          bump(target);
+        }
       }
     });
+    placed.forEach((n) => { n.degree = degree.get(n.id) ?? 0; });
 
-    // Fit the viewBox to the placed nodes with padding for radius + labels.
-    const pad = 70;
+    const pad = 80;
     const xs = placed.map((n) => n.x);
     const ys = placed.map((n) => n.y);
     const minX = Math.min(0, ...xs) - pad;
@@ -101,6 +114,31 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
+  // Direct neighbours of the active note (either link direction).
+  const { hasFocus, neighbours } = useMemo(() => {
+    const focus = !!selectedNote && nodeById.has(selectedNote);
+    const near = new Set<string>();
+    if (focus) {
+      for (const l of links) {
+        if (l.source === selectedNote) near.add(l.target);
+        else if (l.target === selectedNote) near.add(l.source);
+      }
+    }
+    return { hasFocus: focus, neighbours: near };
+  }, [selectedNote, links, nodeById]);
+
+  // Labels get noisy on big graphs; when focused, only the neighbourhood keeps
+  // its label (others reveal on hover via the .graph-node:hover rule).
+  const showAllLabels = nodes.length <= 120;
+
+  type Tier = 'active' | 'near' | 'far' | 'plain';
+  const tierOf = (id: string): Tier => {
+    if (!hasFocus) return 'plain';
+    if (id === selectedNote) return 'active';
+    return neighbours.has(id) ? 'near' : 'far';
+  };
+  const nodeOpacity: Record<Tier, number> = { active: 1, near: 0.85, far: 0.32, plain: 0.85 };
+
   return (
     <div className="relative h-full w-full select-none">
       <svg className="h-full w-full" viewBox={viewBox} preserveAspectRatio="xMidYMid meet">
@@ -108,19 +146,44 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
           const s = nodeById.get(link.source);
           const t = nodeById.get(link.target);
           if (!s || !t) return null;
-          return <line key={`link-${idx}`} x1={s.x} y1={s.y} x2={t.x} y2={t.y} className="stroke-slate-700 stroke-[1.25px]" />;
+          const incident = hasFocus && (link.source === selectedNote || link.target === selectedNote);
+          const bothNear = hasFocus && !incident
+            && (link.source === selectedNote || neighbours.has(link.source))
+            && (link.target === selectedNote || neighbours.has(link.target));
+          const stroke = incident ? 'var(--accent)' : 'var(--divider)';
+          const opacity = !hasFocus ? 0.5 : incident ? 0.85 : bothNear ? 0.4 : 0.1;
+          const width = incident ? 1.75 : 1.1;
+          return (
+            <line
+              key={`link-${idx}`}
+              x1={s.x} y1={s.y} x2={t.x} y2={t.y}
+              stroke={stroke}
+              strokeWidth={width}
+              style={{ opacity }}
+            />
+          );
         })}
 
         {nodes.map((node) => {
-          const isSelected = selectedNote === node.id;
+          const tier = tierOf(node.id);
+          const r = radiusFor(node.degree) + (tier === 'active' ? 1.5 : 0);
+          const isActive = tier === 'active';
+          const ringStroke = isActive ? 'var(--accent-strong)'
+            : tier === 'near' ? 'var(--accent)'
+            : tier === 'far' ? 'var(--divider)'
+            : 'var(--ink-muted)';
+          const fill = isActive ? 'color-mix(in oklch, var(--accent) 24%, var(--surface))' : 'var(--surface)';
+          const dotFill = isActive ? 'var(--accent-strong)' : tier === 'near' ? 'var(--accent)' : 'var(--ink-muted)';
+          const showLabel = showAllLabels || tier === 'active' || tier === 'near';
           return (
             <g
               key={node.id}
               transform={`translate(${node.x}, ${node.y})`}
-              className="graph-node group cursor-pointer"
+              className="graph-node cursor-pointer"
               role="button"
               tabIndex={0}
               aria-label={`Open ${node.label}`}
+              style={{ opacity: nodeOpacity[tier] }}
               onClick={() => onSelectNote(node.id)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -129,24 +192,20 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
                 }
               }}
             >
-              <circle
-                r={isSelected ? 10 : 6}
-                className={`interactive ${
-                  isSelected
-                    ? 'fill-emerald-400/20 stroke-emerald-300 stroke-2'
-                    : 'fill-slate-900 stroke-slate-600 stroke-1 group-hover:fill-emerald-400/10 group-hover:stroke-emerald-300'
-                }`}
-              />
-              <circle r={isSelected ? 4 : 2} className={isSelected ? 'fill-emerald-300' : 'fill-slate-400 group-hover:fill-emerald-300'} />
-              <text
-                y={-14}
-                className={`pointer-events-none select-none text-center font-mono text-[9px] font-medium ${
-                  isSelected ? 'fill-emerald-300' : 'fill-slate-500 group-hover:fill-slate-200'
-                }`}
-                textAnchor="middle"
-              >
-                {node.label.split('/').pop()}
-              </text>
+              <title>{`${node.label.split('/').pop()} — ${node.degree} link${node.degree === 1 ? '' : 's'}`}</title>
+              {isActive && <circle r={r + 7} fill="var(--accent)" style={{ opacity: 0.12 }} />}
+              <circle r={r} fill={fill} stroke={ringStroke} strokeWidth={isActive ? 2 : 1.25} />
+              <circle r={Math.max(1.5, r * 0.35)} fill={dotFill} />
+              {showLabel && (
+                <text
+                  y={-(r + 7)}
+                  className="pointer-events-none select-none text-center font-mono text-[9px] font-medium"
+                  fill={isActive ? 'var(--accent-strong)' : 'var(--ink-secondary)'}
+                  textAnchor="middle"
+                >
+                  {node.label.split('/').pop()}
+                </text>
+              )}
             </g>
           );
         })}

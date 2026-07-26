@@ -277,6 +277,9 @@ body.window-maximized .window-control {
 
 .graph-node:focus { outline: none; }
 .graph-node:focus-visible circle:first-of-type { stroke: var(--accent-strong); stroke-width: 3px; }
+/* Reveal a dimmed node (and its label) when hovered, whatever its focus tier. */
+.graph-node { transition: opacity 160ms var(--ease-out); }
+.graph-node:hover { opacity: 1 !important; }
 
 .cm-editor,
 .cm-scroller { height: 100%; }
