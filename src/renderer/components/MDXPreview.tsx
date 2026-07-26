@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
+import DbView from './DbView';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
@@ -305,6 +306,19 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         );
       }
 
+      // 3. Match DbView — embeds a .db database (table/board/card) by @path.
+      if (jsxStr.startsWith('<DbView')) {
+        const path = jsxStr.match(/path="([^"]+)"/)?.[1];
+        const view = jsxStr.match(/view="([^"]+)"/)?.[1];
+        if (!path) {
+          const err = new Error('<DbView /> needs a path, e.g. <DbView path="@Projects.db" />.') as MDXParseError;
+          err.block = jsxStr;
+          err.remediation = 'Add a path attribute pointing at a .db file relative to the workspace root, prefixed with @.';
+          throw err;
+        }
+        return <DbView key={`dbview-${index}`} path={path} view={view} />;
+      }
+
       // If unrecognized component tag
       const tagName = (jsxStr.match(/<([A-Za-z0-9]+)/) || [])[1] || 'Unknown';
       const standardHtmlTags = [
@@ -319,7 +333,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
 
       const err = new Error(`Component "<${tagName} />" is not registered in Neuron.`) as MDXParseError;
       err.block = jsxStr;
-      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge /> and <Callout />.`;
+      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge />, <Callout />, and <DbView />.`;
       throw err;
 
     } catch (caughtError: unknown) {
