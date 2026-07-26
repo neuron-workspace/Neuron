@@ -1,0 +1,38 @@
+# HANDOFF.md
+
+Append-only. **Newest first.** One entry per delegated job or per accepted
+commit. Record the Codex job ID and session ID so follow-up work can
+`--resume` instead of starting cold (`AGENTS.md` §7).
+
+Entry template:
+
+```
+## [date] T-xxx — <title>
+- Job / session: <codex job id> / <session id>   (or: n/a — Claude)
+- Model / effort:
+- Delegated: <objective, one line>
+- Result: <what came back>
+- Corrected: <what Claude changed>   Kept: <what Claude deliberately preserved>
+- Verification: <the four standing checks + any task-specific evidence>
+- Commit: <sha>
+```
+
+---
+
+## 2026-07-26 — Dual-agent workflow initialized
+
+- Job / session: n/a — Claude, no delegation.
+- Created `AGENTS.md`, `SHARED_TASKS.md`, `DECISIONS.md`, `HANDOFF.md`. None
+  existed before; `.agents/HANDOFF.md` is a *different*, older document (the
+  2026-06 repository-publication handoff) and is gitignored — it is not this
+  file's predecessor and is not visible to a delegated agent.
+- Baseline measured on the pre-existing working tree, before any change:
+  - `npx tsc -p tsconfig.main.json --noEmit` → clean
+  - `npx tsc -p tsconfig.renderer.json --noEmit` → clean
+  - `npm test` → 5/5 suites pass (view-security, frontmatter 42 assertions,
+    htmx-views, canvas-model, sanitize-html)
+  - Working tree: 29 modified, 3 staged deletions/renames, 7 untracked paths.
+    Not clean — see D6 and T-001.
+- Baseline commit: `6434116` (v1.4.1). Only branch: `main`; only remote:
+  `origin`.
+- No delegation has been sent. No production code written.
