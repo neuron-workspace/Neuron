@@ -27,7 +27,8 @@
     "test:htmx": "node tools/htmx-views.test.mjs",
     "test:canvas": "node tools/canvas-model.test.mjs",
     "test:sanitize": "node tools/sanitize-html.test.mjs",
-    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize"
+    "test:navigation": "node tools/navigation.test.mjs",
+    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.2.5",

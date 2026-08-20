@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
+import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -193,7 +194,7 @@ function createWindow() {
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5174');
+    mainWindow.loadURL(DEV_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
@@ -716,7 +717,7 @@ app.on('web-contents-created', (_event, contents) => {
   // Is this webContents an HTMX view (served from the loopback view server)?
   const isHtmxView = () => {
     const origin = getViewServerOrigin();
-    return !!origin && contents.getURL().startsWith(origin);
+    return isSameOrigin(contents.getURL(), origin);
   };
 
   // 2. Never let a page spawn a new Electron window. HTMX views may not open
@@ -733,11 +734,11 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-navigate', (event, url) => {
     if (isHtmxView()) {
       const origin = getViewServerOrigin();
-      if (!origin || !url.startsWith(origin)) event.preventDefault();
+      if (!isSameOrigin(url, origin)) event.preventDefault();
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = url.startsWith('http://localhost:5174') || url.startsWith('file://');
+    const allowed = isAppContent(url);
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
