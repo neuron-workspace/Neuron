@@ -17,6 +17,7 @@ import {
   FileRow, SearchRow, NoteRow,
 } from './html';
 import { NEURON_VIEW_CSS } from './theme';
+import { capturePreImage } from '../journal';
 
 export const API_VERSION = 1;
 
@@ -462,6 +463,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const current = sha256(fs.readFileSync(resolved.full, 'utf-8'));
       if (current !== body.baseHash) { fail(ctx, 409, 'conflict', 'The file changed since it was read. Re-fetch and retry.'); return; }
     }
+    capturePreImage(ctx.session.root, resolved.full, 'overwrite');
     atomicWrite(resolved.full, body.content);
     sendJson(ctx.res, 200, { path: resolved.rel, hash: sha256(body.content) });
   }
@@ -485,6 +487,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const resolved = checkedPath(ctx, ctx.url.searchParams.get('path'), 'write');
     if (!resolved) return;
     if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'File not found.'); return; }
+    capturePreImage(ctx.session.root, resolved.full, 'delete');
     fs.unlinkSync(resolved.full);
     sendJson(ctx.res, 200, { path: resolved.rel, deleted: true });
   }
