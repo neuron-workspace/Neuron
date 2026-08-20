@@ -288,6 +288,27 @@ primary checkout, can run `npm test`, and its diff is reviewed uncommitted per
 Playwright selectors written without running them are guesses, which is exactly
 how three specs failed during T-011.
 
+### D22 — A test may not cause an effect outside the test process
+**Approved:** Claude (2026-07-26), after the user found the violation.
+**Consequence:** the E2E security spec drove the app frame at external URLs to
+prove the navigation guard blocks them. It does — but `main.ts` also hands a
+blocked http(s) URL to the OS browser via `shell.openExternal`, so the suite
+opened real tabs in the developer's real Chrome. Three per run, seven runs, all
+while reporting green.
+
+This is the failure class to watch for: an effect that leaves the test process
+cannot be caught by an assertion, cannot be undone by teardown, and does not
+make the suite red. The suite was not going to find it — the **user** did.
+
+So: anything in `e2e/` that can reach outside the process is stubbed **in the
+fixture, before any test body runs**, never per-test. Per-test opt-in fails
+silently when someone forgets. Currently stubbed: `shell.openExternal`. The
+same treatment is required before any test touches the network, the clipboard,
+notifications, the OS shell, auto-update, or a real workspace path.
+**A stub must also be asserted on**, so it is self-verifying: the nav tests
+check the recorded call, which means a stub that stops taking effect turns the
+test red instead of quietly resuming the side effect.
+
 ---
 
 ## Proposed

@@ -19,6 +19,31 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-017 — E2E suite was opening tabs in the real browser
+
+- Job / session: n/a — Claude. **Regression I introduced in T-011.**
+- Reported by the user, not by the suite: example.com kept appearing in their
+  Chrome.
+- Cause: `main.ts:746` hands a blocked http(s) navigation to the OS browser via
+  `shell.openExternal`. The three `will-navigate` tests drive the app frame at
+  `http://localhost:5174@example.com/`, `http://localhost:51740/`, and
+  `http://example.com/` — so each full run opened three real tabs. Roughly seven
+  runs before it was caught, and every run reported green.
+- Fix: `shell.openExternal` is stubbed in the **app fixture**, before any test
+  body runs, so no spec can forget. The nav tests now assert the recorded
+  hand-off, which covers the guard's real two-sided contract and makes the stub
+  self-verifying — if the patch stops taking effect the test fails instead of
+  silently reopening tabs.
+- Also checked while investigating, all clean: no leaked `neuron-e2e-*` temp
+  dirs (fixture teardown works), no stray Electron processes, nothing left
+  listening on 5174. The demo-repo `Idea board.canvas` modification predates
+  Playwright and is the user's own running app, not test leakage.
+- Verification: 16/16 E2E green, 7/7 unit suites, typecheck clean, and no
+  browser tab opens.
+- Recorded as D22. Commit `6f51eea`, merged to `dev` as `839f669`.
+
+---
+
 ## 2026-07-26 T-015 — Pre-image write journal
 
 - Job / session: `task-mt24m796-y9zdb2` / `01a02169-ffc2-7bd2-be86-79896d7eff8c`
