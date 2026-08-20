@@ -19,6 +19,48 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-015 — Pre-image write journal
+
+- Job / session: `task-mt24m796-y9zdb2` / `01a02169-ffc2-7bd2-be86-79896d7eff8c`
+- Model / effort: account default, **high** (data-loss risk). 11m 0s.
+- Delegated: make every workspace overwrite and delete recoverable (risk R4).
+- Result: `src/main/journal.ts` plus four hooks (`notes:write`, `notes:delete`,
+  `apiFileWrite`, `apiFileDelete`). Store in userData keyed by hashed resolved
+  root. Capture is fire-and-forget and cannot throw. Restore verifies length and
+  sha256 before writing back. Symlinks rejected on both lexical and resolved
+  paths, at capture and restore. Oversize files record a skip marker and restore
+  then refuses. Retention: 1000 entries / 30 days / 512 MiB total / 16 MiB
+  per file.
+- **The job stopped on a blocker and reported it — the correct outcome.** Its
+  sandbox denied creating `tools/journal.test.mjs` ("Access denied" for both the
+  patch tool and a zero-byte create). It did not work around it, did not change
+  directory permissions, and restored `package.json` rather than leaving a
+  dangling `test:journal` script pointing at a file that does not exist. Not
+  reproducible outside that sandbox — `tools/navigation.test.mjs` was created
+  here without issue — so this is `AGENTS.md` §4's "sandbox limitation, not a
+  broken workspace", and re-delegating would have hit the same wall. Suite
+  written by Claude instead.
+- Corrected: nothing in the delivered code. Added the missing test suite and the
+  `test:journal` script.
+  Kept: the whole module and all four hooks as delivered, the retention
+  defaults, and the decision to expose **no** IPC rather than half-wire an
+  unused bridge.
+- **It caught an error in the packet:** the packet named a handler
+  `apiFileUpdate`; no such function exists — the overwrite handler is
+  `apiFileWrite` (`server.ts:451`). Claude's mistake, correctly reported rather
+  than guessed around.
+- Verification: D20 re-checked by grep — the only journal references outside the
+  module are the two imports and the four hook calls; no route, capability,
+  fragment, or preload entry exposes it. Suite proven to bite (neutering
+  `capturePreImage` → exit 1). `npm test` now **7 suites**; typecheck clean;
+  build OK; **16/16 Playwright E2E still green**.
+- Known gap, tracked as **T-016**: no IPC or UI, so the journal captures
+  pre-images that nothing in the app can currently reach. The mechanism is real;
+  the user-facing feature is not done.
+- Commit: `1b99a47`, merged to `dev` as `31563bc`.
+
+---
+
 ## 2026-07-26 T-011 — Playwright Electron E2E harness
 
 - Job / session: n/a — Claude, no delegation. New devDependency (D17), which a
