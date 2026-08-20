@@ -572,8 +572,13 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       template = builtinWorkspaceSummary(ctx.session);
     }
     if (template === null) { fail(ctx, 404, 'not_found', `No fragment named "${name}".`); return; }
-    const { vars } = loadVariables(ctx.session.root);
-    const variables = Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v.value]));
+    // Variables are capability-gated here exactly as they are for the document
+    // and the variables API. Without variables.read a fragment still renders --
+    // {{ variables.x }} resolves to empty, same as an unknown key -- so denying
+    // the capability degrades the fragment instead of breaking the whole view.
+    const variables = ctx.session.caps.has('variables.read')
+      ? Object.fromEntries(Object.entries(loadVariables(ctx.session.root).vars).map(([k, v]) => [k, v.value]))
+      : {};
     const params: Record<string, string> = {};
     for (const [k, v] of ctx.url.searchParams.entries()) if (/^[A-Za-z][\w-]*$/.test(k)) params[k] = v.slice(0, 512);
     send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, interpolate(template, { variables, params }));

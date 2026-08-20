@@ -241,6 +241,20 @@ const frag = await (await api(reader, '/api/v1/fragments/greet?who=<script>')).t
 assert.equal(frag, '<p>Ops &lt;Dash&gt; / &lt;script&gt;</p>');
 assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404, 'fragment ids cannot be paths');
 
+// A fragment must not leak variables to a view that was denied variables.read.
+// The document path and the variables API both gate on that capability; before
+// this check the fragment path interpolated them unconditionally, so a denied
+// view could read every variable value by requesting any fragment.
+{
+  const noVars = mkSession(READ_CAPS.filter((c) => c !== 'variables.read'), ['notes/**', 'dash.nhtml']);
+  const denied = await (await api(noVars, '/api/v1/fragments/greet?who=me')).text();
+  assert.equal(denied, '<p> / me</p>', 'fragment must blank variables without variables.read');
+  assert.ok(!denied.includes('Ops'), 'variable value leaked through a fragment');
+  // Denial degrades the fragment, it does not break the view: params still work
+  // and the response is still a 200 fragment, not an error.
+  assert.equal((await api(noVars, '/api/v1/fragments/greet')).status, 200);
+}
+
 // Variables: read, write-protected, writable roundtrip, type checks
 const dashTitle = await (await api(reader, '/api/v1/variables/dashboardTitle')).json();
 assert.equal(dashTitle.value, 'Ops <Dash>');
