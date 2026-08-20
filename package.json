@@ -28,6 +28,7 @@
     "test:canvas": "node tools/canvas-model.test.mjs",
     "test:sanitize": "node tools/sanitize-html.test.mjs",
     "test:navigation": "node tools/navigation.test.mjs",
+    "test:e2e": "npm run build:main && playwright test",
     "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation"
   },
   "dependencies": {
@@ -92,6 +93,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^20.14.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

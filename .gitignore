@@ -40,3 +40,7 @@ tools/tmp-*
 *-preview.png
 *-screenshot.png
 notes/
+
+# Playwright E2E output
+test-results/
+playwright-report/

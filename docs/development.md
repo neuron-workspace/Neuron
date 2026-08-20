@@ -17,7 +17,7 @@ npm run dev
 
 The command starts three coordinated processes:
 
-1. Vite serves and hot-reloads the React renderer on port 5173.
+1. Vite serves and hot-reloads the React renderer on port 5174.
 2. TypeScript watches the Electron main process and preload bridge.
 3. `tools/dev/start-electron.js` waits for both outputs and starts Electron without relying on a fixed delay or `npx` shell resolution.
 
@@ -38,9 +38,30 @@ Every build command starts by clearing `dist/` and `release/`, so the generated 
 ## Quality checks
 
 ```bash
+npm run typecheck
+npm test
 npm run build
 npm audit
 ```
+
+CI runs the first three on every pull request and on pushes to `main` and `dev`.
+
+## End-to-end tests
+
+```bash
+npm run test:e2e
+```
+
+Playwright drives the real Electron app (`e2e/`). Only the app is launched --
+no browser download is needed, so `npx playwright install` is not part of setup.
+Each test gets a throwaway copy of `examples/demo-repo` and its own user-data
+directory, because the app writes to its workspace as you use it and a suite
+pointed at the committed demo content would rewrite it.
+
+The renderer is served by Vite during the run (Playwright starts it), since an
+unpackaged Electron loads the dev URL. `npm run test:e2e` is deliberately not
+part of `npm test`: it takes minutes, needs a desktop session, and `npm test`
+is the fast gate.
 
 Before a release, also run `npm run dist:dir` and open the unpacked application. Verify repository creation, note editing, settings persistence, plugin enablement, the terminal, external links, and the bundled demo repository.
 
