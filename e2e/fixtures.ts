@@ -43,6 +43,21 @@ export const test = base.extend<AppFixture>({
       args: [join(repoRoot, 'dist', 'main', 'main.js'), `--user-data-dir=${userData}`],
       cwd: repoRoot,
     });
+
+    // Stub shell.openExternal for EVERY test, before a single line runs.
+    //
+    // This is not optional hygiene. main.ts hands any blocked navigation to the
+    // OS browser (`shell.openExternal`), so a test that drives the app frame at
+    // an external URL opens a real tab in the developer's real browser -- once
+    // per hostile URL, per run, forever. It leaks out of the test process
+    // entirely, which no assertion can catch and no teardown can undo.
+    // Stubbing here rather than per-test means a future spec cannot forget.
+    await app.evaluate(({ shell }) => {
+      const store = globalThis as unknown as { __openExternal?: string[] };
+      store.__openExternal = [];
+      shell.openExternal = async (url: string) => { store.__openExternal!.push(url); };
+    });
+
     await use(app);
     await app.close();
   },
@@ -55,3 +70,8 @@ export const test = base.extend<AppFixture>({
 });
 
 export const expect = test.expect;
+
+/** URLs the app handed to the OS browser, recorded by the stub above. */
+export function openedExternally(app: ElectronApplication): Promise<string[]> {
+  return app.evaluate(() => (globalThis as unknown as { __openExternal?: string[] }).__openExternal ?? []);
+}

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, openedExternally } from './fixtures';
 
 // The security boundary, asserted against the running app rather than by
 // reading main.ts. Every check here maps to a control in
@@ -32,12 +32,18 @@ for (const hostile of [
   'http://localhost:51740/',
   'http://example.com/',
 ]) {
-  test(`the app frame refuses to navigate to ${hostile}`, async ({ page }) => {
+  test(`the app frame refuses to navigate to ${hostile}`, async ({ app, page }) => {
     const before = page.url();
     await page.evaluate((url) => { window.location.href = url; }, hostile);
     // Give the navigation a chance to happen before asserting it did not.
     await page.waitForTimeout(1500);
     expect(page.url()).toBe(before);
+
+    // The guard's contract is two-sided: block the frame AND hand the URL to
+    // the OS browser. Asserting only the first half missed that this test was
+    // opening real tabs in the developer's real browser on every run --
+    // shell.openExternal is stubbed in the fixture, and this reads the stub.
+    expect(await openedExternally(app)).toEqual([hostile]);
   });
 }
 
