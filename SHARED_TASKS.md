@@ -56,7 +56,7 @@ Source material, with the reason each is still here:
   force-layout item would need a `d3-force` dependency decision first (D8).
 - **M6 — extensibility & security**, incl. the adversarial HTMX suite for risk
   R2. Good delegation material once M0's CI gate exists to catch regressions.
-- **T-015 … T-021 — transport implementation**, gated behind T-008's decision
+- **T-020 … T-026 — transport implementation**, gated behind T-008's decision
   record and the user accepting it. If the record says migrate, the phases are
   fixed in this order and each is its own row: extract the route dispatcher out
   of the loopback server → add the protocol transport → runtime asset registry →
