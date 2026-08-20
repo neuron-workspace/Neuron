@@ -220,6 +220,74 @@ a full run. Each was resolved by reading the source, not by loosening the
 assertion. A UI E2E failure is a *question* about the product, not a report
 about it.
 
+### D19 — Custom-code containment is a write journal, not a virtual filesystem
+**Approved:** user (2026-07-26).
+**Consequence:** the premise was checked before designing, and it moved the
+target. `.ndash` is already the *most* contained surface in the app — sandboxed
+webview, no Node, `connect-src 'self'`, every file operation through capability
+check → path policy → atomic write with hash-based conflict detection. The
+unsandboxed code paths are the **PTY** (`main.ts:482`: real shell, workspace
+cwd, `env: process.env` inherited wholesale) and **plugins** (in-renderer,
+full `electronAPI`). What is missing everywhere is not containment but
+**reversibility**: `grep` finds no snapshot, journal, or backup anywhere in
+`src/main`, and delete is a bare `fs.unlinkSync`. That is risk R4, uncontrolled.
+
+So: a pre-image journal with restore, covering **every** workspace write path —
+editor, `.ndash`, plugins, canvas, `.db`. Not a copy-on-write overlay. Data loss
+does not care which subsystem caused it, and a per-surface guard would leave the
+editor, the most-used writer, unprotected. The overlay's extra value is
+diff-before-apply UX, which is not what was asked for and costs a subsystem.
+
+Design decisions a non-interactive implementer cannot make, settled here:
+
+1. **Store location: `<userData>/journal/<sha256(workspaceRoot)>/`.** *Not*
+   inside the workspace. A `.neuron/journal/` would sync through OneDrive /
+   Dropbox / Git along with the notes, and a cloud-sync conflict on the recovery
+   store is the worst available failure mode — losing the thing you restore
+   from, at exactly the moment you need it. It would also bloat notes
+   repositories that are kept in Git.
+2. **Only pre-images of destructive operations** — overwrite and delete of an
+   existing file. A create has no pre-image; "undo create" is out of scope.
+3. **Trigger points:** `notes:write` and `notes:delete` in `main.ts`, plus
+   `apiFileUpdate` and `apiFileDelete` in `htmx/server.ts`. Those are every
+   destructive path.
+4. **A journal failure must never block the write.** If the store is full or
+   unwritable and the write is blocked, the user cannot save while typing —
+   availability of their in-progress note beats recoverability of the previous
+   version. The failure is logged and surfaced, never swallowed silently.
+5. **Retention is capped** by entry count, age, and total bytes, pruned
+   oldest-first. Files over the size cap are not copied, and record an explicit
+   skip marker — a journal that silently omits an entry is worse than one that
+   says it has nothing, because restore would claim success on a file it never
+   captured.
+6. **No new dependency.** Node `fs` and `crypto` only.
+
+### D20 — The journal is main-process only and is never reachable from the view API
+**Approved:** Claude (2026-07-26). This is the trap in D19 and needs its own entry.
+**Consequence:** restore and listing are exposed over IPC to the trusted renderer
+only. **No route, capability, or fragment may expose journal contents to a
+`.nhtml` / `.ndash` / mini-app view.** The journal holds pre-images of files from
+across the whole workspace; a view granted `workspace.files.read` on `data/**`
+that could read the journal would read historical content of every file outside
+its path policy. That is a complete path-policy bypass wearing a recovery
+feature's clothes. The store lives outside the workspace root, so
+`resolveInWorkspace` already refuses it — this decision exists so nobody
+"helpfully" adds a convenience route later.
+
+### D21 — A single delegated job runs in the primary checkout, not a worktree
+**Approved:** Claude (2026-07-26), correcting D14's side effect.
+**Consequence:** worktrees exist to make *parallel* jobs safe (D13), and they
+cost the ability to verify, because they have no `node_modules` (D14). For a
+single job that trade is all cost: `AGENTS.md` §3 says a job that cannot verify
+has failed, and for a data-integrity subsystem, shipping code the author never
+executed is precisely the wrong trade. `AGENTS.md` §8 forbids *two* writing
+agents in one checkout; one is fine. So a lone job runs with `--cwd` on the
+primary checkout, can run `npm test`, and its diff is reviewed uncommitted per
+§9. Worktrees remain mandatory the moment a second concurrent job exists.
+**Corollary:** E2E specs (T-012) are therefore *not* worktree material either —
+Playwright selectors written without running them are guesses, which is exactly
+how three specs failed during T-011.
+
 ---
 
 ## Proposed
