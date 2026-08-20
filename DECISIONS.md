@@ -189,6 +189,37 @@ than an error at launch, so a job launched with a bad model looks like it
 started normally and can sit unnoticed in `running` for the seconds before it
 flips.
 
+### D17 — Playwright is the end-to-end runner; `@playwright/test` is an approved devDependency
+**Approved:** user (2026-07-26, "setup playwright testing for all the features").
+**Consequence:** this is the recorded dependency decision D8 requires. It is a
+**dev**Dependency — nothing ships to users. Only the Electron app is launched, so
+no Playwright browser binaries are downloaded and `npx playwright install` is
+deliberately *not* part of setup; if a future test needs a real browser project,
+that is a separate decision because it adds hundreds of megabytes to every
+clone.
+Two rules that exist because breaking them is silent:
+1. **Every test runs against a throwaway copy of `examples/demo-repo` with its
+   own user-data directory.** The app writes to its workspace as you use it, so
+   a suite pointed at the committed demo content rewrites it, and the damage
+   surfaces later as unexplained churn in an unrelated commit. This is not
+   hypothetical — an empty canvas node appeared in `Idea board.canvas` during
+   this very session from the app being open.
+2. **`test:e2e` is not part of `npm test`.** It takes minutes and needs a
+   desktop session; `npm test` is the fast gate that CI and every contributor
+   runs. Whether CI runs the E2E suite at all is open as T-014.
+
+### D18 — When an E2E test fails, verify the test before believing it
+**Approved:** Claude (2026-07-26), earned the hard way.
+**Consequence:** `AGENTS.md` §3 already says this; the Playwright work turned it
+into a measured ratio. Three specs failed while being written and **all three
+were the test, not the product**: `.md` opens in reading view so `.cm-content`
+does not exist yet; an htmx view stops at a permission prompt before rendering
+(the security boundary working correctly); and `app.windows()` also surfaces a
+webview's page once it settles, which made one assertion pass alone and fail in
+a full run. Each was resolved by reading the source, not by loosening the
+assertion. A UI E2E failure is a *question* about the product, not a report
+about it.
+
 ---
 
 ## Proposed

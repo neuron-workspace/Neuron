@@ -19,6 +19,63 @@ Entry template:
 
 ---
 
+## 2026-07-26 T-011 — Playwright Electron E2E harness
+
+- Job / session: n/a — Claude, no delegation. New devDependency (D17), which a
+  delegated agent is forbidden from adding (D4).
+- Result: `playwright.config.ts`, `e2e/fixtures.ts`, and three specs —
+  **16 tests, all green in ~1.1 min.** App shell (launch, explorer, open a note,
+  edit reaching disk), surfaces (canvas, `.db`, `.nhtml`, `.ndash`, folder
+  mini-app), security boundary.
+- Verification: the T-009 E2E regression was proven by reverting the fix and
+  rebuilding — **the app frame genuinely navigated to `example.com`.** The suite
+  reproduces the exploit rather than describing it. (The `localhost:51740` case
+  passes either way because nothing listens there; the unit suite covers it.)
+- **Three test failures, zero product defects.** Each was the test:
+  1. `.md`/`.mdx` open in reading view, so `.cm-content` does not exist until the
+     prose is double-clicked (`App.tsx:445`).
+  2. An htmx view stops at a permission prompt before rendering — the security
+     boundary working. The spec now asserts the prompt appears *and the webview
+     does not*, then grants and re-checks. Better coverage than intended.
+  3. `app.windows()` also surfaces a webview's page once it settles, so the popup
+     assertion passed alone and failed in a full run. Now counts real
+     `BrowserWindow`s in the main process.
+  Recorded as D18.
+- Side finding, not fixed: `npm audit --omit=dev` reports a high-severity
+  `js-yaml` advisory (CVE-2026-59870) reaching production deps transitively.
+  Pre-existing, unrelated to Playwright, `fixAvailable: true` → row **T-013**.
+- Commit: `25d6812`, merged to `dev` as `1f7a71d`.
+
+---
+
+## 2026-07-26 T-009 / T-010 — the two security fixes from the T-008 findings
+
+- Job / session: n/a — Claude, no delegation. Security paths in the main
+  process; not delegation material.
+- **T-009** — the `will-navigate` guard compared a string prefix. Logic moved to
+  a new electron-free `src/main/navigation.ts` so it could be unit tested at all
+  (`main.ts` imports electron), mirroring `htmx/appPaths.ts`. Fixed **three**
+  call sites, not one: the app-frame check and both HTMX view-pin comparisons,
+  which had the identical bypass against `127.0.0.1:PORT@evil.com`. `file://`
+  needs its own branch — file URLs have an opaque `"null"` origin. Unparseable
+  URLs are denied, never thrown on.
+  The test asserts each bypass is rejected *and* that the old `startsWith` check
+  would still accept them, so the fixture cannot silently drift away from the bug
+  it guards. Also folded the dev URL into one `DEV_URL` constant.
+  Commit `2375572`, merged `0dd5d65`.
+- **T-010** — `apiFragment` now passes an empty variable scope without
+  `variables.read` instead of skipping interpolation. `interpolate()` already
+  resolves unknown keys to `''`, so a denied fragment renders blanked with params
+  intact and still returns 200 — failing the request would have broken the whole
+  view over a capability its author may never have requested, and the document
+  path degrades rather than fails.
+  Commit `3418cf9`, merged `d760864`.
+- Verification: both new tests proven to bite — reverting each fix fails its
+  suite (exit 1). `npm test` is now **6 suites**. Post-merge: typecheck clean,
+  6/6 suites, build OK.
+
+---
+
 ## 2026-07-26 T-008 — `neuron://` vs. loopback transport decision record
 
 - Job / session: `task-ms1tzcr3-cho0ue` / `019f9e9a-5886-7de2-a340-74ed15ff4398`
