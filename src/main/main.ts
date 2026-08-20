@@ -3,6 +3,7 @@ import { autoUpdater } from 'electron-updater';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
+import { capturePreImage, configureWriteJournal } from './journal';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -379,6 +380,7 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
   try {
     const dir = path.dirname(resolved.fullPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
     // Atomic write: a crash mid-write must never leave a half-written note or database.
     const tmp = `${resolved.fullPath}.tmp`;
     fs.writeFileSync(tmp, content, 'utf-8');
@@ -395,7 +397,10 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
-    if (fs.existsSync(resolved.fullPath)) fs.unlinkSync(resolved.fullPath);
+    if (fs.existsSync(resolved.fullPath)) {
+      capturePreImage(resolved.repo, resolved.fullPath, 'delete');
+      fs.unlinkSync(resolved.fullPath);
+    }
     return { success: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -781,6 +786,7 @@ initHtmxViews({
 });
 
 app.on('ready', () => {
+  configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
   createWindow();
   // GitHub-backed auto-update for NSIS builds. Store builds
