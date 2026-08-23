@@ -17,30 +17,54 @@ cuts and claims the branch before the delegation goes out.
 
 ## Active
 
-| ID | Task | Owner | Status | Branch | Touch scope | Acceptance evidence |
-| --- | --- | --- | --- | --- | --- | --- |
-| T-022 | **`.db` v2 multi-table** — schema overview, drill-in, back (D28) | Codex | `IN_PROGRESS` | `feature/T-022-db-multi-table` | `lib/db.ts`, `DbSurface.tsx`, `DbView.tsx`, `MDXPreview.tsx` (table attr only), `tools/db.test.mjs` | v1 stays v1 on round-trip; overview for >1 table; unknown fields preserved; suite proven to bite |
-| T-025 | **View API** — `GET /api/v1/db` HTML fragment route so a no-script `.nhtml` can render database rows at all (D30) | Claude | `READY` | `feature/T-025-db-fragment-route` | `src/main/htmx/server.ts`, `tools/htmx-views.test.mjs` | Fragment for `HX-Request`, JSON otherwise; gated on `workspace.files.read` + path policy; every cell escaped; no query features |
-| T-023 | **Planner.db + task dashboards** (D29) | Codex | `BLOCKED` on T-025 | `feature/T-023-planner-dashboards` | `examples/demo-repo/**`, filename refs in docs | Both dashboards read live data; least-privilege manifests; legible in both themes |
-| T-026 | **Graph panel redesign** — floating square top-right, all nodes visible not just connected ones, themed three-tier colouring (selected / connected / rest) | Claude | `READY` | `feature/T-026-graph-panel` | `GraphCanvas.tsx`, graph panel placement, `index.css` | Square floating panel; unconnected nodes shown; colours from theme tokens, never hardcoded; `impeccable` per D12 |
-| T-027 | **Live-mode MDX imports** — Reading view now hides ESM statements; Live view still shows them as body text. Dim them as module metadata rather than hide, so they stay editable | Claude | `NEEDS_USER` | `feature/T-027-live-esm-styling` | `LiveEditor.tsx` | ESM lines read as metadata, remain editable |
-| T-012 | **E2E coverage** — extend the Playwright suite to the features the harness does not yet reach: tabs, search, tags, wiki-links, properties/frontmatter, task checkboxes, tables, canvas editing + undo/redo, `.db` row/schema editing, settings + theme presets, keybinding rebinding, terminal, automations, plugins, graph, browser tabs | Claude | `BACKLOG` | one branch per area | `e2e/**` only | Each area has a spec that fails if the feature breaks; full suite green; no test asserts on a selector it did not verify against the running app |
-| T-020 | **Store submission** — replace the `appx` Partner Center placeholders (`identityName`, `publisher`, `publisherDisplayName`) with real values. Blocks any Microsoft Store submission (D24) | Claude | `NEEDS_USER` | `feature/T-020-appx-identity` | `package.json` `build.appx` only | `npm run dist:store` produces a submittable package |
-| T-021 | **Untracked exposure** — the PTY spawns a real shell with `env: process.env` inherited wholesale, and plugins run in-renderer with the full `electronAPI` (risk R3). Both are deliberate "trusted code" designs, but neither is written down as a decision | Claude | `NEEDS_USER` | — | `DECISIONS.md` | A recorded decision accepting or constraining each |
-| T-013 | **Dependency** — `js-yaml` high-severity advisory (CVE-2026-59870, quadratic CPU) reaches production deps transitively; `npm audit --omit=dev` reports it, `fixAvailable: true`. Pre-existing, unrelated to Playwright | Claude | `BACKLOG` | `package.json`, `package-lock.json` | `npm audit --omit=dev` clean; four standing checks green; E2E suite green |
-| T-008 | **Transport evaluation** — `neuron://` custom protocol vs. the loopback HTTP server; decision record only (D15) | Codex | `DONE` | `feature/T-008-protocol-research` | `docs/architecture/neuron-protocol-api.md` | See Done table |
-| T-004 | **M0c** — reconcile `docs/roadmap/production-readiness-plan.md` with reality (its §11 "next task" and several inventory rows are stale — e.g. the `.vw` README fix is already done) | Claude | `BACKLOG` | `feature/T-004-roadmap-sync` | `docs/roadmap/*` | Every claim in the plan's inventory table re-verified against the tree; §11 points at this board |
-| T-005 | **M1a** — central typed command registry `{ id, title, scope, when(), run(), defaultKeys[] }` | Codex | `NEEDS_USER` | `feature/T-005-command-registry` | TBD at packet time; **serializes on `src/renderer/App.tsx`** | Registry unit tests (registration, duplicate id, scope precedence); palette behaviour unchanged; four standing checks green |
-| T-006 | **M1b** — focus-scoped keyboard dispatcher + versioned hotkey schema + migration from the current flat map | Codex | `BACKLOG` (depends on T-005) | `feature/T-006-key-dispatcher` | `src/renderer/lib/keybindings.ts`, `App.tsx` dispatcher; **serializes on `App.tsx`** | Chord-normalization, conflict-detection, scope-precedence and migration tests; existing user bindings preserved; no double-fire; IME composition and `defaultPrevented` respected |
-| T-007 | **M1c** — command palette + settings hotkey editor consume the registry; delete the scattered wiring | Codex | `BACKLOG` (depends on T-005, T-006) | `feature/T-007-registry-consumers` | `components/CommandPalette.tsx`, `views/SettingsPage.tsx`; **serializes on `App.tsx`** | No `keydown` handler outside the dispatcher; add/remove/disable/reset all work; four standing checks green |
+Ordered by dependency, not priority. **Nothing in a later wave may start before
+its wave-A dependency has merged**, because each wave's files are the previous
+wave's output.
 
-T-005 is `NEEDS_USER` because the registry's scope list and the `Ctrl/Cmd+L`
-default (plan §7) are product decisions that must be recorded in `DECISIONS.md`
-before a packet can be written — a non-interactive agent would otherwise guess.
+Branch model is `feature/T-xxx-<slug>` → `dev` → `test` → `main` (D10).
 
-**Serialization note:** T-005, T-006 and T-007 all touch `src/renderer/App.tsx`
-and must run strictly one at a time in this checkout (`AGENTS.md` §8). They are
-**not** parallel-safe with each other or with anything else touching `App.tsx`.
+### Wave A — no dependencies, run in parallel
+
+| ID | Task | Owner | Status | Touch scope | Why it is first |
+| --- | --- | --- | --- | --- | --- |
+| T-022 | **`.db` v2 multi-table** — schema overview, drill-in, back (D28) | Codex | `IN_PROGRESS` | `lib/db.ts`, `DbSurface.tsx`, `DbView.tsx`, `MDXPreview.tsx` (table attr only), `tools/db.test.mjs` | Renderer-only; touches nothing another wave needs |
+| T-028 | **Remove `.nhtml` / `.ndash`; workspace views become plain `.html`** (D31) | Codex | `READY` | `src/main/main.ts`, `src/main/htmx/**`, `surfaces/index.ts`, `HtmxViewSurface.tsx`, `examples/**`, `docs/**`, `skills/**`, `tools/htmx-views.test.mjs`, `e2e/**` | **The unblocker.** Three later rows are shaped by whether views are `.html` |
+| T-026 | **Graph panel** — floating square top-right, all nodes visible, themed three-tier colouring | Claude | `READY` | `GraphCanvas.tsx`, panel placement, `index.css` | Isolated to the graph; `impeccable` per D12 |
+
+### Wave B — needs Wave A merged
+
+| ID | Task | Owner | Status | Blocked by | Why |
+| --- | --- | --- | --- | --- | --- |
+| T-029 | **AI providers → Vercel AI SDK** (D32) | Codex | `BLOCKED` | T-028 | Both edit `src/main/main.ts`, a serialization point (`AGENTS.md` §8) |
+| T-023 | **`Planner.db` + two task dashboards** (D29) | Codex | `BLOCKED` | T-022, T-028 | Needs the v2 reader to exist, and the dashboards must be `.html` |
+| T-030 | **Third-party plugins as sandboxed HTML apps** (D33) | Codex | `BLOCKED` | T-028 | The sandbox it reuses only accepts plain HTML after T-028 |
+
+### Wave C — after the surfaces stop moving
+
+| ID | Task | Owner | Status | Why last |
+| --- | --- | --- | --- | --- |
+| T-012 | **E2E coverage** for tabs, search, tags, wiki-links, properties, canvas editing, `.db` editing, settings, terminal, automations, plugins, graph | Claude | `BACKLOG` | Specs written against surfaces that are mid-rewrite get rewritten too. Claude-owned: selectors written without running them are guesses (D21) |
+| T-004 | **Reconcile `docs/roadmap/production-readiness-plan.md`** with reality | Claude | `BACKLOG` | Deliberately last. Reconciling a roadmap against a tree that is still changing produces a document stale on arrival |
+
+### Independent — pick up any time
+
+| ID | Task | Owner | Status | Note |
+| --- | --- | --- | --- | --- |
+| T-013 | `js-yaml` high-severity advisory reaching production deps (`fixAvailable: true`) | Claude | `BACKLOG` | One command; low real-world exposure (DoS on self-parsed frontmatter) |
+| T-027 | Live view still shows MDX ESM lines as body text | Claude | `NEEDS_USER` | Recommend dimming as metadata, not hiding — hiding makes them uneditable |
+| T-025 | `GET /api/v1/db` HTML fragment route (D30) | Claude | `OPTIONAL` | **No longer blocking.** D31 lets any view run scripts and parse JSON itself |
+
+### Needs a decision from the user
+
+| ID | Task | Note |
+| --- | --- | --- |
+| T-020 | `appx` Partner Center placeholders | Hard blocker for any Microsoft Store submission (D24) |
+| T-021 | PTY inherits `process.env` wholesale; plugins run unsandboxed in-renderer | Both deliberate, neither written down as a decision |
+| T-005 | Command registry — **unblocked by D26**, ready to delegate | Then T-006 dispatcher, then T-007 consumers |
+
+**Serialization points.** These files may only ever have one writer at a time:
+`src/renderer/App.tsx` (T-005 / T-006 / T-007), `src/main/main.ts` (T-028 then
+T-029), `src/main/htmx/**` (T-028), `src/renderer/index.css`.
 
 ---
 

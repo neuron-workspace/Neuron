@@ -544,6 +544,29 @@ explicit (T-021).
 main renderer process. That is the one thing the webview cannot do, and it is not
 a requirement today.
 
+### D34 — Playwright stays the E2E driver, with the "experimental" caveat recorded
+**Approved:** Claude (2026-08-23), after reading Electron's automated-testing guide.
+**Consequence:** Electron's own documentation describes Playwright's Electron
+support as **experimental**, delivered over the Chrome DevTools Protocol, and
+presents **WebdriverIO** as the preferred WebDriver-based option. That is worth
+knowing and worth writing down, because it is a dependency on an interface
+Electron does not promise.
+
+We stay on Playwright anyway. The suite exists, is green, runs in ~48s, and is
+already a CI gate; the one serious failure it produced was a Windows file-handle
+race in our own fixture teardown, not the `_electron` API. Switching to
+WebdriverIO means rewriting 19 tests and adopting a new dependency tree to buy
+nothing currently missing.
+
+**Revisit trigger, so this is a decision and not an assumption:** if an Electron
+upgrade breaks `_electron.launch` or CDP attachment, migrate rather than pin —
+pinning Electron to keep a test driver working is the wrong way round for an app
+that ships Chromium to users.
+
+**CI note:** the suite runs on `windows-latest`, which has a desktop session, so
+no virtual display is needed. If Linux is ever added to the CI matrix, Electron
+needs `xvfb` there; that is a matrix change, not a test change.
+
 ---
 
 ## Proposed
