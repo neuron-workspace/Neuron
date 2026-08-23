@@ -327,13 +327,14 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
       if (jsxStr.startsWith('<DbView')) {
         const path = jsxStr.match(/path="([^"]+)"/)?.[1];
         const view = jsxStr.match(/view="([^"]+)"/)?.[1];
+        const table = jsxStr.match(/table="([^"]+)"/)?.[1];
         if (!path) {
           const err = new Error('<DbView /> needs a path, e.g. <DbView path="@Projects.db" />.') as MDXParseError;
           err.block = jsxStr;
           err.remediation = 'Add a path attribute pointing at a .db file relative to the workspace root, prefixed with @.';
           throw err;
         }
-        return <DbView key={`dbview-${index}`} path={path} view={view} />;
+        return <DbView key={`dbview-${index}`} path={path} view={view} table={table} />;
       }
 
       // If unrecognized component tag

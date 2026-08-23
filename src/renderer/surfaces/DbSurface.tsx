@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Settings2, Table2, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Settings2, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { withinDocBudget } from '@/lib/view-security';
+import { addDbTable, drawableRelations, parseDb, serializeDb, updateDbTable, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type PropType } from '@/lib/db';
 import { registerSurface, type SurfaceProps } from './index';
 
 // ===========================================================================
@@ -14,22 +14,6 @@ import { registerSurface, type SurfaceProps } from './index';
 // to the file over the IPC bridge (atomic write in the main process); a file
 // watcher picks up external edits and refreshes the table without a reload.
 // ===========================================================================
-
-type PropType = 'text' | 'number' | 'checkbox' | 'date' | 'url' | 'select' | 'multiselect';
-
-interface DbOption { id: string; name: string; color: string }
-interface DbProperty { name: string; type: PropType; options?: DbOption[] }
-interface DbRow { id: string; values: Record<string, unknown> }
-interface DbDoc {
-  schema: { order: string[]; properties: Record<string, DbProperty> };
-  view: {
-    mode?: 'table' | 'board' | 'gallery';
-    groupBy?: string | null;
-    sortBy?: string | null; sortDir?: 'asc' | 'desc';
-    filterProp?: string | null; filterValue?: string;
-  };
-  rows: DbRow[];
-}
 
 const PROP_TYPES: { value: PropType; label: string }[] = [
   { value: 'text', label: 'Text' },
@@ -44,30 +28,13 @@ const PROP_TYPES: { value: PropType; label: string }[] = [
 const PALETTE = ['#8b8b8b', '#a27763', '#e28f44', '#d9b23c', '#5aa06c', '#528fd1', '#9a6dd7', '#d15796', '#dd5c5c'];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
-const isSelectType = (t: PropType) => t === 'select' || t === 'multiselect';
+const isSelectType = (t: string) => t === 'select' || t === 'multiselect';
 
-function tryParse(text: string): DbDoc | null {
-  if (!withinDocBudget(text)) return null;
-  try {
-    const raw = JSON.parse(text) as Partial<DbDoc>;
-    if (!raw || typeof raw !== 'object' || !raw.schema?.properties) return null;
-    const properties = raw.schema.properties;
-    const order = (raw.schema.order ?? Object.keys(properties)).filter((id) => properties[id]);
-    for (const id of Object.keys(properties)) if (!order.includes(id)) order.push(id);
-    return {
-      schema: { order, properties },
-      view: raw.view ?? {},
-      rows: Array.isArray(raw.rows) ? raw.rows.map((r) => ({ id: r?.id ?? uid(), values: r?.values ?? {} })) : [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-function starterDoc(): DbDoc {
+function starterDoc(tableName: string): DbFile {
   const name = uid(), status = uid(), tags = uid(), done = uid(), due = uid();
   const todo = uid(), doing = uid(), shipped = uid();
-  return {
+  const table: DbTable = {
+    name: tableName,
     schema: {
       order: [name, status, tags, due, done],
       properties: {
@@ -83,11 +50,14 @@ function starterDoc(): DbDoc {
         [tags]: { name: 'Tags', type: 'multiselect', options: [] },
         [due]: { name: 'Due', type: 'date' },
         [done]: { name: 'Done', type: 'checkbox' },
-      },
+      }, extra: {},
     },
     view: {},
     rows: [{ id: uid(), values: { [name]: 'First entry', [status]: todo } }],
+    extra: {},
+    hadView: true,
   };
+  return { format: 1, tables: { [tableName.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'table']: table }, relations: [], extra: {}, hadRelations: false };
 }
 
 function Chip({ option }: { option: DbOption }) {
@@ -109,27 +79,111 @@ function displayValue(prop: DbProperty, value: unknown): string {
   return String(value);
 }
 
+function SchemaOverview({ db, onOpen }: { db: DbFile; onOpen: (tableId: string) => void }) {
+  const ids = Object.keys(db.tables);
+  const columns = Math.min(3, ids.length);
+  const nodeWidth = 180, nodeHeight = 64, gapX = 80, gapY = 64, pad = 32;
+  const positions = new Map(ids.map((id, index) => [id, {
+    x: pad + (index % columns) * (nodeWidth + gapX),
+    y: pad + Math.floor(index / columns) * (nodeHeight + gapY),
+  }]));
+  const width = pad * 2 + columns * nodeWidth + Math.max(0, columns - 1) * gapX;
+  const rows = Math.ceil(ids.length / columns);
+  const height = pad * 2 + rows * nodeHeight + Math.max(0, rows - 1) * gapY;
+  const relations = drawableRelations(db).filter((relation) => positions.has(relation.from.table) && positions.has(relation.to.table));
+
+  return (
+    <main className="h-full overflow-auto bg-[var(--canvas)] font-sans text-[var(--ink)]">
+      <div className="flex min-h-full items-center justify-center p-8">
+        <div className="max-w-full overflow-auto" role="group" aria-label="Database schema">
+          <div className="relative" style={{ width, height }}>
+            <svg className="pointer-events-none absolute inset-0" width={width} height={height} aria-hidden="true">
+              <defs>
+                <marker id="db-relation-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                  <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--accent)" />
+                </marker>
+              </defs>
+              {relations.map((relation, index) => {
+                const from = positions.get(relation.from.table)!;
+                const to = positions.get(relation.to.table)!;
+                const dx = to.x - from.x, dy = to.y - from.y;
+                const horizontal = Math.abs(dx) >= Math.abs(dy);
+                const x1 = horizontal ? from.x + (dx > 0 ? nodeWidth : 0) : from.x + nodeWidth / 2;
+                const y1 = horizontal ? from.y + nodeHeight / 2 : from.y + (dy > 0 ? nodeHeight : 0);
+                const x2 = horizontal ? to.x + (dx > 0 ? 0 : nodeWidth) : to.x + nodeWidth / 2;
+                const y2 = horizontal ? to.y + nodeHeight / 2 : to.y + (dy > 0 ? 0 : nodeHeight);
+                return (
+                  <g key={`${relation.from.table}-${relation.from.property}-${relation.to.table}-${index}`}>
+                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--accent)" strokeWidth="1.5" markerEnd="url(#db-relation-arrow)" />
+                    <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 6} textAnchor="middle" fill="var(--ink-muted)" fontSize="11">{db.tables[relation.from.table].schema.properties[relation.from.property]?.name ?? relation.from.property}</text>
+                  </g>
+                );
+              })}
+            </svg>
+            {ids.map((id) => {
+              const table = db.tables[id];
+              const pos = positions.get(id)!;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className="interactive absolute flex flex-col justify-center rounded-md border border-[var(--divider)] bg-[var(--surface)] px-4 text-left hover:border-[var(--accent)] hover:bg-[var(--surface-hover)] active:bg-[var(--surface)] disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{ left: pos.x, top: pos.y, width: nodeWidth, height: nodeHeight }}
+                  onClick={() => onOpen(id)}
+                  aria-label={`Open ${table.name} table`}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium"><Table2 className="h-3.5 w-3.5 text-[var(--accent-strong)]" />{table.name}</span>
+                  <span className="mt-1 font-mono text-[11px] text-[var(--ink-muted)]">{id}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export function DbSurface({ path, content }: SurfaceProps) {
-  const [doc, setDocState] = useState<DbDoc | null>(null);
-  const [invalid, setInvalid] = useState(false);
+  const title = path.split('/').pop()!.replace(/\.db$/i, '');
+  const [db, setDbState] = useState<DbFile | null>(null);
+  const [selectedTable, setSelectedTableState] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [editingProp, setEditingProp] = useState<string | null>(null);
   const lastWritten = useRef<string | null>(null);
-  const docRef = useRef<DbDoc | null>(null);
+  const activePath = useRef(path);
+  const dbRef = useRef<DbFile | null>(null);
+  const selectedTableRef = useRef<string | null>(null);
 
-  const adopt = (next: DbDoc | null, bad: boolean) => {
-    docRef.current = next;
-    setDocState(next);
-    setInvalid(bad);
+  const selectTable = (tableId: string | null) => {
+    selectedTableRef.current = tableId;
+    setSelectedTableState(tableId);
+    setEditingProp(null);
+    setSearch('');
+  };
+
+  const adopt = (next: DbFile | null, nextError: string | null) => {
+    dbRef.current = next;
+    setDbState(next);
+    setError(nextError);
+    const ids = next ? Object.keys(next.tables) : [];
+    const current = selectedTableRef.current;
+    selectTable(ids.length === 1 ? ids[0] : current && next?.tables[current] ? current : null);
   };
 
   // Adopt file content: initial open, Source-mode edits, anything not our own write.
   useEffect(() => {
+    if (activePath.current !== path) {
+      activePath.current = path;
+      lastWritten.current = null;
+      selectedTableRef.current = null;
+    }
     if (content === lastWritten.current) return;
-    if (!content.trim()) { adopt(null, false); return; }
-    const parsed = tryParse(content);
-    adopt(parsed, !parsed);
-  }, [content]);
+    if (!content.trim()) { adopt(null, null); return; }
+    const parsed = parseDb(content, title);
+    adopt(parsed.db, parsed.error);
+  }, [content, path, title]);
 
   // The app doesn't reload open-note content on disk changes, so watch here:
   // external edits (git pull, sync, another editor) land without a reload.
@@ -138,22 +192,26 @@ export function DbSurface({ path, content }: SurfaceProps) {
       if (changed !== path || event === 'unlink') return;
       void window.electronAPI.readNote(path).then((text) => {
         if (text.startsWith('Error:') || text === lastWritten.current) return;
-        const parsed = tryParse(text);
-        if (parsed) adopt(parsed, false);
+        const parsed = parseDb(text, title);
+        adopt(parsed.db, parsed.error);
       });
     });
-  }, [path]);
+  }, [path, title]);
 
   // stage: update UI while typing; write: serialize the whole doc to disk.
-  const stage = (next: DbDoc) => { docRef.current = next; setDocState(next); };
-  const write = (next: DbDoc) => {
-    stage(next);
-    const text = JSON.stringify(next, null, 2) + '\n';
+  const stageDb = (next: DbFile) => { dbRef.current = next; setDbState(next); };
+  const writeDb = (next: DbFile) => {
+    stageDb(next);
+    const text = serializeDb(next);
     lastWritten.current = text;
     void window.electronAPI.writeNote(path, text);
   };
-  const flush = () => { if (docRef.current) write(docRef.current); };
-  const d = () => docRef.current!;
+  const replaceTable = (next: DbTable) => updateDbTable(dbRef.current!, selectedTableRef.current!, next);
+  const stage = (next: DbTable) => stageDb(replaceTable(next));
+  const write = (next: DbTable) => writeDb(replaceTable(next));
+  const d = () => dbRef.current!.tables[selectedTableRef.current!]!;
+  const flush = () => { if (dbRef.current && selectedTableRef.current) write(d()); };
+  const doc = selectedTable && db?.tables[selectedTable] ? db.tables[selectedTable] : null;
 
   // --- Row + cell mutations --------------------------------------------------
   const setCell = (rowId: string, propId: string, value: unknown, commit = true) => {
@@ -172,7 +230,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const addProperty = () => {
     const id = uid();
     const cur = d();
-    write({ ...cur, schema: { order: [...cur.schema.order, id], properties: { ...cur.schema.properties, [id]: { name: `Property ${cur.schema.order.length + 1}`, type: 'text' } } } });
+    write({ ...cur, schema: { ...cur.schema, order: [...cur.schema.order, id], properties: { ...cur.schema.properties, [id]: { name: `Property ${cur.schema.order.length + 1}`, type: 'text' } } } });
     setEditingProp(id);
   };
   const deleteProperty = (propId: string) => {
@@ -181,7 +239,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
     delete properties[propId];
     write({
       ...cur,
-      schema: { order: cur.schema.order.filter((id) => id !== propId), properties },
+      schema: { ...cur.schema, order: cur.schema.order.filter((id) => id !== propId), properties },
       rows: cur.rows.map((r) => { const values = { ...r.values }; delete values[propId]; return { ...r, values }; }),
       view: { ...cur.view, sortBy: cur.view.sortBy === propId ? null : cur.view.sortBy, filterProp: cur.view.filterProp === propId ? null : cur.view.filterProp },
     });
@@ -355,24 +413,27 @@ export function DbSurface({ path, content }: SurfaceProps) {
   }
 
   // --- Empty / invalid states -------------------------------------------------
-  const title = path.split('/').pop()!.replace(/\.db$/i, '');
-  if (invalid) {
+  if (error) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-[var(--ink-muted)]">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-[var(--ink-muted)]" role="alert">
         <Database className="h-5 w-5" />
         This file isn't valid database JSON. Switch to Source mode to fix it — the table will come back once it parses.
+        <span className="max-w-xl text-[var(--ink-secondary)]">{error}</span>
       </div>
     );
   }
-  if (!doc) {
+  if (!db) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <Database className="h-6 w-6 text-[var(--ink-muted)]" />
         <p className="text-sm text-[var(--ink-secondary)]">An empty database. Initialize it with a starter schema — everything is customizable afterwards.</p>
-        <Button onClick={() => write(starterDoc())}><Plus className="h-4 w-4" /> Initialize database</Button>
+        <Button onClick={() => { const next = starterDoc(title); writeDb(next); selectTable(Object.keys(next.tables)[0]); }}><Plus className="h-4 w-4" /> Initialize database</Button>
       </div>
     );
   }
+
+  if (Object.keys(db.tables).length > 1 && !doc) return <SchemaOverview db={db} onOpen={selectTable} />;
+  if (!doc) return null;
 
   const { order, properties } = doc.schema;
   const { filterProp, filterValue, sortBy, sortDir } = doc.view;
@@ -448,12 +509,20 @@ export function DbSurface({ path, content }: SurfaceProps) {
       ))}
     </div>
   );
+  const tableCount = Object.keys(db.tables).length;
+  const addTable = () => {
+    const next = addDbTable(dbRef.current!, `Table ${tableCount + 1}`);
+    writeDb(next.db);
+    selectTable(null);
+  };
 
   return (
     <main className="font-sans h-full overflow-auto bg-[var(--canvas)] text-[var(--ink)]">
       <div className="mx-auto max-w-6xl px-6 py-6 vw-content space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="mr-auto flex items-center gap-2 text-base font-semibold tracking-tight"><Database className="h-4 w-4 text-[var(--accent-strong)]" /> {title}</h1>
+          {tableCount > 1 && <Button variant="ghost" size="sm" onClick={() => selectTable(null)} aria-label="Back to schema overview"><ArrowLeft /> Schema</Button>}
+          <h1 className="mr-auto flex items-center gap-2 text-base font-semibold tracking-tight"><Database className="h-4 w-4 text-[var(--accent-strong)]" /> {doc.name}</h1>
+          <Button variant="outline" size="sm" onClick={addTable}><Plus /> Table</Button>
           <div className="mode-switch" aria-label="View mode">
             <button type="button" aria-pressed={mode === 'table'} className="interactive flex items-center gap-1 text-xs font-medium" onClick={() => setMode('table')}><Table2 className="h-3.5 w-3.5" /> Table</button>
             <button type="button" aria-pressed={mode === 'board'} className="interactive flex items-center gap-1 text-xs font-medium disabled:opacity-40" disabled={!groupBy} title={groupBy ? undefined : 'Add a Select property to use the board'} onClick={() => setMode('board')}><Columns3 className="h-3.5 w-3.5" /> Board</button>
