@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sparkles, Plug, PencilRuler, LayoutGrid, Search, PackagePlus, ShieldCheck, PanelRight, PanelBottom, TerminalSquare } from 'lucide-react';
 import { usePlugins } from '../plugins/host';
-import type { PluginCategory, PluginManifest } from '../plugins/types';
+import type { PluginCategory, PluginManifest, SandboxedPluginDescriptor } from '../plugins/types';
 import { Input } from '../components/ui/input';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
@@ -15,6 +15,23 @@ const categoryMeta: Record<PluginCategory, { label: string; icon: React.Componen
   editor: { label: 'Editor', icon: PencilRuler },
   view: { label: 'Views', icon: LayoutGrid },
 };
+
+const SANDBOXED_MANIFEST = /^plugins\/([^/]+)\/neuron\.app\.json$/i;
+
+function sandboxedDescriptor(manifestPath: string, raw: unknown): SandboxedPluginDescriptor | null {
+  const match = manifestPath.match(SANDBOXED_MANIFEST);
+  if (!match || !raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const manifest = raw as Record<string, unknown>;
+  const folder = match[1];
+  return {
+    name: typeof manifest.name === 'string' ? manifest.name : folder,
+    version: typeof manifest.version === 'string' ? manifest.version : 'unversioned',
+    description: typeof manifest.description === 'string' ? manifest.description : 'A sandboxed HTML plugin in this workspace.',
+    entry: `plugins/${folder}/index.html`,
+    manifestPath,
+    permissions: Array.isArray(manifest.permissions) ? manifest.permissions.filter((permission): permission is string => typeof permission === 'string') : [],
+  };
+}
 
 function ConfigForm({ manifest }: { manifest: PluginManifest }) {
   const { getConfig, setConfig } = usePlugins();
@@ -99,18 +116,82 @@ function PluginRow({
   );
 }
 
+function SandboxedPluginRow({ plugin, onOpen }: { plugin: SandboxedPluginDescriptor; onOpen: () => void }) {
+  return (
+    <div className="rounded-md border border-[var(--divider)] bg-[var(--canvas)] p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
+          <LayoutGrid className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="truncate text-sm font-semibold text-[var(--ink)]">{plugin.name}</h3>
+            <Badge variant="outline">Sandboxed HTML</Badge>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">{plugin.description}</p>
+          <p className="mt-1 font-mono text-[10px] text-[var(--ink-muted)]">{plugin.entry} · v{plugin.version}</p>
+          <p className="mt-2 text-[10px] leading-4 text-[var(--ink-muted)]">
+            Requests: {plugin.permissions.length ? plugin.permissions.join(', ') : 'no workspace capabilities'}
+          </p>
+        </div>
+        <Button className="shrink-0" size="sm" variant="outline" onClick={onOpen}>Open isolated app</Button>
+      </div>
+    </div>
+  );
+}
+
 export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { onOpenSidePanel: () => void; onOpenBottomPanel: () => void }) {
-  const { plugins } = usePlugins();
+  const { plugins, runtimeFor } = usePlugins();
+  const [sandboxedPlugins, setSandboxedPlugins] = useState<SandboxedPluginDescriptor[]>([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<PluginCategory | 'all'>('all');
 
-  const presentCategories = useMemo(() => Array.from(new Set(plugins.map((p) => p.category))), [plugins]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const files = await window.electronAPI.listNotes();
+        const fileSet = new Set(files);
+        const discovered = await Promise.all(files.filter((path) => SANDBOXED_MANIFEST.test(path)).map(async (manifestPath) => {
+          try {
+            const descriptor = sandboxedDescriptor(manifestPath, JSON.parse(await window.electronAPI.readNote(manifestPath)));
+            return descriptor && fileSet.has(descriptor.entry) ? descriptor : null;
+          } catch {
+            return null;
+          }
+        }));
+        if (!cancelled) setSandboxedPlugins(
+          discovered
+            .filter((plugin): plugin is SandboxedPluginDescriptor => plugin !== null)
+            .sort((a, b) => a.entry.localeCompare(b.entry)),
+        );
+      } catch {
+        if (!cancelled) setSandboxedPlugins([]);
+      }
+    };
+    void load();
+    const unsubscribe = window.electronAPI.onNotesChanged((_event, path) => {
+      if (path.startsWith('plugins/')) void load();
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, []);
+
+  const presentCategories = useMemo(() => Array.from(new Set<PluginCategory>([
+    ...plugins.map((p) => p.category),
+    ...(sandboxedPlugins.length ? ['view' as const] : []),
+  ])), [plugins, sandboxedPlugins.length]);
   const filtered = plugins.filter((p) => {
     const matchesCategory = category === 'all' || p.category === category;
     const q = query.trim().toLowerCase();
     const matchesQuery = !q || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
     return matchesCategory && matchesQuery;
   });
+  const filteredSandboxed = sandboxedPlugins.filter((plugin) => {
+    const q = query.trim().toLowerCase();
+    return (category === 'all' || category === 'view')
+      && (!q || plugin.name.toLowerCase().includes(q) || plugin.description.toLowerCase().includes(q) || plugin.entry.toLowerCase().includes(q));
+  });
+  const openSandboxedPlugin = (entry: string) => runtimeFor('sandboxed-html-catalog').openNote(entry);
 
   return (
     <div className="canvas-surface flex h-full w-full flex-col">
@@ -118,7 +199,7 @@ export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { on
         <h1 className="text-base font-semibold tracking-[-0.01em] text-[var(--ink)]">Integrations & Plugins</h1>
         <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--ink-secondary)]">
           <ShieldCheck className="h-3.5 w-3.5 text-[var(--accent-strong)]" />
-          Keys are stored locally and AI calls run through the desktop app — your notes and credentials never ship in the bundle.
+          Built-ins are trusted Neuron code. Workspace plugins run as capability-scoped HTML apps in an isolated webview.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <label className="relative w-full max-w-xs">
@@ -137,7 +218,14 @@ export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { on
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto max-w-3xl space-y-3 p-6">
           {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} onOpenSidePanel={onOpenSidePanel} onOpenBottomPanel={onOpenBottomPanel} />)}
-          {filtered.length === 0 && <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>}
+          {filteredSandboxed.map((plugin) => (
+            <SandboxedPluginRow
+              key={plugin.manifestPath}
+              plugin={plugin}
+              onOpen={() => openSandboxedPlugin(plugin.entry)}
+            />
+          ))}
+          {filtered.length === 0 && filteredSandboxed.length === 0 && <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>}
 
           <div className="rounded-md border border-dashed border-[var(--divider)] p-4">
             <div className="flex items-center gap-3">
@@ -146,9 +234,8 @@ export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { on
               </span>
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-[var(--ink)]">Add a custom plugin</h3>
-                <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Drop a plugin folder into the workspace to extend Neuron with your own panels, commands, and components. Folder-loaded plugins are coming soon.</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Copy a folder containing <code>index.html</code> and <code>neuron.app.json</code> into <code>plugins/</code>. It runs as an isolated HTML app, never as renderer code.</p>
               </div>
-              <Button size="sm" variant="outline" disabled>Coming soon</Button>
             </div>
           </div>
         </div>
