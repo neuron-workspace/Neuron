@@ -567,6 +567,39 @@ that ships Chromium to users.
 no virtual display is needed. If Linux is ever added to the CI matrix, Electron
 needs `xvfb` there; that is a matrix change, not a test change.
 
+### D35 — An acceptance criterion may not require a file the packet forbids
+**Approved:** Claude (2026-08-23), after the third identical mistake in one day.
+**Consequence:** three delegated jobs stopped and reported blockers, and **all
+three were packet errors, not agent errors**:
+
+- **T-015** — required a test file the sandbox could not create.
+- **T-022** — required `<DbView table>` reachable from MDX while forbidding
+  `MDXPreview.tsx`, which is what parses the attributes.
+- **T-028** — required zero grep matches for `.nhtml` while forbidding
+  `App.tsx`, which *creates* `.nhtml` files, and `DECISIONS.md`, which documents
+  their removal.
+
+One shape: **the acceptance criteria described a wider blast radius than the
+allowed-files list permitted.** Writing the criteria first and the file list
+second, from memory, produces exactly this.
+
+So, before any packet goes out:
+
+1. For each acceptance criterion, name the files that must change to satisfy it.
+   If a file is not in the allowed list, either add it or weaken the criterion.
+2. Any criterion phrased as "nothing anywhere does X" must be **run** first —
+   `grep -rl` — and every hit either authorised or explicitly exempted with a
+   reason. "Zero matches" is a claim about the whole repository and cannot be
+   made from memory.
+3. Historical records — decision documents, changelogs, handoff logs — are
+   exempt from cleanup criteria by default. A record of a removal has to name
+   the thing removed; editing it to erase the term destroys the record.
+
+The agents behaved correctly every time: each stopped, named the exact
+contradiction, and changed nothing. That is the packet contract working. The
+cost is a round trip per mistake, which is cheap compared to an agent that
+resolves the contradiction by guessing which half of the packet to honour.
+
 ---
 
 ## Proposed
