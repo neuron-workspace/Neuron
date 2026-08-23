@@ -29,8 +29,18 @@ Thumbs.db
 # Agent, model, and local automation state
 .agents/
 .codex/
-.claude/
 .impeccable/
+
+# .claude/ holds the durable dual-agent context system and IS tracked: a
+# gitignored context system cannot be read from a fresh clone, and is absent
+# from the git worktrees delegated agents run in -- which defeats its purpose.
+# Only machine-local Claude state is ignored.
+.claude/*
+!.claude/*.md
+!.claude/context-packs/
+.claude/settings.local.json
+.claude/shell-snapshots/
+.claude/todos/
 skills-lock.json
 tools/agent-*
 tools/qa-*
