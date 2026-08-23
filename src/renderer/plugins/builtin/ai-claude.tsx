@@ -11,7 +11,7 @@ const aiClaude: PluginModule = {
     description: 'Chat with Anthropic Claude about the note you are editing. Calls the Claude API through the desktop app.',
     category: 'ai',
     configSchema: [
-      { key: 'apiKey', label: 'Anthropic API key', type: 'password', placeholder: 'sk-ant-…', description: 'Stored locally in app settings; used only for your requests.' },
+      { key: 'apiKey', label: 'Anthropic API key', type: 'password', placeholder: 'sk-ant-…', description: 'Stored in the main process. It is never readable by the app UI or by any plugin, including this one.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'claude-opus-4-8', description: 'Optional. Defaults to claude-opus-4-8.' },
     ],
   },

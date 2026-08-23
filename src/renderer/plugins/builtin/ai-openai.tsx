@@ -11,7 +11,7 @@ const aiOpenai: PluginModule = {
     description: 'Chat with OpenAI GPT models about the note you are editing. Calls the OpenAI API through the desktop app.',
     category: 'ai',
     configSchema: [
-      { key: 'apiKey', label: 'OpenAI API key', type: 'password', placeholder: 'sk-proj-…', description: 'Stored locally in app settings; used only for your requests.' },
+      { key: 'apiKey', label: 'OpenAI API key', type: 'password', placeholder: 'sk-proj-…', description: 'Stored in the main process. It is never readable by the app UI or by any plugin, including this one.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'gpt-4o', description: 'Optional. Defaults to gpt-4o.' },
     ],
   },
