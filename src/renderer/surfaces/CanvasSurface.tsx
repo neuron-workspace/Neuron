@@ -27,7 +27,7 @@ import { registerSurface, type SurfaceProps } from './index';
 
 const SNAP = 16;
 const NUDGE_FLUSH_MS = 400;
-const TEXT_EXT = /\.(md|mdx|db|canvas|nhtml)$/i;
+const TEXT_EXT = /\.(md|mdx|db|canvas|html)$/i;
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
 const fileExt = (p: string) => p.split('.').pop()?.toLowerCase() ?? '';
 

@@ -1,7 +1,7 @@
 {
   "name": "Custom dashboard",
   "version": "1.0.0",
-  "description": "A .ndash scripting dashboard: its own CSS + JS, reads workspace data and writes the projectStatus variable through the local API.",
+  "description": "An HTML dashboard with its own CSS + JS; it reads workspace data and writes the projectStatus variable through the local API.",
   "permissions": [
     "notes.read",
     "tags.read",

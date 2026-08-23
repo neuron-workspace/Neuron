@@ -1,12 +1,12 @@
 # Building HTMX views
 
 Neuron can render custom local interfaces from plain HTML files with
-[htmx](https://htmx.org) attributes. Open **Team dashboard.nhtml** in this
+[htmx](https://htmx.org) attributes. Open **Team dashboard.html** in this
 workspace to see one live.
 
 ## How it works
 
-- An `.nhtml` file is ordinary HTML. Opening it renders an isolated view tab;
+- An `.html` file is ordinary HTML. Opening it renders an isolated view tab;
   the **Source** toggle in the tab header edits the same file as text.
 - htmx attributes (`hx-get`, `hx-post`, `hx-trigger`, `hx-target`, `hx-swap`, …)
   talk to Neuron's local API at `/api/v1/...`. htmx is bundled with Neuron —
@@ -22,19 +22,20 @@ The first view you open scaffolds `.neuron/` at the workspace root:
   Use them in a view or fragment as `{{ variables.name }}` — values are always
   HTML-escaped.
 - `fragments/` — reusable HTML partials served at `/api/v1/fragments/<name>`.
-- `styles/` — optional per-view CSS. `My view.nhtml` automatically loads
+- `styles/` — optional per-view CSS. `My view.html` automatically loads
   `.neuron/styles/My view.css` if it exists (local rules only; `@import` and
   remote URLs are blocked).
 - `templates/` — starter views to copy from (dashboard, note browser, file list).
 
 ## Permissions
 
-Views are read-only by default. To write files or variables, add a manifest
-next to the view (`Team dashboard.nhtml` → `Team dashboard.neuron.json`)
-declaring `permissions`, `allowedReadPaths`, and `allowedWritePaths`. Neuron
-shows an approval dialog before the first run and again whenever the manifest
-changes. Views can never run scripts, reach the network, or leave the
-workspace.
+Views receive no capabilities by default. To read or write workspace data, add
+a manifest under `.neuron/manifests/` (`Team dashboard.html` →
+`.neuron/manifests/Team dashboard.json`) declaring `permissions`,
+`allowedReadPaths`, and `allowedWritePaths`. Neuron shows an approval dialog
+before the first run and again whenever the manifest changes. Inline scripts
+may run, but views cannot reach the network, Node, or files outside their
+approved paths.
 
 ## Useful endpoints
 
@@ -53,6 +54,6 @@ workspace.
 ## Migrating old `.vw` block views
 
 Earlier Neuron versions used `.vw` dashboard files. Those files are no longer
-rendered but remain untouched on disk. Rebuild them as `.nhtml`: layout tags
+rendered but remain untouched on disk. Rebuild them as `.html`: layout tags
 become plain HTML with `neuron-*` classes, and data blocks (file lists,
 search, metrics) become `hx-get` calls to the API routes above.

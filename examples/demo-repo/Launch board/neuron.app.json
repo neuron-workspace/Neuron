@@ -1,7 +1,7 @@
 {
   "name": "Launch board",
   "version": "1.0.0",
-  "description": "A folder mini-app: this folder renders as a single app because it contains neuron.app.json. The UI is defined in neuron.app.",
+  "description": "A folder mini-app: this folder renders as a single app because it contains neuron.app.json. The UI is defined in index.html.",
   "permissions": [
     "workspace.directories.list",
     "workspace.search",

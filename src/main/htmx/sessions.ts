@@ -9,7 +9,7 @@ export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface ViewSession {
   id: string;
-  /** Workspace-relative posix path of the view file (.nhtml, .ndash, or neuron.app). */
+  /** Workspace-relative posix path of the HTML view file. */
   viewPath: string;
   /** Absolute workspace root this session is bound to. */
   root: string;
@@ -18,8 +18,6 @@ export interface ViewSession {
   caps: ReadonlySet<string>;
   readPolicy: RegExp[];
   writePolicy: RegExp[];
-  /** A scripting dashboard (.ndash): its document may run inline JS (relaxed CSP). */
-  allowScripts: boolean;
   /** One-time token authenticating the initial document request; null once used. */
   bootToken: string | null;
   cookieToken: string;
@@ -44,7 +42,7 @@ function safeEqual(a: string, b: string): boolean {
 export class SessionManager {
   private sessions = new Map<string, ViewSession>();
 
-  create(init: Pick<ViewSession, 'viewPath' | 'root' | 'name' | 'theme' | 'caps' | 'readPolicy' | 'writePolicy' | 'allowScripts'>): ViewSession {
+  create(init: Pick<ViewSession, 'viewPath' | 'root' | 'name' | 'theme' | 'caps' | 'readPolicy' | 'writePolicy'>): ViewSession {
     const session: ViewSession = {
       ...init,
       id: token(),

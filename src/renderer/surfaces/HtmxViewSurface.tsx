@@ -81,17 +81,19 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   // Reload the tab (not the app) when this view's source or .neuron config
   // changes on disk. A fresh session re-reads manifest and permissions.
   useEffect(() => {
-    // A folder app (…/neuron.app) keeps its manifest beside it; a .nhtml view's
-    // manifest lives under .neuron/manifests/. Reload the tab when either changes.
-    const isApp = /(^|\/)neuron\.app$/i.test(path);
-    const manifestPath = isApp ? `${path}.json` : `.neuron/manifests/${path.replace(/\.(nhtml|ndash)$/i, '.json')}`;
-    const legacyManifest = path.replace(/\.nhtml$/i, '.neuron.json');
+    // Plain views use .neuron/manifests; a folder app's co-located marker may
+    // turn its index.html into an app. Reload when any applicable manifest moves.
+    const manifestPath = `.neuron/manifests/${path.replace(/\.html$/i, '.json')}`;
+    const legacyManifest = path.replace(/\.html$/i, '.neuron.json');
+    const slash = path.lastIndexOf('/');
+    const appManifest = slash >= 0 ? `${path.slice(0, slash)}/neuron.app.json` : null;
     return window.electronAPI.onNotesChanged((_event, changed) => {
       // Not variables.json: views write variables through the API and a reload
       // on every variable change would wipe in-page form state.
       const mine = changed === path
         || changed === manifestPath
         || changed === legacyManifest
+        || changed === appManifest
         || changed.startsWith('.neuron/fragments/')
         || changed.startsWith('.neuron/styles/')
         || changed === '.neuron/config.json';
@@ -122,22 +124,22 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   }
 
   if (phase.kind === 'needs-approval') {
-    const writeCaps = phase.permissions.filter((p) => p in CAP_LABELS);
+    const requestedCaps = phase.permissions.filter((p) => p in CAP_LABELS);
     return centered(
       <div className="w-full max-w-md rounded-lg bg-[var(--surface)] p-5 text-left">
         <div className="flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
-          <ShieldQuestion className="h-4 w-4 text-[var(--accent-strong)]" /> “{phase.name}” requests permissions
+          <ShieldQuestion className="h-4 w-4 text-[var(--accent-strong)]" /> “{path}” requests workspace access
         </div>
         {phase.description ? <p className="mt-1 text-xs text-[var(--ink-secondary)]">{phase.description}</p> : null}
         <ul className="mt-3 space-y-1.5">
-          {writeCaps.map((cap) => (
+          {requestedCaps.map((cap) => (
             <li key={cap} className="flex items-start gap-2 text-xs text-[var(--ink-secondary)]">
               <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
               <span>{CAP_LABELS[cap]} <code className="text-[10px] text-[var(--ink-muted)]">({cap})</code></span>
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-[11px] text-[var(--ink-muted)]">Permissions are limited to the paths declared in the view manifest. Editing the manifest re-requests approval.</p>
+        <p className="mt-3 text-[11px] text-[var(--ink-muted)]">Only allow if you trust this file and where it came from. Access is limited to the paths in its manifest; editing that manifest re-requests approval. Close the tab to refuse.</p>
         <div className="mt-4 flex gap-2">
           <Button onClick={() => void approve('always')}>Allow for this view</Button>
           <Button variant="secondary" onClick={() => void approve('once')}>Allow once</Button>
@@ -164,7 +166,7 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
     <div className="flex h-full w-full flex-col bg-[var(--canvas)]">
       <div className="flex items-center gap-2 border-b divider-color px-3 py-1.5">
         <span className="truncate text-xs font-medium text-[var(--ink)]">{phase.name}</span>
-        <span className="text-[10px] text-[var(--ink-muted)]">{/\.ndash$/i.test(path) ? 'Scripting dashboard · isolated' : 'HTMX view · isolated'}</span>
+        <span className="text-[10px] text-[var(--ink-muted)]">HTML view · isolated</span>
         <button
           type="button"
           title="Reload view"
@@ -191,8 +193,6 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   );
 }
 
-registerSurface('nhtml', HtmxViewSurface);
-registerSurface('ndash', HtmxViewSurface); // scripting dashboards: self-contained HTML + inline JS
-registerSurface('app', HtmxViewSurface); // folder mini-apps open their neuron.app entry as a view
+registerSurface('html', HtmxViewSurface);
 
 export default HtmxViewSurface;

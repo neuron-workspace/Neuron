@@ -5,8 +5,8 @@ small custom interfaces. Your workspace is an ordinary folder, your content is
 stored in plain files you can keep in Git or a sync folder, and Neuron itself
 does not require an account.
 
-The unusual part is the view platform. Shareable `.nhtml`, `.ndash`, and
-folder mini-app views run away from Neuron's privileged interface and receive
+The unusual part is the view platform. Shareable `.html` and folder mini-app
+views run away from Neuron's privileged interface and receive
 only named capabilities and workspace paths. That is a stronger boundary than
 all-or-nothing plugin trust: built-in plugins are reviewed application code,
 while a view starts with constrained access, cannot use Node, and cannot reach
@@ -27,15 +27,14 @@ The workspace watcher recognises these user-facing document types:
 | `.mdx` | Markdown note with supported components | Markdown/MDX text, optionally with YAML frontmatter |
 | `.canvas` | Spatial board | JSON Canvas document |
 | `.db` | Typed database | JSON schema, view state, and rows |
-| `.nhtml` | HTMX view | HTML body with htmx attributes |
-| `.ndash` | Scripting dashboard | Self-contained HTML with optional inline CSS and JavaScript |
-| `neuron.app` | Folder mini-app entry point | HTMX-view body inside an app folder |
-| `neuron.app.json` | Folder mini-app manifest | Capabilities and allowed paths for `neuron.app` |
-| `.neuron/manifests/*.json` | View manifests | Capabilities and allowed paths for `.nhtml` and `.ndash` |
+| `.html` | Sandboxed view | HTML with optional htmx attributes, inline CSS, and JavaScript |
+| `index.html` | Folder mini-app entry point | HTML view inside a marked app folder |
+| `neuron.app.json` | Folder mini-app marker and manifest | Capabilities and allowed paths for `index.html` |
+| `.neuron/manifests/*.json` | View manifests | Capabilities and allowed paths for standalone `.html` views |
 | `.neuron/layout.json` | Workspace shell | JSON layout tree |
 
 Neuron also watches the view platform's `.neuron` JSON, HTML, and CSS assets,
-plus legacy `neuron.config`, `*.neuron.json`, and `.nhtml` sidecar manifests.
+plus legacy `neuron.config` and `*.neuron.json` sidecar manifests.
 Images referenced by canvas file cards can be PNG, JPEG, GIF, WebP, SVG, BMP,
 or ICO files, but image files are not standalone editor surfaces.
 
@@ -206,7 +205,7 @@ rules.
 
 ## Build a dashboard or folder mini-app
 
-Use the command palette or `Ctrl/Cmd+G` to create an `.nhtml` file in the
+Use the command palette or `Ctrl/Cmd+G` to create an `.html` file in the
 current folder. Opening it starts an isolated view tab; use the tab's
 **Preview/Source** switch to run or edit it. The first view open creates missing
 starter templates and supporting files under `.neuron/` without overwriting
@@ -214,45 +213,41 @@ existing files.
 
 Choose the surface according to the job:
 
-- `.nhtml` is an HTML body with htmx attributes. Neuron supplies htmx and its
-  themed component stylesheet. User-authored JavaScript does not run.
-- `.ndash` is a self-contained scripting dashboard. Inline JavaScript may run,
-  but it remains in the same isolated, offline view boundary.
-- A non-root folder containing `neuron.app` and `neuron.app.json` becomes a
+- `.html` accepts htmx attributes, inline CSS, and JavaScript. Neuron always
+  supplies htmx and its themed component stylesheet.
+- A non-root folder containing `index.html` and `neuron.app.json` becomes a
   folder mini-app. The Explorer shows the folder as one app entry instead of
   exposing its internal files.
 
-All three use a sandboxed webview with no Node or preload bridge. Each open tab
+Both forms use a sandboxed webview with no Node or preload bridge. Each open tab
 gets an isolated session. The API exposes specific operations for files,
 directories, note metadata, tags, search, typed variables, and reusable HTML
 fragments. There is no command-execution endpoint or generic filesystem proxy.
 
-Without a manifest, `.nhtml` and `.ndash` receive the default read capabilities
-and may read across the workspace. A manifest can narrow capabilities and read
-paths. Writes, creates, deletes, and writable variables require named
-capabilities; file operations are further restricted by allowed path patterns,
-and write access prompts for one-time or persistent approval tied to the exact
-manifest content. Folder mini-apps always use their adjacent manifest and a
-manifest with no permissions grants nothing. Network policy is always `none`:
-views cannot fetch remote content, navigate away, or open popups.
+Without a manifest, an `.html` file renders but receives no capabilities and
+cannot read workspace data. A manifest requests named capabilities and allowed
+paths; every requested capability prompts for one-time or persistent approval
+tied to the exact manifest content. Folder mini-apps always use their adjacent
+manifest, and a manifest with no permissions grants nothing. Network policy is
+always `none`: views cannot fetch remote content, navigate away, or open popups.
 
 Follow the full [HTMX view user guide](htmx-views.md#user-guide) for templates,
 manifests, routes, variables, limits, and examples. The demo workspace contains
-`Team dashboard.nhtml`, `Custom dashboard.ndash`, and a `Launch board/`
+`Team dashboard.html`, `Custom dashboard.html`, and a `Launch board/`
 mini-app.
 
 ### Dashboard path: list your notes
 
-1. Create an `.nhtml` view from the command palette.
+1. Create an `.html` view from the command palette.
 2. Read [Creating a view](htmx-views.md#creating-a-view), then copy
-   `.neuron/templates/note-browser.nhtml` or
-   `.neuron/templates/file-list.nhtml`.
+   `.neuron/templates/note-browser.html` or
+   `.neuron/templates/file-list.html`.
 3. Use `GET /api/v1/notes` for note metadata or `GET /api/v1/files` for file
    paths, as documented under **API routes (`/api/v1`)** in the
    [HTMX view guide](htmx-views.md).
-4. Add a manifest only if you want to narrow the default read access or need a
-   write operation; the [manifest guide](htmx-views.md#manifests-and-permissions)
-   explains both capabilities and path policies.
+4. Add a manifest for any workspace access; the
+   [manifest guide](htmx-views.md#manifests-and-permissions) explains
+   capabilities and path policies.
 
 ## Run workspace commands and automations
 

@@ -28,22 +28,19 @@ export function interpolate(template: string, scopes: Record<string, Record<stri
 }
 
 /**
- * Wrap a user-authored view body in the full served document. `runtime`
- * (default true) injects the neuron.css design system and the htmx runtime —
- * turned off for scripting dashboards, which list their own CSS/JS in the file
- * (they can still opt in via <link href="neuron.css"> / <script src="htmx.js">).
+ * Wrap a user-authored view body in the full served document, always injecting
+ * the neuron.css design system and bundled htmx runtime.
  */
-export function wrapDocument(opts: { body: string; title: string; sessionId: string; theme: 'light' | 'dark'; styles: string[]; runtime?: boolean }): string {
+export function wrapDocument(opts: { body: string; title: string; sessionId: string; theme: 'light' | 'dark'; styles: string[] }): string {
   const base = `/views/${opts.sessionId}`;
-  const runtime = opts.runtime !== false;
   const styleLinks = opts.styles
     .map((name) => `  <link rel="stylesheet" href="${base}/styles/${esc(name)}">`)
     .join('\n');
   const head = [
-    runtime ? `  <link rel="stylesheet" href="${base}/neuron.css">` : '',
+    `  <link rel="stylesheet" href="${base}/neuron.css">`,
     styleLinks,
-    runtime ? `  <script src="${base}/htmx.js" defer></script>` : '',
-  ].filter(Boolean).join('\n');
+    `  <script src="${base}/htmx.js" defer></script>`,
+  ].join('\n');
   return `<!doctype html>
 <html lang="en">
 <head>
