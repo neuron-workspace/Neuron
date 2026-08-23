@@ -17,7 +17,10 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            args: --win --x64
+            # nsis + portable only. appx carries placeholder Partner Center
+            # identity values (T-020) and fails the build; the Store package is
+            # produced separately by `npm run dist:store` once those are real.
+            args: --win nsis portable --x64
           - name: Linux x64
             os: ubuntu-latest
             args: --linux --x64
@@ -71,6 +74,10 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Neuron ${{ github.ref_name }}
           generate_release_notes: true
+          # Any tag carrying a prerelease segment (v0.4.2-beta.1) publishes as a
+          # prerelease, so it is not offered as the latest download and
+          # electron-updater does not push it to stable users.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: false
           files: artifacts/**/*
 
