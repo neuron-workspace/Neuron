@@ -387,6 +387,23 @@ treat it as address-bar focus. Scope resolution is what keeps those from
 fighting, and the conflict detector must flag any attempt to rebind `mod+L` into
 `editor` scope.
 
+### D27 — Push and release hold (active)
+**Set by:** user (2026-08-23). **Lift condition:** the user says so explicitly.
+**Consequence:** while this stands, **no `git push` of any branch, no tag, no
+release, no Pages deploy.** Local commits and merges to `dev` continue as
+normal; they simply do not leave the machine.
+
+This is not a general caution — it is specific. The remote is currently a clean
+slate: zero releases, zero tags, zero Actions runs, `main` still at the
+pre-session commit. That state was deliberately created before a Microsoft Store
+submission, and a stray push regenerates Actions history; a stray tag fires
+`release.yml` and publishes installers built from unfinished work. Under D24 the
+version can only ever go up after the first Store submission, so anything
+published early is permanent.
+
+`origin/dev` exists at `1354298` from an earlier authorised push and is 11
+commits behind local `dev`. Leave it there.
+
 ---
 
 ## Proposed
