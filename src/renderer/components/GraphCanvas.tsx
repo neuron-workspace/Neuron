@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-interface NoteData {
+export interface NoteData {
   path: string;
   content: string;
 }
@@ -137,7 +137,11 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
     if (id === selectedNote) return 'active';
     return neighbours.has(id) ? 'near' : 'far';
   };
-  const nodeOpacity: Record<Tier, number> = { active: 1, near: 0.85, far: 0.32, plain: 0.85 };
+  // Every node stays legible. Tiers are carried by COLOUR, not by fading the
+  // unconnected ones out -- at 0.32 they read as absent, and the point of a
+  // graph is the shape of the whole workspace, not just the current
+  // neighbourhood. Opacity now only takes the far tier a shade back.
+  const nodeOpacity: Record<Tier, number> = { active: 1, near: 1, far: 0.9, plain: 0.95 };
 
   return (
     <div className="relative h-full w-full select-none">
@@ -151,7 +155,9 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
             && (link.source === selectedNote || neighbours.has(link.source))
             && (link.target === selectedNote || neighbours.has(link.target));
           const stroke = incident ? 'var(--accent)' : 'var(--divider)';
-          const opacity = !hasFocus ? 0.5 : incident ? 0.85 : bothNear ? 0.4 : 0.1;
+          // Distant links stay faintly drawn rather than vanishing: the overall
+          // structure is information even when one note has focus.
+          const opacity = !hasFocus ? 0.55 : incident ? 0.9 : bothNear ? 0.5 : 0.28;
           const width = incident ? 1.75 : 1.1;
           return (
             <line
@@ -168,12 +174,14 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
           const tier = tierOf(node.id);
           const r = radiusFor(node.degree) + (tier === 'active' ? 1.5 : 0);
           const isActive = tier === 'active';
+          // Three tiers, all from theme tokens so they follow every preset:
+          // the selected note carries the accent, its neighbours the full ink,
+          // and everything else the muted ink. Never a literal white or grey.
           const ringStroke = isActive ? 'var(--accent-strong)'
-            : tier === 'near' ? 'var(--accent)'
-            : tier === 'far' ? 'var(--divider)'
+            : tier === 'near' ? 'var(--ink)'
             : 'var(--ink-muted)';
           const fill = isActive ? 'color-mix(in oklch, var(--accent) 24%, var(--surface))' : 'var(--surface)';
-          const dotFill = isActive ? 'var(--accent-strong)' : tier === 'near' ? 'var(--accent)' : 'var(--ink-muted)';
+          const dotFill = isActive ? 'var(--accent-strong)' : tier === 'near' ? 'var(--ink)' : 'var(--ink-muted)';
           const showLabel = showAllLabels || tier === 'active' || tier === 'near';
           return (
             <g

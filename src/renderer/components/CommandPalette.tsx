@@ -1,4 +1,4 @@
-import { Blocks, Chrome, FileCode2, FolderPlus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack } from 'lucide-react';
+import { Blocks, Chrome, FileCode2, FolderPlus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import { usePlugins } from '../plugins/host';
 
@@ -14,11 +14,13 @@ interface CommandPaletteProps {
   onOpenWebsite: () => void;
   onOpenGallery: () => void;
   onToggleShell: () => void;
+  onToggleGraph: () => void;
+  graphActive: boolean;
   shellActive: boolean;
   onImportChromeLogins: () => void;
 }
 
-export default function CommandPalette({ open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onImportChromeLogins }: CommandPaletteProps) {
+export default function CommandPalette({ open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -32,6 +34,7 @@ export default function CommandPalette({ open, onOpenChange, notes, onSelectNote
           <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section</CommandItem>
           <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder</CommandItem>
           <CommandItem onSelect={() => { onToggleShell(); close(); }}><PanelsTopLeft /> {shellActive ? 'Hide workspace layout' : 'Use workspace layout (.neuron/layout.json)'}</CommandItem>
+          <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}</CommandItem>
           <CommandItem onSelect={() => { onOpenWebsite(); close(); }}><Globe /> Open website tab</CommandItem>
           <CommandItem onSelect={() => { onImportChromeLogins(); close(); }}><Chrome /> Import Chrome logins</CommandItem>
           <CommandItem onSelect={() => { onOpenMarketplace(); close(); }}><Blocks /> Plugins & integrations</CommandItem>

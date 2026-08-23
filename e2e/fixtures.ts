@@ -44,11 +44,11 @@ export const test = base.extend<AppFixture>({
     cpSync(join(repoRoot, 'examples', 'demo-repo'), workspace, { recursive: true });
     await use(workspace);
 
-    // One quick attempt, never blocking. If handles are still held the sweep
-    // above collects it next run; a stranded temp directory is not a test result.
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 1, retryDelay: 50 });
-    } catch { /* swept next run */ }
+    // Nothing is deleted here, deliberately. Even a single rmSync attempt walks
+    // a 16 MB tree whose handles Electron may still hold, and enough of those
+    // add up to Playwright's 60s worker-teardown budget -- which then fails a
+    // random test. The sweep above collects this directory on the next run,
+    // when nothing holds it. Teardown must not do slow work.
   },
 
   app: async ({ workspace }, use) => {
