@@ -24,8 +24,13 @@ test('an earlier version can be restored from the side peek', async ({ page, wor
 
   // The side peek is closed by default (layout.rightPanel === false); Ctrl+J is
   // its binding. Click the shell first so the global dispatcher has focus.
-  await page.locator('body').click({ position: { x: 5, y: 300 } });
-  await page.keyboard.press('Control+j');
+  // Click the panel toggle rather than pressing Ctrl+J. Clicking the shell
+  // first to "make the shortcut work" is a test papering over a real defect:
+  // the dispatcher is one global keydown with no focus scopes, so the shortcut
+  // genuinely does nothing while the terminal or a webview holds focus. A test
+  // must not arrange conditions the user cannot. Tracked as T-035; the fix is
+  // the scoped dispatcher in T-006.
+  await page.getByRole('button', { name: 'Show panel' }).first().click();
   await expect(page.getByText('Version history').first()).toBeVisible();
 
   // Restore is two-step: the row asks before it replaces the file.
@@ -42,8 +47,13 @@ test('an earlier version can be restored from the side peek', async ({ page, wor
 
 test('a note with no history explains when history starts', async ({ page }) => {
   await page.locator('.note-row', { hasText: 'getting-started' }).first().click();
-  await page.locator('body').click({ position: { x: 5, y: 300 } });
-  await page.keyboard.press('Control+j');
+  // Click the panel toggle rather than pressing Ctrl+J. Clicking the shell
+  // first to "make the shortcut work" is a test papering over a real defect:
+  // the dispatcher is one global keydown with no focus scopes, so the shortcut
+  // genuinely does nothing while the terminal or a webview holds focus. A test
+  // must not arrange conditions the user cannot. Tracked as T-035; the fix is
+  // the scoped dispatcher in T-006.
+  await page.getByRole('button', { name: 'Show panel' }).first().click();
   await expect(page.getByText('Version history').first()).toBeVisible();
   await expect(page.getByText('History starts at your next edit.')).toBeVisible();
 });

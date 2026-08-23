@@ -55,13 +55,17 @@ function scopeNotes(surface: SurfaceProps, spec: PanelSpec): NoteData[] {
 }
 
 function GraphPanel({ spec, surface }: PanelContext) {
+  // Default to the whole workspace. scope:'active' filtered to the current note
+  // and its links, which in practice drew one node in a full-height column --
+  // the shape of the workspace is the information, and a graph of one is none.
+  // A layout can still ask for a narrower scope explicitly.
   return (
     <div className="h-full">
       <GraphCanvas
-        notesData={scopeNotes(surface, spec)}
+        notesData={spec.scope ? scopeNotes(surface, spec) : surface.notesData}
         onSelectNote={surface.onSelectNote}
         selectedNote={surface.selectedNote}
-        emptyHint="Select a note to see it and its linked notes here."
+        emptyHint="Links between notes appear here."
       />
     </div>
   );
