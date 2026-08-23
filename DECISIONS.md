@@ -309,6 +309,84 @@ notifications, the OS shell, auto-update, or a real workspace path.
 check the recorded call, which means a stub that stops taking effect turns the
 test red instead of quietly resuming the side effect.
 
+### D23 — Relicense to Apache 2.0
+**Approved:** user (2026-08-23).
+**Consequence:** the LICENSE text is the canonical file fetched from
+`apache.org/licenses/LICENSE-2.0.txt`, not a reconstruction, with only the
+appendix placeholder filled in as the license itself instructs. A `NOTICE` file
+now exists because Apache 2.0 expects one for attribution and MIT had no
+equivalent.
+
+Three things this does **not** do, recorded so nobody assumes otherwise:
+
+1. It is **prospective only.** Every version already published under MIT stays
+   MIT for anyone holding it — a licence cannot be retracted from released code.
+2. It does **not** relicense dependencies. The tree underneath Neuron keeps its
+   own terms, which is what `NOTICE` says out loud.
+3. It is **not legal advice.** The relicense is clean because the rewritten
+   history has exactly one author and no CLA ambiguity, which is why the
+   `package.json` author moved from the placeholder "Neuron contributors" to the
+   actual copyright holder. If outside contributions ever land, that assumption
+   stops holding.
+
+### D24 — Version drops to 0.4.2 before the Microsoft Store submission
+**Approved:** user (2026-08-23).
+**Consequence:** the Store accepts only increasing version numbers once an app
+is published, so this move is possible **exactly once, now**. 0.4.2 also
+describes the software more honestly than 1.4.1 did: no signing, no recovery UI,
+no third-party plugin sandbox.
+
+Two consequences that bite later:
+
+- `electron-updater` compares semver. Anyone already running an installed 1.4.x
+  will never be offered 0.4.2 as an update; they are stranded until they
+  reinstall. Acceptable only because the existing releases are being deleted.
+- The `appx` block still carries `REPLACE.WITH.PartnerCenter.IdentityName`,
+  `CN=REPLACE-WITH-PARTNER-CENTER-PUBLISHER-ID`, and
+  `REPLACE_WITH_PUBLISHER_DISPLAY_NAME`. These are **submission blockers**
+  needing real Partner Center values. Left as placeholders deliberately —
+  inventing them yields a package that builds and cannot be submitted, which is
+  worse than one that fails loudly.
+
+### D25 — CI runs the end-to-end suite (closes T-014)
+**Approved:** user (2026-08-23).
+**Consequence:** `npm run test:e2e` runs in CI after the build, invoking the same
+command a contributor runs rather than calling Playwright directly — a CI step
+that diverges from the documented local command can pass while the local one is
+broken. Failure artifacts upload only on failure. Beyond coverage, CI is where
+the D22 class of escape is cheapest to catch: a runner has no browser for a
+stray `shell.openExternal` to open.
+
+### D26 — Command scopes and the two contested shortcuts (unblocks T-005)
+**Approved:** user (2026-08-23), who chose "keep the best-known shortcut for each
+thing".
+
+**Scope list**, innermost wins:
+`input` → `editor` → `canvas` → `htmx-webview` → `modal` → `global`.
+A command declares the outermost scope it is valid in; the dispatcher resolves
+from the focused element outward and stops at the first match. `modal` sits near
+the inside deliberately: while a dialog is open, almost nothing global should
+fire.
+
+**`mod+L` = focus search.** This overturns the roadmap. Plan §7 proposed `mod+L`
+for "Open layout actions" on the grounds that the chord was free. *Free is not
+the same as available*: every browser, and most apps with a search field, bind
+`Ctrl+L` to focus the address or search bar. Users arrive with that reflex
+already trained, so spending it on a layout palette costs a reflex to buy a
+keystroke nobody would have guessed. Neuron has no focus-search action today —
+this creates one.
+
+**`mod+\` = split editor / layout actions.** The best-known binding for the job:
+VS Code and Obsidian both use it to split. Note it is the **backslash**;
+`mod+` + backtick is already the bottom panel, and they are different keys — a
+conflict detector that normalises them together would be wrong.
+
+**Scope caveat:** `mod+L` is registered in `global` scope only. CodeMirror binds
+`Ctrl+L` to select-line in some keymaps, and the HTMX webview and browser view
+treat it as address-bar focus. Scope resolution is what keeps those from
+fighting, and the conflict detector must flag any attempt to rebind `mod+L` into
+`editor` scope.
+
 ---
 
 ## Proposed
