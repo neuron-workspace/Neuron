@@ -49,9 +49,9 @@ function buildTree(paths: string[]): TreeNode {
 }
 
 // A folder is a mini-app when it holds a neuron.app.json marker: its contents
-// collapse into a single node that opens the folder's neuron.app entry.
+// collapse into a single node that opens the folder's index.html entry.
 const isAppFolder = (node: TreeNode): boolean => node.files.some((f) => f.name === 'neuron.app.json');
-const isAppInternal = (name: string): boolean => name === 'neuron.app' || name === 'neuron.app.json';
+const isAppInternal = (name: string): boolean => name === 'neuron.app.json';
 
 function allFolderPaths(node: TreeNode, out: string[] = []): string[] {
   for (const child of node.folders.values()) {
@@ -147,7 +147,7 @@ export default function Sidebar(props: SidebarProps) {
   };
 
   const renderApp = (node: TreeNode, depth: number): React.ReactNode => {
-    const appPath = `${node.path}/neuron.app`;
+    const appPath = `${node.path}/index.html`;
     const isSelected = selectedNote === appPath && view === 'notes';
     return (
       <div key={node.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>

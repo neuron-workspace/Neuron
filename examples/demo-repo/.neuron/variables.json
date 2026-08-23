@@ -5,7 +5,7 @@
       "type": "string",
       "value": "Team dashboard",
       "writable": false,
-      "description": "Heading used by Team dashboard.nhtml."
+      "description": "Heading used by Team dashboard.html."
     },
     "projectStatus": {
       "type": "string",

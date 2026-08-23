@@ -33,8 +33,7 @@ body:
         - .mdx
         - .canvas
         - .db
-        - .nhtml
-        - .ndash
+        - .html
         - Multiple file types
         - Not file-specific
     validations:

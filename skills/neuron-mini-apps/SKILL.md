@@ -1,6 +1,6 @@
 ---
 name: neuron-mini-apps
-description: Build mini apps (dashboards, trackers, tables, galleries) inside a Neuron workspace using .nhtml HTMX views, .db Notion-style databases, and .canvas boards. Use when asked to create a dashboard, tracker, database, or interactive view in Neuron.
+description: Build mini apps (dashboards, trackers, tables, galleries) inside a Neuron workspace using sandboxed .html views, .db Notion-style databases, and .canvas boards. Use when asked to create a dashboard, tracker, database, or interactive view in Neuron.
 ---
 
 # Building mini apps in Neuron
@@ -8,18 +8,16 @@ description: Build mini apps (dashboards, trackers, tables, galleries) inside a 
 A Neuron **workspace** is a plain folder of files. A mini app is just files in
 that folder — no build step, no bundler, no localStorage:
 
-- **`.nhtml` files** — the UI. Plain HTML with [htmx](https://htmx.org)
-  attributes, rendered in an isolated view tab against Neuron's local API.
-- **`.ndash` files** — self-contained scripting dashboards: their own inline CSS
-  and JS run (relaxed CSP), reaching the same API but airgapped from the network.
-  Use when a view's htmx-only interactivity isn't enough.
+- **`.html` files** — the UI. Plain HTML with optional
+  [htmx](https://htmx.org) attributes, inline CSS, and JavaScript, rendered in
+  an isolated view tab against Neuron's local API.
 - **`.db` files** — Notion-style databases: typed properties, colored select tags, filters (schema below).
 - **`.canvas` files** — infinite whiteboards in the open JSON Canvas format (Obsidian-compatible).
 - **`.md`/`.mdx` files** — notes/docs, linkable with `[[wikilinks]]`.
-- **Folder mini-apps** — a folder with a `neuron.app.json` renders as a single app (its `neuron.app` file is the UI) instead of a file listing.
+- **Folder mini-apps** — a folder with `index.html` and `neuron.app.json` renders as a single app instead of a file listing.
 - **`.neuron/` folder** — variables, reusable fragments, styles, templates, and per-view manifests.
 
-## The .nhtml format
+## The .html format
 
 A view file is HTML **body content** (no `<html>`/`<head>`). Neuron wraps it,
 injects the bundled htmx runtime, and **attaches the `neuron.css` design
@@ -28,8 +26,8 @@ HttpOnly session cookie) — never put tokens in the file.
 
 Interactivity comes from htmx attributes (`hx-get`, `hx-post`, `hx-put`,
 `hx-delete`, `hx-trigger`, `hx-target`, `hx-swap`, `hx-include`, `hx-vals`)
-pointed at `/api/v1/...`. `<script>` never executes (strict CSP), and views
-have **no network access** — everything is local.
+pointed at `/api/v1/...`. Inline `<script>` may execute, while views have **no
+network access** — everything is local and capability-gated.
 
 **Write plain semantic HTML** — it's styled to match the app with no classes:
 a bare `<section>`/`<article>` is a card, `<button>` is a button, and
@@ -69,9 +67,10 @@ GET routes return HTML fragments when called from htmx, JSON otherwise.
 
 ## Permissions
 
-Views are **read-only by default**. Writing needs a manifest under
+Views receive **no capabilities by default**. Reading or writing workspace data
+needs a manifest under
 `.neuron/manifests/`, mirroring the view's path
-(`Tracker.nhtml` → `.neuron/manifests/Tracker.json`):
+(`Tracker.html` → `.neuron/manifests/Tracker.json`):
 
 ```json
 {
@@ -85,8 +84,8 @@ Views are **read-only by default**. Writing needs a manifest under
 
 Capabilities: `workspace.files.read/write/create/delete`,
 `workspace.directories.list`, `workspace.search`, `notes.read`, `tags.read`,
-`variables.read/write`. Request the minimum; write permissions show the user
-an approval dialog. Unknown fields/permissions are rejected. Scope
+`variables.read/write`. Request the minimum; every requested capability shows
+the user an approval dialog. Unknown fields/permissions are rejected. Scope
 `allowedWritePaths` as tightly as possible (ideally one file or folder).
 
 ## Folder mini-apps
@@ -94,7 +93,7 @@ an approval dialog. Unknown fields/permissions are rejected. Scope
 To ship a self-contained app as a folder (so the sidebar shows one app entry
 instead of the folder's files), put two files in the folder:
 
-- `neuron.app` — the UI, same format as a `.nhtml` view (HTML + htmx).
+- `index.html` — the UI, using the same sandboxed HTML view format.
 - `neuron.app.json` — the manifest, same schema as a view manifest.
 
 ```json
@@ -107,13 +106,12 @@ instead of the folder's files), put two files in the folder:
 ```
 
 A manifest with no `permissions` grants nothing — list the read caps a
-read-only app needs. Everything else (API routes, isolation, approval for write
-caps) works exactly like a `.nhtml` view. The workspace root can't be an app.
+read-only app needs. Everything else (API routes, isolation, approval) works
+exactly like a standalone `.html` view. The workspace root can't be an app.
 
-## Scripting dashboards (.ndash)
+## JavaScript views
 
-When htmx isn't enough and you need real JavaScript, write a `.ndash` file — a
-self-contained document with its own inline `<style>` and `<script>`:
+When htmx isn't enough, add inline `<style>` and `<script>` to the `.html` file:
 
 ```html
 <style>/* your CSS; theme via body.theme-dark / body.theme-light */</style>
@@ -126,16 +124,14 @@ self-contained document with its own inline `<style>` and `<script>`:
 </script>
 ```
 
-Same manifest and API as a view (`.neuron/manifests/<name>.json`), same
-capability gate (write caps prompt for approval). The JS reaches the loopback
-API but has **no network access** — it is airgapped. GET routes return JSON to
-`fetch` (HTML only to htmx). Neuron injects nothing; opt into the design system
-with `<link href="neuron.css">`. Prefer a plain `.nhtml` view unless you truly
-need scripting.
+The JS reaches the loopback API but has **no network access** — it is airgapped.
+GET routes return JSON to `fetch` (HTML only to htmx). Neuron always injects
+the bundled htmx runtime and `neuron.css`, whether or not the document uses
+them.
 
 ## Recipe: a tracker mini app
 
-`Reading tracker.nhtml`:
+`Reading tracker.html`:
 ```html
 <header><h1>Reading tracker</h1></header>
 <div class="neuron-grid cols-3">
@@ -190,7 +186,7 @@ A `.db` file opens as a fully editable database table. It is one JSON document:
 - The app watches the file: external edits appear live in the open table.
 
 Prefer `.db` when records need types, colored tags, or filtering; prefer plain
-files read through the API when an `.nhtml` view must present the data.
+files read through the API when an `.html` view must present the data.
 
 ## .canvas boards (JSON Canvas)
 
@@ -204,7 +200,7 @@ A `.canvas` file is `{ "nodes": [...], "edges": [...] }` per [jsoncanvas.org](ht
 ## Rules
 
 - All persistent state goes in workspace files. Never suggest localStorage, external databases, or embedded JS.
-- No `<script>` in views — it will not run. Interactivity is htmx + server fragments.
+- Inline scripts may call the local API, but cannot access the network or Node.
 - Request the minimum capabilities and the tightest path scopes in manifests.
 - Relative data paths in API calls resolve from the workspace root.
 - Reusable partials go in `.neuron/fragments/`; per-view CSS in `.neuron/styles/<view name>.css`.

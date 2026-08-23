@@ -18,11 +18,11 @@ The React renderer owns workspace state, navigation, note tabs, CodeMirror editi
 
 ## Notes and repositories
 
-A repository is an ordinary folder. Neuron scans `.md`, `.mdx`, `.nhtml`, `.db`, `.canvas`, and `.neuron` configuration files, stores paths relative to the selected repository, and writes text without converting the document into a proprietary format. Chokidar reports external changes back to the renderer.
+A repository is an ordinary folder. Neuron scans `.md`, `.mdx`, `.html`, `.db`, `.canvas`, and `.neuron` configuration files, stores paths relative to the selected repository, and writes text without converting the document into a proprietary format. Chokidar reports external changes back to the renderer.
 
 ## File-driven surfaces
 
-`src/renderer/surfaces/` holds the registry: `getSurface(path)` maps a file extension to a surface component that replaces the Markdown editor. `.db` renders a Notion-style database, `.canvas` a JSON Canvas board, and `.nhtml` an HTMX view — user-authored HTML rendered in an isolated webview against a token-authenticated loopback API (see [htmx-views.md](htmx-views.md)).
+`src/renderer/surfaces/` holds the registry: `getSurface(path)` maps a file extension to a surface component that replaces the Markdown editor. `.db` renders a Notion-style database, `.canvas` a JSON Canvas board, and `.html` a sandboxed view — user-authored HTML rendered in an isolated webview against a token-authenticated loopback API (see [htmx-views.md](htmx-views.md)).
 
 `neuron.config` is still supported as the internal workspace shell layout. It uses the same layout parser and panel renderers, but it is not a public surface extension.
 

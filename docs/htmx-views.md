@@ -1,7 +1,7 @@
 # HTMX views
 
 HTMX views let users build custom local interfaces — dashboards, trackers,
-browsers, forms — as plain `.nhtml` files: ordinary HTML with
+browsers, forms — as plain `.html` files: ordinary HTML with
 [htmx](https://htmx.org) attributes, rendered in an isolated tab and talking to
 a token-authenticated loopback API. Every view is treated as **untrusted
 content**; every filesystem operation is **privileged and policy-checked**.
@@ -11,7 +11,7 @@ content**; every filesystem operation is **privileged and policy-checked**.
 ### Creating a view
 
 - Command palette → **New HTMX view in current folder** (default `Ctrl+G`),
-  or create any file ending in `.nhtml`.
+  or create any file ending in `.html`.
 - Opening the file renders the view tab. The **Source** toggle in the tab
   header edits the same file as text; saving reloads only that tab.
 - Starter templates are scaffolded into `.neuron/templates/` the first time a
@@ -86,9 +86,9 @@ language — no code, no prototypes, unknown keys render as nothing.
 .neuron/
   config.json        # feature config (schema version)
   variables.json     # typed variables exposed to views
-  manifests/         # per-view permission manifests → "My view.nhtml" ⇒ manifests/My view.json
+  manifests/         # per-view permission manifests → "My view.html" ⇒ manifests/My view.json
   fragments/         # reusable HTML partials → GET /api/v1/fragments/<name>
-  styles/            # optional CSS; "My view.nhtml" auto-loads "My view.css"
+  styles/            # optional CSS; "My view.html" auto-loads "My view.css"
   templates/         # starter views to copy
   layout.json        # (pre-existing) workspace shell layout
 ```
@@ -110,9 +110,9 @@ Custom CSS is local-only: `@import` and remote `url()` references are blocked.
 
 ### Manifests and permissions
 
-Views are **read-only by default** (read files/notes/tags/variables, search,
-list). To write, add a manifest under `.neuron/manifests/`, mirroring the
-view's path — `projects.nhtml` → `.neuron/manifests/projects.json` (a legacy
+Views receive **no capabilities by default**. To read or write workspace data,
+add a manifest under `.neuron/manifests/`, mirroring the view's path —
+`projects.html` → `.neuron/manifests/projects.json` (a legacy
 `projects.neuron.json` sidecar next to the view is still read if present):
 
 ```json
@@ -134,8 +134,10 @@ view's path — `projects.nhtml` → `.neuron/manifests/projects.json` (a legacy
 - Unknown manifest fields and unknown permissions are **rejected**, not
   ignored. `networkPolicy` accepts only `"none"` — views cannot reach the
   network at all.
-- Write capabilities trigger an approval dialog (**Allow for this view** /
-  **Allow once**). Approvals are stored in Neuron's protected application
+- Every requested capability requires approval on first open. Approval is bound
+  to the exact manifest content, so an edit asks again.
+- The approval dialog offers **Allow for this view** / **Allow once**.
+  Approvals are stored in Neuron's protected application
   settings — never in the workspace — and are bound to the manifest's content
   hash: any manifest edit re-requests approval.
 - Reset a view's approval with `htmxViews.resetApproval` (exposed for the
@@ -156,7 +158,7 @@ view's path — `projects.nhtml` → `.neuron/manifests/projects.json` (a legacy
 | `GET /search?query` | `workspace.search` | note matches (HTML fragment for htmx requests) |
 | `GET /notes?tag&folder&limit` | `notes.read` | note metadata (HTML table for htmx) |
 | `GET /tags` | `tags.read` | tag list (HTML badges for htmx) |
-| `GET /fragments/:name?params…` | — | rendered fragment from `.neuron/fragments` |
+| `GET /fragments/:name?params…` | — (`notes.read` + `tags.read` for `workspace-summary`) | rendered fragment from `.neuron/fragments` |
 
 Responses are HTML fragments when the request carries htmx's `HX-Request`
 header, JSON otherwise. Errors are structured
@@ -183,7 +185,7 @@ capability-checked, and rate-limited.
 
 Renderer: `src/renderer/surfaces/HtmxViewSurface.tsx` (the tab — loading /
 permission / error / crashed states, `<webview>` host). Registered for
-`nhtml` in the generic surface registry.
+`html` in the generic surface registry.
 
 ### Server and session lifecycle
 
@@ -260,7 +262,7 @@ connect to the port — is mitigated by the unguessable per-view tokens.
 | Request floods / accidental htmx loops | Per-session token bucket (burst 30, ~15 rps) → 429; body ≤ 1 MB; file reads ≤ 2 MB; listings ≤ 500; walk budget 20 000; search capped |
 | Hostile configuration files | `variables.json`/manifests validated with versioned schemas; invalid config fails closed with diagnostics |
 | DNS rebinding | Exact Host-header check against the loopback origin |
-| Manifest self-escalation | Manifests only *request*; write grants require user approval bound to the manifest hash; approvals live in app settings, not the workspace |
+| Manifest self-escalation | Manifests only *request*; every grant requires user approval bound to the manifest hash; approvals live in app settings, not the workspace |
 | View impersonation after edit | Manifest hash change invalidates prior approval; source/manifest changes reload the tab with a fresh session |
 
 Known limitations (deliberate, documented): no remote-content capability, no
@@ -268,29 +270,18 @@ Known limitations (deliberate, documented): no remote-content capability, no
 than an index, and the request inspector devtool is not built — the standard
 webview devtools plus server error codes cover debugging today.
 
-## Scripting dashboards (`.ndash`)
+## Scripts and runtime assets
 
-`.nhtml` views never run user JavaScript (CSP `script-src 'self'` — only the
-bundled htmx). When you need a fully custom dashboard that runs its own JS, use
-a **`.ndash`** file: a self-contained document that lists its **own CSS and JS**
-inline. Neuron serves it verbatim (no injected `neuron.css`/htmx — opt in with
-`<link href="neuron.css">` / `<script src="htmx.js">` if you want them) and its
-JS reaches the same `/api/v1` surface, gated by the same manifest + approval
-(`.neuron/manifests/<name>.json`).
+Every `.html` view may include inline CSS and JavaScript. Neuron always injects
+the bundled htmx runtime and `neuron.css`; an author who does not use them needs
+no opt-out mode. Authored JavaScript can call the same `/api/v1` surface as
+htmx, gated by the same manifest and approval.
 
-The only CSP change from a view is `script-src 'self' 'unsafe-inline'`.
-Everything else is identical, and that is what keeps it safe:
+The single CSP permits scripts with `script-src 'self' 'unsafe-inline'`, while
+`connect-src` stays `'self'`. That distinction is the safety boundary: a view
+can call Neuron's loopback API but cannot reach the internet. Remote images and
+other loads remain blocked, popups are denied, and navigation is pinned to the
+view origin. Every view also keeps its own sandboxed `<webview>` and per-session
+partition, with no preload and no Node.
 
-- **No network egress** — `connect-src` stays `'self'`, so a dashboard's JS can
-  call the loopback API but cannot reach the internet. Reads and writes stay on
-  the machine; there is no exfiltration path (`img-src 'self' data:`, no
-  remote loads, `window.open` denied, navigation pinned to the view origin).
-- **Same capability gate** — the dashboard can only read/write what its manifest
-  grants, and any write capability triggers the approval dialog bound to the
-  manifest hash. Untrusted (synced/shared) `.ndash` files start read-only.
-- **Same isolation** — its own sandboxed `<webview>` and per-session partition,
-  no preload, no Node.
-
-So the trade is scoped: authored JS runs and can drive the API, but it is
-airgapped from the network and bounded by capabilities. The bundled example is
-`examples/demo-repo/Custom dashboard.ndash`.
+The bundled scripted example is `examples/demo-repo/Custom dashboard.html`.

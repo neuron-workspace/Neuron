@@ -9,7 +9,7 @@ import { SessionManager, sha256 } from './sessions';
 import { createViewServer, ViewServer } from './server';
 import { compilePolicy, resolveInWorkspace } from './pathPolicy';
 import { validateManifest, effectiveGrants, ViewManifest } from './manifest';
-import { isViewPath, manifestPathFor, legacyManifestPathFor, defaultViewName, allowsScripts } from './appPaths';
+import { isViewPath, appManifestPathFor, manifestPathFor, legacyManifestPathFor, defaultViewName } from './appPaths';
 
 interface Deps {
   getRepoRoot: () => string | null;
@@ -72,7 +72,7 @@ const SCAFFOLD: Record<string, string> = {
 <p>This fragment lives in <code>.neuron/fragments/hello.html</code>.
 Fragments interpolate <code>{{ variables.name }}</code> and <code>{{ params.name }}</code> — values are always HTML-escaped.</p>
 `,
-  'templates/dashboard.nhtml': `<header><h1>{{ variables.dashboardTitle }}</h1></header>
+  'templates/dashboard.html': `<header><h1>{{ variables.dashboardTitle }}</h1></header>
 <div class="neuron-grid cols-3">
   <section hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">Loading…</section>
   <section hx-get="/api/v1/fragments/hello" hx-trigger="load" hx-swap="innerHTML">Loading…</section>
@@ -82,7 +82,7 @@ Fragments interpolate <code>{{ variables.name }}</code> and <code>{{ params.name
   </section>
 </div>
 `,
-  'templates/note-browser.nhtml': `<header><h1>Note browser</h1></header>
+  'templates/note-browser.html': `<header><h1>Note browser</h1></header>
 <section>
   <form hx-get="/api/v1/search" hx-target="#results" hx-trigger="submit, input changed delay:300ms from:#q">
     <label for="q">Search notes</label>
@@ -92,7 +92,7 @@ Fragments interpolate <code>{{ variables.name }}</code> and <code>{{ params.name
 </section>
 <section hx-get="/api/v1/notes?limit=25" hx-trigger="load" hx-swap="innerHTML">Loading notes…</section>
 `,
-  'templates/file-list.nhtml': `<header><h1>Workspace files</h1></header>
+  'templates/file-list.html': `<header><h1>Workspace files</h1></header>
 <section hx-get="/api/v1/files?limit=50" hx-trigger="load" hx-swap="innerHTML">Loading files…</section>
 `,
 };
@@ -110,21 +110,25 @@ function ensureScaffold(root: string): void {
 
 // --- manifest + approvals -------------------------------------------------------
 
-function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[] } {
-  const primary = resolveInWorkspace(root, manifestPathFor(viewRel));
+function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[]; appEntry: boolean; manifestPath: string } {
+  const appMarker = appManifestPathFor(viewRel);
+  const resolvedMarker = appMarker ? resolveInWorkspace(root, appMarker) : null;
+  const appEntry = !!resolvedMarker && fs.existsSync(resolvedMarker.full);
+  const manifestPath = manifestPathFor(viewRel, appEntry);
+  const primary = resolveInWorkspace(root, manifestPath);
   const legacy = resolveInWorkspace(root, legacyManifestPathFor(viewRel));
   const resolved = primary && fs.existsSync(primary.full) ? primary
     : legacy && fs.existsSync(legacy.full) ? legacy
     : null;
-  if (!resolved) return { manifest: null, hash: 'none', errors: [] };
+  if (!resolved) return { manifest: null, hash: 'none', errors: [], appEntry, manifestPath };
   let raw: string;
-  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'] }; }
+  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'], appEntry, manifestPath }; }
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'] }; }
+  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'], appEntry, manifestPath }; }
   const result = validateManifest(parsed);
-  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors };
+  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors, appEntry, manifestPath };
   // Approvals bind to the exact manifest content: any edit re-requests consent.
-  return { manifest: result.value!, hash: sha256(raw), errors: [] };
+  return { manifest: result.value!, hash: sha256(raw), errors: [], appEntry, manifestPath };
 }
 
 function viewKey(root: string, viewRel: string): string {
@@ -149,11 +153,11 @@ export function initHtmxViews(deps: Deps): void {
 
     try { ensureScaffold(root); } catch { /* read-only workspace: views still work */ }
 
-    const { manifest, hash, errors } = loadManifest(root, resolved.rel);
-    if (errors.length) return { status: 'error', message: `Invalid manifest (${manifestPathFor(resolved.rel)}): ${errors.join(' ')}` };
+    const { manifest, hash, errors, appEntry, manifestPath } = loadManifest(root, resolved.rel);
+    if (errors.length) return { status: 'error', message: `Invalid manifest (${manifestPath}): ${errors.join(' ')}` };
 
     const grants = effectiveGrants(manifest);
-    const name = manifest?.name ?? defaultViewName(resolved.rel);
+    const name = manifest?.name ?? defaultViewName(resolved.rel, appEntry);
     if (grants.needsApproval && !isApproved(viewKey(root, resolved.rel), hash)) {
       return { status: 'needs-approval', name, description: manifest?.description, permissions: manifest!.permissions };
     }
@@ -170,7 +174,6 @@ export function initHtmxViews(deps: Deps): void {
       caps: grants.caps,
       readPolicy: compilePolicy(grants.readPatterns),
       writePolicy: compilePolicy(grants.writePatterns),
-      allowScripts: allowsScripts(resolved.rel),
     });
     return {
       status: 'ready',

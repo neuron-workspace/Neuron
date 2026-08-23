@@ -85,27 +85,30 @@ assert.ok(!m.validateManifest({ networkPolicy: 'open' }).ok, 'network access not
 assert.ok(!m.validateManifest({ allowedReadPaths: ['../outside/**'] }).ok, 'traversal in patterns rejected');
 const grants = m.effectiveGrants(good.value);
 assert.ok(grants.needsApproval, 'write permissions require approval');
-assert.ok(!m.effectiveGrants(null).needsApproval, 'manifest-less views are read-only, no approval');
+const readOnlyManifest = m.validateManifest({ permissions: ['workspace.files.read'], allowedReadPaths: ['notes/**'] });
+assert.ok(readOnlyManifest.ok, readOnlyManifest.errors.join('; '));
+assert.ok(m.effectiveGrants(readOnlyManifest.value).needsApproval, 'every requested capability requires approval');
+const noManifestGrants = m.effectiveGrants(null);
+assert.deepEqual([...noManifestGrants.caps], [], 'an unmanifested view gets no capabilities');
+assert.deepEqual(noManifestGrants.readPatterns, [], 'an unmanifested view gets no readable paths');
+assert.ok(!noManifestGrants.needsApproval, 'an unmanifested view renders without an empty prompt');
 
-// --- view + manifest paths (folder apps vs .nhtml) ----------------------------
-assert.ok(m.isViewPath('Team dashboard.nhtml'), '.nhtml opens as a view');
-assert.ok(m.isViewPath('Custom dashboard.ndash'), '.ndash opens as a view');
-assert.ok(m.isViewPath('Launch board/neuron.app'), 'neuron.app opens as a view');
+// --- view + manifest paths (plain files vs folder apps) -----------------------
+assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
+assert.ok(m.isViewPath('Launch board/index.html'), 'a folder app uses index.html');
 assert.ok(!m.isViewPath('notes/readme.md'), 'plain notes are not views');
-assert.ok(!m.isViewPath('neuron.apple'), 'neuron.app is matched exactly, not as a prefix');
-// Only .ndash runs scripts; .nhtml and folder apps do not:
-assert.ok(m.allowsScripts('Custom dashboard.ndash'), '.ndash allows scripting');
-assert.ok(!m.allowsScripts('Team dashboard.nhtml'), '.nhtml does not allow scripting');
-assert.ok(!m.allowsScripts('Launch board/neuron.app'), 'folder apps do not allow scripting');
-// .nhtml/.ndash manifests move into .neuron/manifests, mirroring the path:
-assert.equal(m.manifestPathFor('projects/tracker.nhtml'), '.neuron/manifests/projects/tracker.json');
-assert.equal(m.manifestPathFor('Custom dashboard.ndash'), '.neuron/manifests/Custom dashboard.json');
+assert.ok(!m.isViewPath('notes/readme.htm'), 'only the .html extension is a view');
+assert.equal(m.appManifestPathFor('Launch board/index.html'), 'Launch board/neuron.app.json');
+assert.equal(m.appManifestPathFor('index.html'), null, 'the workspace root cannot be a folder app');
+assert.equal(m.appManifestPathFor('Launch board/report.html'), null, 'only index.html can be a folder app entry');
+// Plain-view manifests mirror their path under .neuron/manifests:
+assert.equal(m.manifestPathFor('projects/tracker.html'), '.neuron/manifests/projects/tracker.json');
+assert.equal(m.manifestPathFor('projects/index.html'), '.neuron/manifests/projects/index.json');
 // A folder app's manifest is the co-located marker, never under .neuron:
-assert.equal(m.manifestPathFor('Launch board/neuron.app'), 'Launch board/neuron.app.json');
-assert.equal(m.legacyManifestPathFor('projects/tracker.nhtml'), 'projects/tracker.neuron.json');
-assert.equal(m.defaultViewName('Launch board/neuron.app'), 'Launch board', 'folder app is named for its folder');
-assert.equal(m.defaultViewName('a/b/Report.nhtml'), 'Report', '.nhtml view is named for its file');
-assert.equal(m.defaultViewName('Custom dashboard.ndash'), 'Custom dashboard', '.ndash is named for its file');
+assert.equal(m.manifestPathFor('Launch board/index.html', true), 'Launch board/neuron.app.json');
+assert.equal(m.legacyManifestPathFor('projects/tracker.html'), 'projects/tracker.neuron.json');
+assert.equal(m.defaultViewName('Launch board/index.html', true), 'Launch board', 'folder app is named for its folder');
+assert.equal(m.defaultViewName('a/b/Report.html'), 'Report', 'plain view is named for its file');
 
 // --- variables validation ---------------------------------------------------------
 const vars = m.validateVariablesFile({ version: 1, variables: { status: { type: 'string', value: 'active', writable: true } } });
@@ -123,7 +126,7 @@ assert.equal(m.interpolate('{{ nope.x }}', { params: {} }), '');
 // --- sessions -----------------------------------------------------------------
 const sessions = new m.SessionManager();
 const mkSession = (caps, readPatterns, writePatterns = []) => sessions.create({
-  viewPath: 'dash.nhtml', root: ws, name: 'Dash', theme: 'dark',
+  viewPath: 'dash.html', root: ws, name: 'Dash', theme: 'dark',
   caps: new Set(caps),
   readPolicy: readPatterns.map(m.compileGlob),
   writePolicy: writePatterns.map(m.compileGlob),
@@ -141,7 +144,8 @@ const mkSession = (caps, readPatterns, writePatterns = []) => sessions.create({
 }
 
 // --- integration: live loopback server ------------------------------------------
-writeFileSync(join(ws, 'dash.nhtml'), '<h1>{{ variables.dashboardTitle }}</h1>\n<div hx-get="/api/v1/search">x</div>\n');
+writeFileSync(join(ws, 'dash.html'), '<h1>{{ variables.dashboardTitle }}</h1>\n<div hx-get="/api/v1/search">x</div>\n<script>window.__ok = 1;</script>\n');
+writeFileSync(join(ws, 'report.html'), '<h1>Unmanifested report</h1>\n');
 mkdirSync(join(ws, '.neuron', 'fragments'), { recursive: true });
 writeFileSync(join(ws, '.neuron', 'variables.json'), JSON.stringify({
   version: 1,
@@ -158,7 +162,7 @@ const htmxJs = createRequire(import.meta.url).resolve('htmx.org/dist/htmx.min.js
 const srv = await m.createViewServer(sessions, htmxJs);
 const READ_CAPS = ['workspace.files.read', 'workspace.directories.list', 'workspace.search', 'notes.read', 'tags.read', 'variables.read'];
 
-const reader = mkSession(READ_CAPS, ['notes/**', 'dash.nhtml']);
+const reader = mkSession(READ_CAPS, ['notes/**', 'dash.html']);
 const writer = mkSession([...READ_CAPS, 'workspace.files.write', 'workspace.files.create', 'workspace.files.delete', 'variables.write'], ['**'], ['data/**']);
 const cookie = (s) => ({ cookie: `nv=${s.id}:${s.cookieToken}` });
 const api = (s, route, init = {}) => fetch(`${srv.origin}${route}`, { ...init, headers: { ...cookie(s), ...(init.headers ?? {}) } });
@@ -179,33 +183,31 @@ assert.equal((await fetch(`${srv.origin}/api/v1/context`, { headers: { cookie: `
 // Document bootstrap: one-time boot token, CSP, cookie issuance
 const docRes = await fetch(`${srv.origin}/views/${reader.id}/document?boot=${reader.bootToken}`);
 assert.equal(docRes.status, 200);
-assert.match(docRes.headers.get('content-security-policy') ?? '', /default-src 'none'/);
+const viewCsp = docRes.headers.get('content-security-policy') ?? '';
+assert.match(viewCsp, /default-src 'none'/);
+assert.match(viewCsp, /script-src 'self' 'unsafe-inline'/, 'HTML views may run inline scripts');
+assert.match(viewCsp, /connect-src 'self'/, 'views reach the loopback API only');
+assert.doesNotMatch(viewCsp, /connect-src[^;]*https?:/, 'views have no network egress');
 assert.match(docRes.headers.get('set-cookie') ?? '', /HttpOnly/);
 assert.equal(docRes.headers.get('x-content-type-options'), 'nosniff');
 const docHtml = await docRes.text();
 assert.ok(docHtml.includes('Ops &lt;Dash&gt;'), 'document interpolates + escapes variables');
 assert.ok(docHtml.includes(`/views/${reader.id}/htmx.js`), 'htmx served locally');
+assert.ok(docHtml.includes(`/views/${reader.id}/neuron.css`), 'neuron.css is always injected');
+assert.ok(docHtml.includes('window.__ok'), 'authored inline scripts are served verbatim');
 assert.equal((await fetch(`${srv.origin}/views/${reader.id}/document?boot=x`)).status, 403, 'boot token replay/forgery -> 403');
-// A normal view keeps the strict no-script CSP.
-assert.match(docRes.headers.get('content-security-policy') ?? '', /script-src 'self'(?! 'unsafe-inline')/, 'views cannot run inline scripts');
 
-// Scripting dashboard (.ndash): inline scripts allowed, but airgapped and self-contained.
-writeFileSync(join(ws, 'panel.ndash'), '<h1>panel</h1><script>window.__ok = 1;</script>\n');
-const dash = sessions.create({
-  viewPath: 'panel.ndash', root: ws, name: 'Panel', theme: 'dark',
-  caps: new Set(['notes.read', 'variables.write']),
-  readPolicy: ['**'].map(m.compileGlob), writePolicy: [], allowScripts: true,
+// An unmanifested HTML file renders, but its session can read nothing.
+const unmanifested = sessions.create({
+  viewPath: 'report.html', root: ws, name: 'Report', theme: 'dark',
+  caps: noManifestGrants.caps,
+  readPolicy: noManifestGrants.readPatterns.map(m.compileGlob),
+  writePolicy: [],
 });
-const dashRes = await fetch(`${srv.origin}/views/${dash.id}/document?boot=${dash.bootToken}`);
-const dashCsp = dashRes.headers.get('content-security-policy') ?? '';
-assert.match(dashCsp, /script-src 'self' 'unsafe-inline'/, 'dashboards may run inline scripts');
-assert.match(dashCsp, /connect-src 'self'/, 'dashboards reach the loopback API only — no network');
-assert.doesNotMatch(dashCsp, /connect-src[^;]*https?:/, 'dashboards have no network egress');
-const dashHtml = await dashRes.text();
-assert.ok(!dashHtml.includes('htmx.js'), 'dashboards are self-contained: htmx not auto-injected');
-assert.ok(!dashHtml.includes('/neuron.css'), 'dashboards are self-contained: neuron.css not auto-injected');
-assert.ok(dashHtml.includes('window.__ok'), 'the authored inline script is served verbatim');
-sessions.revoke(dash.id);
+const unmanifestedRes = await fetch(`${srv.origin}/views/${unmanifested.id}/document?boot=${unmanifested.bootToken}`);
+assert.equal(unmanifestedRes.status, 200, 'an unmanifested .html file still renders');
+assert.equal(unmanifestedRes.headers.get('content-security-policy'), viewCsp, 'all HTML views use the same CSP');
+assert.ok((await unmanifestedRes.text()).includes('Unmanifested report'));
 
 // Cross-view isolation: writer's cookie cannot pull reader's assets
 assert.equal((await api(writer, `/views/${reader.id}/htmx.js`)).status, 403, 'cross-view asset access -> 403');
@@ -222,6 +224,13 @@ assert.equal((await api(reader, '/api/v1/files/content?path=notes/hello.md')).st
 assert.equal((await api(reader, '/api/v1/files/content?path=data/out.txt')).status, 403, 'outside read policy -> 403');
 assert.equal((await api(reader, '/api/v1/files/content?path=../secret.txt')).status, 400, 'traversal -> 400');
 assert.equal((await api(reader, '/api/v1/files/content?path=C:/Windows/win.ini')).status, 400, 'absolute path -> 400');
+assert.equal((await api(unmanifested, '/api/v1/files/content?path=notes/hello.md')).status, 403, 'unmanifested view cannot read files');
+assert.equal((await api(unmanifested, '/api/v1/files')).status, 403, 'unmanifested view cannot list files');
+assert.equal((await api(unmanifested, '/api/v1/search?query=needle')).status, 403, 'unmanifested view cannot search');
+assert.equal((await api(unmanifested, '/api/v1/notes')).status, 403, 'unmanifested view cannot read note metadata');
+assert.equal((await api(unmanifested, '/api/v1/tags')).status, 403, 'unmanifested view cannot read tags');
+assert.equal((await api(unmanifested, '/api/v1/variables')).status, 403, 'unmanifested view cannot read variables');
+assert.equal((await api(unmanifested, '/api/v1/fragments/workspace-summary')).status, 403, 'unmanifested view cannot read the built-in workspace summary');
 
 // Search: JSON + HTML fragment shapes, results are escaped
 const searchJson = await (await api(reader, '/api/v1/search?query=needle')).json();
@@ -246,7 +255,7 @@ assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404,
 // this check the fragment path interpolated them unconditionally, so a denied
 // view could read every variable value by requesting any fragment.
 {
-  const noVars = mkSession(READ_CAPS.filter((c) => c !== 'variables.read'), ['notes/**', 'dash.nhtml']);
+  const noVars = mkSession(READ_CAPS.filter((c) => c !== 'variables.read'), ['notes/**', 'dash.html']);
   const denied = await (await api(noVars, '/api/v1/fragments/greet?who=me')).text();
   assert.equal(denied, '<p> / me</p>', 'fragment must blank variables without variables.read');
   assert.ok(!denied.includes('Ops'), 'variable value leaked through a fragment');

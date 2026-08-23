@@ -107,7 +107,7 @@ export function validateManifest(raw: unknown): ValidationResult<ViewManifest> {
   };
 }
 
-/** Effective grants for a view: manifest is optional; defaults are read-only. */
+/** Effective grants for a view: no manifest means no capabilities. */
 export function effectiveGrants(manifest: ViewManifest | null): {
   caps: Set<string>;
   readPatterns: string[];
@@ -115,15 +115,14 @@ export function effectiveGrants(manifest: ViewManifest | null): {
   needsApproval: boolean;
 } {
   if (!manifest) {
-    return { caps: new Set(READ_CAPS), readPatterns: ['**'], writePatterns: [], needsApproval: false };
+    return { caps: new Set<string>(), readPatterns: [], writePatterns: [], needsApproval: false };
   }
   const caps = new Set(manifest.permissions);
-  const wantsWrite = manifest.permissions.some((p) => (WRITE_CAPS as readonly string[]).includes(p));
   return {
     caps,
     readPatterns: manifest.allowedReadPaths.length ? manifest.allowedReadPaths : ['**'],
     writePatterns: manifest.allowedWritePaths,
-    needsApproval: wantsWrite,
+    needsApproval: manifest.permissions.length > 0,
   };
 }
 

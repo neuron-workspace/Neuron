@@ -23,7 +23,7 @@ import { builtinPlugins } from './plugins/builtin';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
-import './surfaces/HtmxViewSurface'; // registers the .nhtml HTMX view surface
+import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
@@ -48,7 +48,7 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
 type EditorMode = 'live' | 'raw' | 'reading';
 
-// Default content for new .nhtml HTMX views. Plain HTML + htmx attributes;
+// Default content for new .html views. Plain HTML + htmx attributes;
 // Neuron serves it from the local view server with the neuron-view stylesheet.
 const HTMX_VIEW_TEMPLATE = `<h1>New HTMX view</h1>
 <p>This is ordinary HTML with <a href="https://htmx.org">htmx</a> attributes.
@@ -366,12 +366,12 @@ export default function App() {
     setCreateOpen(true);
   }, []);
 
-  // Create an .nhtml HTMX view in the current note's folder.
+  // Create an .html view in the current note's folder.
   const createSurfaceFile = useCallback(async () => {
     const folder = selectedNote && selectedNote.includes('/') ? selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1) : '';
-    let name = 'View.nhtml';
+    let name = 'View.html';
     let i = 2;
-    while (notes.includes(`${folder}${name}`)) name = `View ${i++}.nhtml`;
+    while (notes.includes(`${folder}${name}`)) name = `View ${i++}.html`;
     await createNote(`${folder}${name}`, HTMX_VIEW_TEMPLATE);
   }, [selectedNote, notes, createNote]);
 
@@ -627,7 +627,7 @@ export default function App() {
   } else if (view === 'gallery') {
     mainContent = <ComponentGallery />;
   } else if (shellConfig && !Surface && !browsing) {
-    // Shell handles plain notes in its editor slot; surface files (.nhtml, .db, .canvas) and
+    // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
     // browser tabs are full-page documents, so let them fall through to notesView.
     mainContent = (
       <div className="flex h-full w-full flex-col">

@@ -17,7 +17,7 @@ let watcher: chokidar.FSWatcher | null = null;
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
 // canvases, folder mini-apps (neuron.app + neuron.app.json), the internal shell
 // config, and .neuron configuration/assets.
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app(\.json)?$|\.(md|mdx|nhtml|ndash|db|canvas)$)/;
+const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas)$)/;
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent

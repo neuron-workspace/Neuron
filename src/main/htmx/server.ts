@@ -32,9 +32,9 @@ const MAX_WALK_ENTRIES = 20000;            // filesystem walk budget
 const MAX_SEARCH_RESULTS = 50;
 const MAX_SEARCH_FILE_BYTES = 512 * 1024;
 
-const DOC_CSP = [
+const VIEW_CSP = [
   "default-src 'none'",
-  "script-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "connect-src 'self'",
@@ -43,12 +43,6 @@ const DOC_CSP = [
   "object-src 'none'",
   "frame-src 'none'",
 ].join('; ');
-
-// Scripting dashboards (.ndash) additionally allow inline <script>. Every other
-// directive is unchanged — crucially connect-src stays 'self', so a dashboard's
-// JS can reach the loopback API but has no path to the network: reads and writes
-// stay on the machine, gated by the same capability + approval model as views.
-const DASH_CSP = DOC_CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'");
 
 export interface ViewServer {
   server: http.Server;
@@ -303,15 +297,12 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     }
     // Workspace styles the document opts into: <link href="styles/x.css"> works
     // via relative resolution, but we also honor .neuron/styles/<view-name>.css.
-    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.(nhtml|ndash)$/i, '')}.css`;
+    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.html$/i, '')}.css`;
     const styles = fs.existsSync(path.join(session.root, '.neuron', 'styles', autoStyle)) ? [autoStyle] : [];
-    // A scripting dashboard is self-contained: it lists its own CSS/JS in the
-    // file, so Neuron does not inject neuron.css or htmx (the author can still
-    // opt in with <link href="neuron.css"> / <script src="htmx.js">).
-    const html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles, runtime: !session.allowScripts });
+    const html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles });
     send(ctx.res, 200, {
       'Content-Type': 'text/html; charset=utf-8',
-      'Content-Security-Policy': session.allowScripts ? DASH_CSP : DOC_CSP,
+      'Content-Security-Policy': VIEW_CSP,
       // HttpOnly + SameSite=Strict: the token is invisible to view scripts and
       // never sent by an outside browser page, killing CSRF against loopback.
       'Set-Cookie': `nv=${session.id}:${session.cookieToken}; Path=/; HttpOnly; SameSite=Strict`,
@@ -600,6 +591,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (fs.existsSync(file) && fs.statSync(file).size <= MAX_FRAGMENT_BYTES) {
       template = fs.readFileSync(file, 'utf-8');
     } else if (name === 'workspace-summary') {
+      if (!requireCap(ctx, 'notes.read') || !requireCap(ctx, 'tags.read')) return;
       template = builtinWorkspaceSummary(ctx.session);
     }
     if (template === null) { fail(ctx, 404, 'not_found', `No fragment named "${name}".`); return; }

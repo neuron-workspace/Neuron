@@ -15,31 +15,33 @@ test('database opens as a typed table', async ({ page }) => {
   await expect(page.locator('.vw-content, table').first()).toBeVisible();
 });
 
-test('an htmx view asks for its declared permissions before it renders', async ({ page }) => {
+test('an HTML view names the file and asks for its declared permissions before it renders', async ({ page }) => {
   await page.locator('.note-row', { hasText: 'Team dashboard' }).first().click();
 
   // A view does not run until its manifest permissions are granted -- the
   // prompt is the security boundary, so assert it appears BEFORE the webview.
-  await expect(page.getByText('requests permissions', { exact: false })).toBeVisible();
+  await expect(page.getByText('Team dashboard.html', { exact: false })).toBeVisible();
+  await expect(page.getByText('requests workspace access', { exact: false })).toBeVisible();
   await expect(page.locator('webview')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Allow for this view' }).click();
-  await expect(page.getByText('HTMX view', { exact: false })).toBeVisible();
+  await expect(page.getByText('HTML view', { exact: false })).toBeVisible();
   await expect(page.locator('webview')).toHaveCount(1);
 });
 
-test('scripting dashboard is labelled distinctly from an htmx view', async ({ page }) => {
+test('an inline-script HTML file uses the same isolated view surface', async ({ page }) => {
   await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
-  const prompt = page.getByText('requests permissions', { exact: false });
+  const prompt = page.getByText('requests workspace access', { exact: false });
   if (await prompt.isVisible().catch(() => false)) {
     await page.getByRole('button', { name: 'Allow for this view' }).click();
   }
-  await expect(page.getByText('Scripting dashboard', { exact: false })).toBeVisible();
+  await expect(page.getByText('HTML view', { exact: false })).toBeVisible();
 });
 
 test('a folder mini-app collapses to one explorer entry', async ({ page }) => {
   await expect(page.locator('.note-row', { hasText: 'Launch board' }).first()).toBeVisible();
-  // The folder's internals (neuron.app, neuron.app.json) must not be listed as
+  // The folder's internals (index.html, neuron.app.json) must not be listed as
   // notes. Scoped to explorer rows -- the strings appear in demo note prose too.
-  await expect(page.locator('.note-row', { hasText: 'neuron.app' })).toHaveCount(0);
+  await expect(page.locator('.note-row', { hasText: 'index.html' })).toHaveCount(0);
+  await expect(page.locator('.note-row', { hasText: 'neuron.app.json' })).toHaveCount(0);
 });
