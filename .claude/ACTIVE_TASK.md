@@ -12,7 +12,6 @@ compiles and still passes review. That is the failure this file prevents.
 
 | Task | Owner | Branch / worktree | Files held | Claimed |
 | --- | --- | --- | --- | --- |
-| T-022 | Codex `task-mt5bjegn-o5h81k` | `feature/T-022-db-multi-table` · `../neuron-worktrees/T-022` | `src/renderer/lib/db.ts`, `surfaces/DbSurface.tsx`, `components/DbView.tsx`, `components/MDXPreview.tsx`, `tools/db.test.mjs`, `package.json` (scripts) | 2026-08-23 |
 | T-028 | Codex `task-mt5chme8-5bcgr2` | `feature/T-028-plain-html-views` · `../neuron-worktrees/T-028` | `src/main/main.ts` (regex only), `src/main/htmx/**`, `surfaces/index.ts`, `HtmxViewSurface.tsx`, `components/Sidebar.tsx` (mini-app slices), `App.tsx` (view-creation slices), `CanvasSurface.tsx`, `examples/**`, docs, `skills/**`, `tools/htmx-views.test.mjs`, `e2e/**` | 2026-08-23 |
 
 ## Permanent serialization points
