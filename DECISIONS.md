@@ -404,6 +404,50 @@ published early is permanent.
 `origin/dev` exists at `1354298` from an earlier authorised push and is 11
 commits behind local `dev`. Leave it there.
 
+### D28 — `.db` v2: multiple tables in one file, with a schema overview
+**Approved:** user (2026-08-23, "since it is a database it can have multiple tables").
+**Consequence:** the on-disk shape gains a version and a table map. v1 today is
+`{ schema: { order, properties }, rows: [] }`.
+
+```json
+{
+  "version": 2,
+  "tables": {
+    "tasks":    { "name": "Tasks",    "schema": { "order": [], "properties": {} }, "rows": [] },
+    "projects": { "name": "Projects", "schema": { "order": [], "properties": {} }, "rows": [] }
+  },
+  "relations": [
+    { "from": { "table": "tasks", "property": "project" }, "to": { "table": "projects" } }
+  ]
+}
+```
+
+**Migration is read-only until the user changes something.** A file with a
+top-level `schema` is v1 and is presented as a single table named after the
+file. It is **not** rewritten on open, and it keeps being written as v1 until a
+second table is added — only then does it become v2. Silently rewriting every
+`.db` the moment a user opens it would touch files they never edited, and in a
+local-first app that syncs through Git or OneDrive, an unexplained rewrite of
+every database is indistinguishable from corruption.
+
+**Navigation:** more than one table opens a schema overview — tables and the
+relations between them, nothing else. Selecting one opens the full table view
+with a back control. Exactly one table opens straight into the table view; a
+one-item chooser is a screen that only exists to be clicked through.
+
+`relations` is descriptive, for drawing the overview. It is **not** enforced,
+not a foreign key, and must never block a write — a notes app that refuses an
+edit because a relation dangles has picked the wrong side of local-first.
+
+### D29 — `Projects.db` becomes `Planner.db`, and both demo dashboards become task management
+**Approved:** user (2026-08-23, "rename it to tasks.db or something more better
+like planner").
+**Consequence:** `Planner.db` over `Tasks.db` because under D28 the file holds
+several tables — tasks *and* projects — so naming it after one of them would be
+wrong the moment the second exists. Both demo dashboards are rebuilt around
+productivity/task management reading from it, so the demo shows one coherent
+story instead of two unrelated ones.
+
 ---
 
 ## Proposed
