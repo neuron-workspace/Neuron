@@ -119,4 +119,4 @@ Neuron is under active development. Back up important notes and review release n
 
 ## License
 
-Neuron is available under the [MIT License](LICENSE).
+Neuron is available under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
