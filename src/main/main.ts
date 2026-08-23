@@ -1,5 +1,11 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { generateText } from 'ai';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
@@ -594,134 +600,64 @@ ipcMain.handle(
     _event,
     request: { provider: string; pluginId?: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> },
   ) => {
+    // Non-secret settings only -- baseUrl, model. An apiKey arriving from the
+    // renderer is destructured off and dropped: trusting one is what let every
+    // plugin read every other plugin's key. The real key is read here, from a
+    // store the renderer cannot see.
+    const { apiKey: _rendererSuppliedKey, ...config } = request.config ?? {};
+    const apiKey = request.pluginId ? readSecret(request.pluginId, 'apiKey') : null;
+
+    const needsKey = (label: string) =>
+      ({ success: false, error: `Add ${label} API key in the plugin settings.` });
+
     try {
-      // Non-secret settings only -- baseUrl, model. An apiKey arriving from the
-      // renderer is dropped rather than used: trusting one is what made every
-      // plugin able to read every other plugin's key. The real key is read here,
-      // from a store the renderer cannot see.
-      const { apiKey: _rendererSuppliedKey, ...config } = request.config ?? {};
-      const apiKey = request.pluginId ? readSecret(request.pluginId, 'apiKey') : null;
-      if (request.provider === 'anthropic') {
-        if (!apiKey) return { success: false, error: 'Add an Anthropic API key in the plugin settings.' };
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: request.model || 'claude-opus-4-8',
-            max_tokens: 2048,
-            system: request.system,
-            messages: request.messages,
-          }),
-        });
-        const data = (await res.json()) as {
-          content?: { type: string; text?: string }[];
-          stop_reason?: string;
-          error?: { message?: string };
-        };
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        if (data.stop_reason === 'refusal') {
-          return { success: false, error: 'The model declined to respond to this request.' };
+      let model;
+      switch (request.provider) {
+        case 'anthropic': {
+          if (!apiKey) return needsKey('an Anthropic');
+          model = createAnthropic({ apiKey })(request.model || 'claude-opus-4-8');
+          break;
         }
-        const text = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-        return { success: true, text };
-      }
-
-      if (request.provider === 'local') {
-        // Local model endpoint (e.g. Ollama). Expects an OpenAI-style chat response.
-        const endpoint = config.endpoint || 'http://localhost:11434/v1/chat/completions';
-        const messages = request.system
-          ? [{ role: 'system', content: request.system }, ...request.messages]
-          : request.messages;
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ model: request.model || config.model || 'llama3', messages, stream: false }),
-        });
-        const data = (await res.json()) as {
-          choices?: { message?: { content?: string } }[];
-          message?: { content?: string };
-          error?: { message?: string } | string;
-        };
-        if (!res.ok) {
-          const message = typeof data.error === 'string' ? data.error : data.error?.message;
-          return { success: false, error: message || `Local model request failed (${res.status}).` };
+        case 'openai': {
+          if (!apiKey) return needsKey('an OpenAI');
+          model = createOpenAI({ apiKey })(request.model || 'gpt-4o');
+          break;
         }
-        const text = data.choices?.[0]?.message?.content ?? data.message?.content ?? '';
-        return { success: true, text };
+        case 'google': {
+          if (!apiKey) return needsKey('a Google');
+          model = createGoogleGenerativeAI({ apiKey })(request.model || 'gemini-2.0-flash');
+          break;
+        }
+        case 'openrouter': {
+          if (!apiKey) return needsKey('an OpenRouter');
+          model = createOpenRouter({ apiKey })(request.model || 'openai/gpt-4o');
+          break;
+        }
+        case 'local': {
+          // A local endpoint is whatever the user is running -- Ollama, LM
+          // Studio, their own box -- so the base URL is theirs to set and a key
+          // is usually absent. Never hardcode a vendor here.
+          model = createOpenAICompatible({
+            name: 'local',
+            baseURL: config.baseUrl || 'http://localhost:11434/v1',
+            apiKey: apiKey ?? 'local',
+          })(request.model || config.model || 'llama3');
+          break;
+        }
+        default:
+          return { success: false, error: `Unknown AI provider "${request.provider}".` };
       }
 
-      if (request.provider === 'openai') {
-        if (!apiKey) return { success: false, error: 'Add an OpenAI API key in the plugin settings.' };
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: request.model || 'gpt-4o',
-            messages: request.system
-              ? [{ role: 'system', content: request.system }, ...request.messages]
-              : request.messages,
-          }),
-        });
-        const data = (await res.json()) as any;
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        const text = data.choices?.[0]?.message?.content ?? '';
-        return { success: true, text };
-      }
-
-      if (request.provider === 'google') {
-        if (!apiKey) return { success: false, error: 'Add a Gemini API key in the plugin settings.' };
-        const model = request.model || 'gemini-1.5-flash';
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            contents: request.messages.map((m) => ({
-              role: m.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: m.content }],
-            })),
-            systemInstruction: request.system ? {
-              parts: [{ text: request.system }]
-            } : undefined,
-          }),
-        });
-        const data = (await res.json()) as any;
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        return { success: true, text };
-      }
-
-      if (request.provider === 'openrouter') {
-        if (!apiKey) return { success: false, error: 'Add an OpenRouter API key in the plugin settings.' };
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'authorization': `Bearer ${apiKey}`,
-            'HTTP-Referer': 'https://github.com/GoogleDeepMind/neuron',
-            'X-Title': 'Neuron',
-          },
-          body: JSON.stringify({
-            model: request.model || 'google/gemini-2.5-flash',
-            messages: request.system
-              ? [{ role: 'system', content: request.system }, ...request.messages]
-              : request.messages,
-          }),
-        });
-        const data = (await res.json()) as any;
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        const text = data.choices?.[0]?.message?.content ?? '';
-        return { success: true, text };
-      }
-
-      return { success: false, error: `Unknown AI provider "${request.provider}".` };
+      const { text } = await generateText({
+        model,
+        system: request.system,
+        messages: request.messages,
+        maxOutputTokens: 2048,
+      });
+      return { success: true, text };
     } catch (err: unknown) {
+      // Provider errors carry request context and sometimes the key itself.
+      // Surface the message only, never the object.
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
     }

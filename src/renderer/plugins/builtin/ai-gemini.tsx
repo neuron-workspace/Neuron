@@ -11,7 +11,7 @@ const aiGemini: PluginModule = {
     description: 'Chat with Google Gemini models about the note you are editing. Calls the Gemini API through the desktop app.',
     category: 'ai',
     configSchema: [
-      { key: 'apiKey', label: 'Gemini API key', type: 'password', placeholder: 'AIzaSy…', description: 'Stored locally in app settings; used only for your requests.' },
+      { key: 'apiKey', label: 'Gemini API key', type: 'password', placeholder: 'AIzaSy…', description: 'Stored in the main process. It is never readable by the app UI or by any plugin, including this one.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'gemini-1.5-flash', description: 'Optional. Defaults to gemini-1.5-flash.' },
     ],
   },
