@@ -5,6 +5,12 @@ import type { HostRuntime, PanelView, PluginCommand, PluginHost, PluginManifest,
 interface RegisteredPanel { pluginId: string; view: PanelView }
 interface RegisteredCommand { pluginId: string; command: PluginCommand }
 
+// Plugins are opt-in, with one exception. Version history is a recovery
+// surface: a user who must discover and enable it first will do so *after*
+// losing the file, the one moment it cannot help. It stays switchable off like
+// any other plugin, and the journal keeps recording either way.
+const DEFAULT_ENABLED = new Set(['version-history']);
+
 interface PluginState {
   enabled: Record<string, boolean>;
   config: Record<string, Record<string, string>>;
@@ -55,7 +61,13 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
     (async () => {
       const saved = (await window.electronAPI?.settings.get<PluginState>(SETTINGS_KEY)) ?? null;
       if (cancelled) return;
-      setState({ enabled: saved?.enabled ?? {}, config: saved?.config ?? {} });
+      // Defaults are applied here, not in isEnabled(): activation and the
+      // reactivation key both read state.enabled directly, so a default that
+      // lives only in the accessor is invisible to them and the plugin never
+      // starts. One source of truth, seeded once.
+      const enabled = { ...saved?.enabled };
+      for (const id of DEFAULT_ENABLED) if (enabled[id] === undefined) enabled[id] = true;
+      setState({ enabled, config: saved?.config ?? {} });
       setReady(true);
     })();
     return () => {
