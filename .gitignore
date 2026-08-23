@@ -44,6 +44,7 @@ CLAUDE.md
 DECISIONS.md
 HANDOFF.md
 SHARED_TASKS.md
+context-packs/
 skills-lock.json
 tools/agent-*
 tools/qa-*
