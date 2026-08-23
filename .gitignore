@@ -31,16 +31,19 @@ Thumbs.db
 .codex/
 .impeccable/
 
-# .claude/ holds the durable dual-agent context system and IS tracked: a
-# gitignored context system cannot be read from a fresh clone, and is absent
-# from the git worktrees delegated agents run in -- which defeats its purpose.
-# Only machine-local Claude state is ignored.
-.claude/*
-!.claude/*.md
-!.claude/context-packs/
-.claude/settings.local.json
-.claude/shell-snapshots/
-.claude/todos/
+# Agent workflow and context state. Deliberately NOT tracked: this is tooling for
+# building the app, not part of the app, and it does not belong in a public
+# repository. The files stay on disk and are used locally.
+#
+# Consequence to know about: git worktrees are built from tracked content, so a
+# delegated agent will not see these. Copy them into a new worktree by hand --
+# see .claude/AGENT_PROTOCOL.md.
+.claude/
+AGENTS.md
+CLAUDE.md
+DECISIONS.md
+HANDOFF.md
+SHARED_TASKS.md
 skills-lock.json
 tools/agent-*
 tools/qa-*
