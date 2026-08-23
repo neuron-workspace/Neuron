@@ -471,6 +471,79 @@ path-policy-approved file and escapes every cell. No filtering expressions, no
 joins, no sorting by user-supplied SQL-ish input — that is how a fragment
 endpoint turns into an injection surface.
 
+### D31 — `.nhtml` and `.ndash` are removed; workspace views are plain `.html`
+**Approved:** user (2026-08-23, "I don't want .nhtml or .ndash, remove them
+completely... people can have their own html or htmx files").
+**Consequence:** any `.html` file in the workspace opens as a sandboxed view. A
+folder mini-app's entry becomes `index.html`, still marked by its co-located
+`neuron.app.json`. `.nhtml` and `.ndash` stop being recognised anywhere.
+
+**This removes the script discriminator, and that must be replaced by a
+deliberate policy rather than left implicit.** The extensions were not
+decoration: `.nhtml` meant `script-src 'self'`, `.ndash` meant inline script
+allowed. One extension means one policy, and the policy is **scripts allowed** —
+htmx is itself a script, and "their own html or htmx files" cannot mean "HTML
+that may not run".
+
+What keeps that safe is unchanged, and is the part that actually matters:
+
+- `connect-src 'self'` — a view reaches the loopback API and has **no route to
+  the network**. This, not the file extension, is what prevents exfiltration.
+- Sandboxed webview: no Node, no preload, no `ipcRenderer`, no `process`.
+- Default-deny manifest plus an approval prompt on first open. A file with no
+  manifest renders and can read nothing.
+- Path policy on every read and write.
+
+**The residual risk, stated plainly:** a workspace synced from Git or Dropbox, or
+a downloaded template, can now contain an `.html` that renders as a view and asks
+for permissions. It cannot exfiltrate and cannot reach Node, so the approval
+prompt is the last line of defence — which makes its wording a security control,
+not UI copy. It must name the file and the capabilities in terms a user can
+refuse.
+
+**Side effect:** this dissolves the T-025 blocker. A no-script `.nhtml` could not
+parse JSON, which is the only reason a server-rendered database fragment was
+mandatory. Any view can now. The fragment route stays worth having for
+htmx-style authoring, but drops from blocking to optional.
+
+### D32 — AI providers move to the Vercel AI SDK
+**Approved:** user (2026-08-23, "check open source to find existing libraries to
+make it production grade").
+**Consequence:** five bespoke provider modules calling `fetch` by hand collapse
+to one interface — `ai` plus `@ai-sdk/anthropic`, `@ai-sdk/openai`,
+`@ai-sdk/google`, `@openrouter/ai-sdk-provider`, and `@ai-sdk/openai-compatible`
+for local endpoints. MIT, actively maintained, and it brings streaming and tool
+calling, neither of which the hand-rolled path has.
+
+**Cost, stated honestly:** five new runtime dependencies where AI currently has
+none, in an app whose selling point is local-first and whose D8 forbids casual
+dependency growth. The trade is accepted because the alternative is maintaining
+five provider dialects, their auth quirks, their streaming formats and their
+error shapes by hand — which is where a "production grade" claim goes to die.
+
+It stays in the **main process**. Keys must never reach the renderer bundle, and
+that constraint does not relax because the SDK is nicer.
+
+### D33 — Third-party plugins reuse the view sandbox, not a second isolation technology
+**Approved:** Claude (2026-08-23), from the same research.
+**Consequence:** the strongest candidates for sandboxing untrusted plugin
+JavaScript are SES / Hardened JavaScript (Compartments — what MetaMask uses for
+exactly this) and `quickjs-emscripten` (QuickJS compiled to WASM). Both are real
+options. Both are a **second** isolation model to maintain.
+
+Neuron already has one that works: the capability-scoped sandboxed webview with
+a manifest, an approval prompt, and a path policy — and under D31 it now accepts
+plain HTML. So a third-party plugin becomes an HTML app in that sandbox. No new
+dependency, no second security model, and the model it uses is the one already
+under test.
+
+First-party built-ins stay in-renderer; they are our code and the trust is
+explicit (T-021).
+
+**Revisit SES only** if untrusted plugins must render native React UI inside the
+main renderer process. That is the one thing the webview cannot do, and it is not
+a requirement today.
+
 ---
 
 ## Proposed
