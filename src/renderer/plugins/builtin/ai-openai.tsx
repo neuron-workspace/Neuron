@@ -22,6 +22,7 @@ const aiOpenai: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
+          pluginId="ai-openai"
           host={runtime}
           provider="openai"
           defaultModel="gpt-4o"

@@ -22,6 +22,7 @@ const aiGemini: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
+          pluginId="ai-gemini"
           host={runtime}
           provider="google"
           defaultModel="gemini-1.5-flash"

@@ -57,6 +57,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+    // Write-only by design: a secret can be stored and its presence checked,
+    // never read back into the renderer.
+    setSecret: (scope: string, field: string, value: string) => ipcRenderer.invoke('settings:set-secret', scope, field, value),
+    hasSecret: (scope: string, field: string) => ipcRenderer.invoke('settings:has-secret', scope, field),
   },
 
   // Privileged plugin capabilities

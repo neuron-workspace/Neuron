@@ -22,6 +22,7 @@ const aiClaude: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
+          pluginId="ai-claude"
           host={runtime}
           provider="anthropic"
           defaultModel="claude-opus-4-8"
