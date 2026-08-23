@@ -264,6 +264,45 @@ assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404,
   assert.equal((await api(noVars, '/api/v1/fragments/greet')).status, 200);
 }
 
+// Database route: renders one table, capability-gated, path-policy checked.
+{
+  writeFileSync(join(ws, 'notes', 'Plan.db'), JSON.stringify({
+    version: 2,
+    tables: {
+      tasks: { name: 'Tasks', schema: { order: ['title', 'status'], properties: { title: { name: 'Title' }, status: { name: 'Status' } } },
+               rows: [{ title: '<script>x</script>', status: 'Todo' }] },
+      projects: { name: 'Projects', schema: { order: ['name'], properties: { name: { name: 'Name' } } }, rows: [] },
+    },
+  }));
+
+  const json = await (await api(reader, '/api/v1/db?path=notes/Plan.db&table=tasks')).json();
+  assert.deepEqual(json.tables, ['tasks', 'projects'], 'lists every table');
+  assert.equal(json.columns[0].name, 'Title', 'uses the property display name');
+
+  // htmx gets HTML, and every cell is escaped -- a row is untrusted content.
+  const frag = await (await api(reader, '/api/v1/db?path=notes/Plan.db&table=tasks', { headers: { 'hx-request': 'true' } })).text();
+  assert.ok(frag.includes('<table'), 'htmx gets a table fragment');
+  assert.ok(frag.includes('&lt;script&gt;'), 'cells are escaped');
+  assert.ok(!frag.includes('<script>'), 'no raw script survives a cell');
+
+  // A multi-table file must not silently pick one.
+  assert.equal((await api(reader, '/api/v1/db?path=notes/Plan.db')).status, 400, 'ambiguous table -> 400');
+  assert.equal((await api(reader, '/api/v1/db?path=notes/Plan.db&table=nope')).status, 404, 'unknown table -> 404');
+
+  // Same gates as every other read: capability, then path policy. Assert the
+  // error CODE, not just the status -- both gates answer 403, so a status-only
+  // check passes even with the capability check deleted. It did, when tried.
+  const denied = await (await api(unmanifested, '/api/v1/db?path=notes/Plan.db')).json();
+  assert.equal(denied.error.code, 'missing_capability', 'capability is checked before anything else');
+  const offPolicy = await (await api(reader, '/api/v1/db?path=data/out.txt')).json();
+  assert.equal(offPolicy.error.code, 'path_not_allowed', 'path policy still applies');
+
+  // A v1 file (schema at the root) reads as its single table.
+  writeFileSync(join(ws, 'notes', 'Old.db'), JSON.stringify({ schema: { order: ['a'], properties: { a: { name: 'A' } } }, rows: [{ a: '1' }] }));
+  const v1 = await (await api(reader, '/api/v1/db?path=notes/Old.db')).json();
+  assert.equal(v1.rows.length, 1, 'v1 database reads without a table name');
+}
+
 // Variables: read, write-protected, writable roundtrip, type checks
 const dashTitle = await (await api(reader, '/api/v1/variables/dashboardTitle')).json();
 assert.equal(dashTitle.value, 'Ops <Dash>');

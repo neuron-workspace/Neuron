@@ -354,6 +354,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (route === 'search' && method === 'GET') return apiSearch(ctx);
     if (route === 'notes' && method === 'GET') return apiNotes(ctx);
     if (route === 'tags' && method === 'GET') return apiTags(ctx);
+    if (route === 'db' && method === 'GET') return apiDatabase(ctx);
     const fragMatch = route.match(/^fragments\/([A-Za-z0-9_-]{1,64})$/);
     if (fragMatch && method === 'GET') return apiFragment(ctx, fragMatch[1]);
 
@@ -581,6 +582,88 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     } else {
       sendJson(ctx.res, 200, { tags: sorted });
     }
+  }
+
+  /**
+   * GET /api/v1/db?path=<rel>&table=<name>
+   *
+   * A rendered table for a view. Without it a view can fetch a .db and get
+   * JSON, which is only useful to a document willing to script; this lets an
+   * htmx-only view show a database at all.
+   *
+   * Gated on workspace.files.read and the path policy -- no new capability. A
+   * .db is a file the view could already fetch, so a second gate over the same
+   * access would only let a manifest look more restricted than it is.
+   *
+   * This is a READER, not the model. src/renderer/lib/db.ts owns the format:
+   * version detection, read-only v1 migration, unknown-field preservation.
+   * Those are all write concerns and main never writes a .db. Keep it that way
+   * -- the moment this function needs to serialize, it is the wrong function.
+   */
+  function apiDatabase(ctx: Ctx): void {
+    if (!requireCap(ctx, 'workspace.files.read')) return;
+    const resolved = checkedPath(ctx, ctx.url.searchParams.get('path'), 'read');
+    if (!resolved) return;
+    if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'Database not found.'); return; }
+    if (fs.statSync(resolved.full).size > MAX_READ_BYTES) { fail(ctx, 413, 'too_large', 'Database exceeds the 2 MB read limit.'); return; }
+
+    let doc: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(resolved.full, 'utf-8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+      doc = parsed as Record<string, unknown>;
+    } catch {
+      fail(ctx, 422, 'invalid_database', 'That file is not a readable database.');
+      return;
+    }
+
+    // v1 is a lone table at the root; v2 keys tables by id.
+    const wanted = ctx.url.searchParams.get('table');
+    const tables = (doc.tables && typeof doc.tables === 'object' && !Array.isArray(doc.tables))
+      ? doc.tables as Record<string, Record<string, unknown>>
+      : { [resolved.rel.split('/').pop()!.replace(/\.db$/i, '')]: doc };
+
+    const ids = Object.keys(tables);
+    const id = wanted && ids.includes(wanted) ? wanted : (!wanted && ids.length === 1 ? ids[0] : null);
+    if (!id) {
+      fail(ctx, wanted ? 404 : 400, wanted ? 'not_found' : 'table_required',
+        wanted ? 'No table by that name in this database.' : 'This database has several tables; add table=<name>.');
+      return;
+    }
+
+    const table = tables[id] ?? {};
+    const schema = (table.schema && typeof table.schema === 'object' ? table.schema : {}) as Record<string, unknown>;
+    const props = (schema.properties && typeof schema.properties === 'object' ? schema.properties : {}) as Record<string, { name?: string }>;
+    const order = Array.isArray(schema.order) ? (schema.order as unknown[]).filter((k): k is string => typeof k === 'string') : Object.keys(props);
+    const rows = Array.isArray(table.rows) ? (table.rows as Record<string, unknown>[]).slice(0, MAX_LIST_ENTRIES) : [];
+
+    // Cells render as escaped text, always. This route reads one table from one
+    // approved path; it is not a query engine, and nothing the caller supplies
+    // reaches a filter, a sort, or a path.
+    const cell = (value: unknown): string => {
+      if (value === null || value === undefined) return '';
+      if (Array.isArray(value)) return value.map((v) => esc(typeof v === 'object' ? JSON.stringify(v) : v)).join(', ');
+      if (typeof value === 'object') return esc(JSON.stringify(value));
+      return esc(value);
+    };
+
+    if (isHx(ctx.req)) {
+      const head = order.map((key) => '<th>' + esc(props[key]?.name ?? key) + '</th>').join('');
+      const body = rows.length
+        ? rows.map((row) => '<tr>' + order.map((key) => '<td>' + cell(row[key]) + '</td>').join('') + '</tr>').join('\n')
+        : '<tr><td colspan="' + Math.max(1, order.length) + '"><p class="neuron-empty">No rows yet.</p></td></tr>';
+      send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' },
+        '<div class="neuron-scroll"><table class="neuron-table"><thead><tr>' + head + '</tr></thead><tbody>\n' + body + '\n</tbody></table></div>');
+      return;
+    }
+
+    sendJson(ctx.res, 200, {
+      path: resolved.rel,
+      table: id,
+      tables: ids,
+      columns: order.map((key) => ({ key, name: props[key]?.name ?? key })),
+      rows,
+    });
   }
 
   function apiFragment(ctx: Ctx, name: string): void {
