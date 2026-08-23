@@ -27,3 +27,13 @@ jobs:
         run: npm test
       - name: Build application
         run: npm run build
+      - name: Run Electron end-to-end tests
+        run: npm run test:e2e
+      - name: Upload end-to-end failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
