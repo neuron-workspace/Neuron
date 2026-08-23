@@ -1,9 +1,13 @@
 import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
 const repoRoot = resolve(__dirname, '..');
+
+/** The stale-workspace sweep is a once-per-run job, not a per-test one. */
+let sweptThisRun = false;
 
 /**
  * Every test gets its own throwaway workspace and userData directory.
@@ -22,7 +26,13 @@ export interface AppFixture {
 
 export const test = base.extend<AppFixture>({
   workspace: async ({}, use) => {
-    // Sweep leftovers from previous runs. Cleanup happens HERE, not in teardown:
+    // Sweep ONCE per run, not per test. Teardown deletes nothing (below), so
+    // leftovers accumulate; sweeping the whole pile before each of 23 tests is
+    // slow enough to blow Playwright's worker-teardown budget by itself -- the
+    // same failure the sweep was introduced to fix, reintroduced from the other
+    // end. 166 stale directories had built up before this was noticed.
+    //
+    // Cleanup happens HERE, not in teardown:
     // Electron holds file handles on Windows after close -- the main process
     // watches this directory with chokidar and HTML views add webview partitions
     // and loopback sessions on top -- so deleting on the way out raced those
@@ -30,13 +40,24 @@ export const test = base.extend<AppFixture>({
     // a different test failing every run, because the timeout attaches to
     // whichever test the worker happened to be on. Deleting on the way IN has no
     // race: nothing holds those directories any more.
-    const stale = Date.now() - 60 * 60 * 1000;
-    for (const name of readdirSync(tmpdir())) {
-      if (!name.startsWith('neuron-e2e-')) continue;
-      const dir = join(tmpdir(), name);
-      try {
-        if (statSync(dir).mtimeMs < stale) rmSync(dir, { recursive: true, force: true });
-      } catch { /* another run owns it, or the OS already reaped it */ }
+    if (!sweptThisRun) {
+      sweptThisRun = true;
+      // Bounded on purpose. Each leftover holds an Electron userData directory
+      // -- tens of megabytes of GPU and code cache, not the 144K workspace --
+      // so deleting a full backlog costs minutes and lands entirely inside the
+      // first test's fixture, which is how it blew the worker-teardown budget.
+      // A few per run drains the backlog across runs without any single run
+      // paying for it.
+      const stale = Date.now() - 60 * 60 * 1000;
+      let budget = 5;
+      for (const name of readdirSync(tmpdir())) {
+        if (budget <= 0) break;
+        if (!name.startsWith('neuron-e2e-')) continue;
+        const dir = join(tmpdir(), name);
+        try {
+          if (statSync(dir).mtimeMs < stale) { rmSync(dir, { recursive: true, force: true }); budget--; }
+        } catch { /* another run owns it, or the OS already reaped it */ }
+      }
     }
 
     const dir = mkdtempSync(join(tmpdir(), 'neuron-e2e-'));
@@ -44,11 +65,22 @@ export const test = base.extend<AppFixture>({
     cpSync(join(repoRoot, 'examples', 'demo-repo'), workspace, { recursive: true });
     await use(workspace);
 
-    // Nothing is deleted here, deliberately. Even a single rmSync attempt walks
-    // a 16 MB tree whose handles Electron may still hold, and enough of those
-    // add up to Playwright's 60s worker-teardown budget -- which then fails a
-    // random test. The sweep above collects this directory on the next run,
-    // when nothing holds it. Teardown must not do slow work.
+    // Hand the delete to a detached OS process and return immediately.
+    //
+    // Three earlier attempts each failed differently: deleting synchronously
+    // blocked on Electron's file handles and blew the 60s worker-teardown
+    // budget; deleting nothing let the backlog grow to 299 directories, each
+    // holding tens of megabytes of Electron cache; and a bounded sweep removed
+    // 5 per run while every run created 23, which is a losing race.
+    //
+    // Detached costs teardown nothing and the OS finishes after the handles
+    // drop. If it fails there is no consequence: the bounded sweep is still
+    // there as a backstop.
+    try {
+      spawn(process.platform === 'win32' ? 'cmd' : 'rm',
+        process.platform === 'win32' ? ['/c', 'rmdir', '/s', '/q', dir] : ['-rf', dir],
+        { detached: true, stdio: 'ignore' }).unref();
+    } catch { /* the sweep collects it */ }
   },
 
   app: async ({ workspace }, use) => {

@@ -1,13 +1,13 @@
 {
-  "name": "Custom dashboard",
+  "name": "Workload",
   "version": "1.0.0",
-  "description": "An HTML dashboard with its own CSS + JS; it reads workspace data and writes the projectStatus variable through the local API.",
+  "description": "Derives overdue counts and the open-work split from Planner.db. Runs JavaScript.",
   "permissions": [
-    "notes.read",
-    "tags.read",
-    "variables.read",
-    "variables.write"
+    "workspace.files.read"
   ],
-  "allowedReadPaths": ["**"],
+  "allowedReadPaths": [
+    "Planner.db"
+  ],
+  "allowedWritePaths": [],
   "networkPolicy": "none"
 }

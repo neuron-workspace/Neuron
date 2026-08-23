@@ -81,7 +81,7 @@ Neuron supports these MDX components:
 
 - `<Badge text="..." type="info|success|warning|error" />`
 - `<Callout type="info|success|warning|error" title="...">...</Callout>`
-- `<DbView path="@Projects.db" view="table|board|card" />`
+- `<DbView path="@Planner.db" view="table|board|card" />`
 
 `DbView` is a read-only embed of a workspace-root-relative `.db` file. Edit the
 database in its own tab. Unknown MDX components produce a visible compilation

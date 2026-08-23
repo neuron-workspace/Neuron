@@ -31,7 +31,7 @@ Then start at **getting-started** in the sidebar and follow the links.
 | .neuron/variables.json | Typed variables available to HTMX views |
 | Team dashboard.html | An HTML view: live summary, search, and an editable status variable |
 | .neuron/manifests/Team dashboard.json | The view's manifest — declared permissions and path scopes |
-| Projects.db | A Notion-style database with table, board, and card layouts |
+| Planner.db | A Notion-style database with table, board, and card layouts |
 | Idea board.canvas | A JSON Canvas spatial board with groups and labelled connections |
 
 ## Try these

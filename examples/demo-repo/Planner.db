@@ -1,0 +1,334 @@
+{
+  "version": 2,
+  "tables": {
+    "tasks": {
+      "name": "Tasks",
+      "schema": {
+        "order": [
+          "title",
+          "status",
+          "priority",
+          "due",
+          "project",
+          "done"
+        ],
+        "properties": {
+          "title": {
+            "name": "Task",
+            "type": "text"
+          },
+          "status": {
+            "name": "Status",
+            "type": "select",
+            "options": [
+              {
+                "id": "todo",
+                "name": "Todo",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "doing",
+                "name": "In progress",
+                "color": "#528fd1"
+              },
+              {
+                "id": "blocked",
+                "name": "Blocked",
+                "color": "#c0705f"
+              },
+              {
+                "id": "done",
+                "name": "Done",
+                "color": "#5aa06c"
+              }
+            ]
+          },
+          "priority": {
+            "name": "Priority",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "name": "Low",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "medium",
+                "name": "Medium",
+                "color": "#528fd1"
+              },
+              {
+                "id": "high",
+                "name": "High",
+                "color": "#c0705f"
+              }
+            ]
+          },
+          "due": {
+            "name": "Due",
+            "type": "date"
+          },
+          "project": {
+            "name": "Project",
+            "type": "text"
+          },
+          "done": {
+            "name": "Done",
+            "type": "checkbox"
+          }
+        }
+      },
+      "rows": [
+        {
+          "id": "t1",
+          "values": {
+            "title": "Draft the release checklist",
+            "status": "doing",
+            "priority": "high",
+            "due": "2026-09-02",
+            "project": "Release 0.5",
+            "done": false
+          }
+        },
+        {
+          "id": "t2",
+          "values": {
+            "title": "Sign the Windows installer",
+            "status": "blocked",
+            "priority": "high",
+            "due": "2026-09-05",
+            "project": "Release 0.5",
+            "done": false
+          }
+        },
+        {
+          "id": "t3",
+          "values": {
+            "title": "Write the upgrade notes",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-08",
+            "project": "Release 0.5",
+            "done": false
+          }
+        },
+        {
+          "id": "t4",
+          "values": {
+            "title": "Cut the release branch",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-10",
+            "project": "Release 0.5",
+            "done": false
+          }
+        },
+        {
+          "id": "t5",
+          "values": {
+            "title": "Audit dependency advisories",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-18",
+            "project": "Release 0.5",
+            "done": true
+          }
+        },
+        {
+          "id": "t6",
+          "values": {
+            "title": "Rewrite the onboarding note",
+            "status": "doing",
+            "priority": "medium",
+            "due": "2026-09-04",
+            "project": "Docs refresh",
+            "done": false
+          }
+        },
+        {
+          "id": "t7",
+          "values": {
+            "title": "Screenshot the canvas surface",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-12",
+            "project": "Docs refresh",
+            "done": false
+          }
+        },
+        {
+          "id": "t8",
+          "values": {
+            "title": "Document the plugin sandbox",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-21",
+            "project": "Docs refresh",
+            "done": true
+          }
+        },
+        {
+          "id": "t9",
+          "values": {
+            "title": "Trim the getting-started page",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-19",
+            "project": "Docs refresh",
+            "done": false
+          }
+        },
+        {
+          "id": "t10",
+          "values": {
+            "title": "Profile the search index",
+            "status": "doing",
+            "priority": "high",
+            "due": "2026-09-03",
+            "project": "Performance",
+            "done": false
+          }
+        },
+        {
+          "id": "t11",
+          "values": {
+            "title": "Split the CodeMirror chunk",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-16",
+            "project": "Performance",
+            "done": false
+          }
+        },
+        {
+          "id": "t12",
+          "values": {
+            "title": "Measure cold start on Windows",
+            "status": "blocked",
+            "priority": "low",
+            "due": "2026-09-20",
+            "project": "Performance",
+            "done": false
+          }
+        },
+        {
+          "id": "t13",
+          "values": {
+            "title": "Add restore coverage",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-23",
+            "project": "Recovery",
+            "done": true
+          }
+        },
+        {
+          "id": "t14",
+          "values": {
+            "title": "Retention limits for the journal",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-11",
+            "project": "Recovery",
+            "done": false
+          }
+        }
+      ]
+    },
+    "projects": {
+      "name": "Projects",
+      "schema": {
+        "order": [
+          "name",
+          "status",
+          "owner",
+          "target"
+        ],
+        "properties": {
+          "name": {
+            "name": "Project",
+            "type": "text"
+          },
+          "status": {
+            "name": "Status",
+            "type": "select",
+            "options": [
+              {
+                "id": "active",
+                "name": "Active",
+                "color": "#528fd1"
+              },
+              {
+                "id": "paused",
+                "name": "Paused",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "shipped",
+                "name": "Shipped",
+                "color": "#5aa06c"
+              }
+            ]
+          },
+          "owner": {
+            "name": "Owner",
+            "type": "text"
+          },
+          "target": {
+            "name": "Target",
+            "type": "date"
+          }
+        }
+      },
+      "rows": [
+        {
+          "id": "p1",
+          "values": {
+            "name": "Release 0.5",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-15"
+          }
+        },
+        {
+          "id": "p2",
+          "values": {
+            "name": "Docs refresh",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-30"
+          }
+        },
+        {
+          "id": "p3",
+          "values": {
+            "name": "Performance",
+            "status": "paused",
+            "owner": "Shivam",
+            "target": "2026-10-14"
+          }
+        },
+        {
+          "id": "p4",
+          "values": {
+            "name": "Recovery",
+            "status": "shipped",
+            "owner": "Shivam",
+            "target": "2026-08-25"
+          }
+        }
+      ]
+    }
+  },
+  "relations": [
+    {
+      "from": {
+        "table": "tasks",
+        "property": "project"
+      },
+      "to": {
+        "table": "projects"
+      }
+    }
+  ]
+}
