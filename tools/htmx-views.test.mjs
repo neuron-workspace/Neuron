@@ -270,7 +270,7 @@ assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404,
     version: 2,
     tables: {
       tasks: { name: 'Tasks', schema: { order: ['title', 'status'], properties: { title: { name: 'Title' }, status: { name: 'Status' } } },
-               rows: [{ title: '<script>x</script>', status: 'Todo' }] },
+               rows: [{ id: 't1', values: { title: '<script>x</script>', status: 'Todo' } }] },
       projects: { name: 'Projects', schema: { order: ['name'], properties: { name: { name: 'Name' } } }, rows: [] },
     },
   }));
@@ -283,6 +283,7 @@ assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404,
   const frag = await (await api(reader, '/api/v1/db?path=notes/Plan.db&table=tasks', { headers: { 'hx-request': 'true' } })).text();
   assert.ok(frag.includes('<table'), 'htmx gets a table fragment');
   assert.ok(frag.includes('&lt;script&gt;'), 'cells are escaped');
+  assert.ok(frag.includes('<td>Todo</td>'), 'cell VALUES render, not just headers');
   assert.ok(!frag.includes('<script>'), 'no raw script survives a cell');
 
   // A multi-table file must not silently pick one.
@@ -298,9 +299,10 @@ assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404,
   assert.equal(offPolicy.error.code, 'path_not_allowed', 'path policy still applies');
 
   // A v1 file (schema at the root) reads as its single table.
-  writeFileSync(join(ws, 'notes', 'Old.db'), JSON.stringify({ schema: { order: ['a'], properties: { a: { name: 'A' } } }, rows: [{ a: '1' }] }));
+  writeFileSync(join(ws, 'notes', 'Old.db'), JSON.stringify({ schema: { order: ['a'], properties: { a: { name: 'A' } } }, rows: [{ id: 'r1', values: { a: 'cell-one' } }] }));
   const v1 = await (await api(reader, '/api/v1/db?path=notes/Old.db')).json();
   assert.equal(v1.rows.length, 1, 'v1 database reads without a table name');
+  assert.equal(v1.rows[0].values.a, 'cell-one', 'v1 rows expose their values');
 }
 
 // Variables: read, write-protected, writable roundtrip, type checks

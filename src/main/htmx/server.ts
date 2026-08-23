@@ -635,7 +635,20 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const schema = (table.schema && typeof table.schema === 'object' ? table.schema : {}) as Record<string, unknown>;
     const props = (schema.properties && typeof schema.properties === 'object' ? schema.properties : {}) as Record<string, { name?: string }>;
     const order = Array.isArray(schema.order) ? (schema.order as unknown[]).filter((k): k is string => typeof k === 'string') : Object.keys(props);
-    const rows = Array.isArray(table.rows) ? (table.rows as Record<string, unknown>[]).slice(0, MAX_LIST_ENTRIES) : [];
+    // A row is { id, values: { key: value } } -- cells live under `values`, not
+    // at the row root. Reading row[key] produced a table with correct headers
+    // and entirely blank cells, and the first test I wrote for this route built
+    // its fixture from the same wrong assumption, so it confirmed the bug rather
+    // than catching it. A fixture for a format has to come from the format.
+    const rows: { id?: string; values: Record<string, unknown> }[] =
+      (Array.isArray(table.rows) ? (table.rows as Record<string, unknown>[]) : [])
+        .slice(0, MAX_LIST_ENTRIES)
+        .map((row) => ({
+          id: typeof row.id === 'string' ? row.id : undefined,
+          values: row.values && typeof row.values === 'object' && !Array.isArray(row.values)
+            ? row.values as Record<string, unknown>
+            : {},
+        }));
 
     // Cells render as escaped text, always. This route reads one table from one
     // approved path; it is not a query engine, and nothing the caller supplies
@@ -650,7 +663,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (isHx(ctx.req)) {
       const head = order.map((key) => '<th>' + esc(props[key]?.name ?? key) + '</th>').join('');
       const body = rows.length
-        ? rows.map((row) => '<tr>' + order.map((key) => '<td>' + cell(row[key]) + '</td>').join('') + '</tr>').join('\n')
+        ? rows.map((row) => '<tr>' + order.map((key) => '<td>' + cell(row.values[key]) + '</td>').join('') + '</tr>').join('\n')
         : '<tr><td colspan="' + Math.max(1, order.length) + '"><p class="neuron-empty">No rows yet.</p></td></tr>';
       send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' },
         '<div class="neuron-scroll"><table class="neuron-table"><thead><tr>' + head + '</tr></thead><tbody>\n' + body + '\n</tbody></table></div>');
