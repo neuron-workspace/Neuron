@@ -26,7 +26,19 @@ export const test = base.extend<AppFixture>({
     const workspace = join(dir, 'workspace');
     cpSync(join(repoRoot, 'examples', 'demo-repo'), workspace, { recursive: true });
     await use(workspace);
-    rmSync(dir, { recursive: true, force: true });
+
+    // Windows holds file handles after the process that opened them exits, and
+    // the main process runs a chokidar watcher rooted in this very directory.
+    // A bare rmSync therefore raced the watcher's release and blocked long
+    // enough to blow Playwright's 60s worker-teardown budget -- which surfaces
+    // as a failure pinned to whichever test the worker was running, so it
+    // looked like a different flaky test each run rather than one teardown bug.
+    // Retry briefly, and never fail the suite over a leftover temp directory.
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      // The OS reaps %TEMP%; a stranded fixture directory is not a test result.
+    }
   },
 
   app: async ({ workspace }, use) => {

@@ -117,6 +117,23 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
     while (i < lines.length) {
       const line = lines[i];
 
+      // MDX ESM: `import ... from '...'` / `export ...` are module syntax, not
+      // prose. Neuron's renderer is a line parser, not a real MDX compiler, so
+      // these fell through and rendered as literal text -- a note that declares
+      // its components showed the declaration to the reader. Skip the statement,
+      // including the multi-line brace form, and skip the blank line after it so
+      // the removal does not leave a hole in the document.
+      if (/^\s*(import|export)\s/.test(line)) {
+        let open = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+        i++;
+        while (i < lines.length && open > 0) {
+          open += (lines[i].match(/\{/g) ?? []).length - (lines[i].match(/\}/g) ?? []).length;
+          i++;
+        }
+        if (i < lines.length && lines[i].trim() === '') i++;
+        continue;
+      }
+
       // Code Block parser (markdown)
       if (line.trim().startsWith('```')) {
         const lang = line.trim().slice(3);

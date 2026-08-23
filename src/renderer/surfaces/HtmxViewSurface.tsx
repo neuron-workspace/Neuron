@@ -35,10 +35,30 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   const webviewRef = useRef<any>(null);
   const sessionRef = useRef<string | null>(null);
 
+  // Every open() call takes a ticket. Only the newest may publish its result.
+  //
+  // Without this, StrictMode's double mount produced a dead view on the first
+  // open of every dashboard. Mount 1 starts open() and creates session A;
+  // cleanup runs before that await resolves, so sessionRef is still null and it
+  // closes nothing; mount 2 opens again and the main process revokes A because
+  // a session already existed for this path (htmx/index.ts). Whichever promise
+  // resolved last won, and if that was the first one the webview loaded A's URL
+  // after A had been revoked -- "This view session is no longer valid."
+  const openTicket = useRef(0);
+
   const open = useCallback(async () => {
+    const ticket = ++openTicket.current;
     setPhase({ kind: 'loading' });
     if (sessionRef.current) { void window.electronAPI.htmxViews.close(sessionRef.current); sessionRef.current = null; }
     const result: HtmxViewOpenResult = await window.electronAPI.htmxViews.open(path, colorScheme ?? 'dark');
+
+    if (ticket !== openTicket.current) {
+      // Superseded while awaiting. Close what we opened -- nobody else holds a
+      // reference to it -- and publish nothing.
+      if (result.status === 'ready') void window.electronAPI.htmxViews.close(result.sessionId);
+      return;
+    }
+
     if (result.status === 'ready') {
       sessionRef.current = result.sessionId;
       setPhase({ kind: 'ready', ...result });
@@ -52,6 +72,8 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   useEffect(() => {
     void open();
     return () => {
+      // Invalidate any in-flight open so its result cannot land after unmount.
+      openTicket.current++;
       if (sessionRef.current) { void window.electronAPI.htmxViews.close(sessionRef.current); sessionRef.current = null; }
     };
   }, [open]);
@@ -155,6 +177,10 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
       </div>
       <div className="min-h-0 flex-1">
         <webview
+          // Remount per session. The boot token in src is single-use, so React
+          // reusing the element and re-setting src would replay a spent token
+          // and be rejected exactly like a revoked session.
+          key={phase.sessionId}
           ref={webviewRef}
           src={phase.url}
           partition={phase.partition}
