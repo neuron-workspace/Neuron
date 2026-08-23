@@ -22,6 +22,16 @@ export interface PluginManifest {
   configSchema?: PluginConfigField[];
 }
 
+/** Workspace HTML app discovered under plugins/<folder>/; never activated in the built-in host. */
+export interface SandboxedPluginDescriptor {
+  name: string;
+  version: string;
+  description: string;
+  entry: string;
+  manifestPath: string;
+  permissions: string[];
+}
+
 /** Live, per-render context handed to a plugin's panel and command callbacks. */
 export interface HostRuntime {
   activeNote: string | null;
