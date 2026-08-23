@@ -232,16 +232,62 @@ ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 // IPC — settings (generic key/value; used for plugin config + state)
 // ==========================================================================
 
+// Secrets live under this one key and are readable ONLY by the main process.
+// Everything else in the settings file is renderer-readable through
+// settings:get, which is exactly how API keys leaked: plugin config -- apiKey
+// included -- was loaded into renderer state and then handed back to main on
+// every ai:complete call. Any renderer code could read every plugin's key, and
+// plugins are not sandboxed (risk R3), so one plugin could read another's.
+const SECRETS_KEY = '__secrets';
+
+function readSecret(scope: string, field: string): string | null {
+  const store = readSettings()[SECRETS_KEY];
+  if (!store || typeof store !== 'object') return null;
+  const scoped = (store as Record<string, unknown>)[scope];
+  if (!scoped || typeof scoped !== 'object') return null;
+  const value = (scoped as Record<string, unknown>)[field];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 ipcMain.handle('settings:get', (_event, key: string) => {
+  // The renderer may never read the secret namespace, by any key that resolves
+  // to it. Without this the store would be one settings.get('__secrets') away
+  // from being exactly as exposed as before.
+  if (key === SECRETS_KEY) return null;
   const settings = readSettings();
-  return key in settings ? settings[key] : null;
+  if (key in settings) {
+    const value = settings[key];
+    return key === SECRETS_KEY ? null : value;
+  }
+  return null;
 });
 ipcMain.handle('settings:set', (_event, key: string, value: unknown) => {
+  if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
   const settings = readSettings();
   settings[key] = value;
   writeSettings(settings);
   return { success: true };
 });
+
+// Write-only from the renderer's side: it can set a secret and ask whether one
+// exists, and it can never read the value back.
+ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, value: string) => {
+  if (typeof scope !== 'string' || typeof field !== 'string' || !scope || !field) {
+    return { success: false, error: 'Invalid secret reference.' };
+  }
+  const settings = readSettings();
+  const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object'
+    ? settings[SECRETS_KEY]
+    : {}) as Record<string, Record<string, string>>;
+  const scoped = { ...(store[scope] ?? {}) };
+  if (typeof value === 'string' && value.length > 0) scoped[field] = value;
+  else delete scoped[field];
+  settings[SECRETS_KEY] = { ...store, [scope]: scoped };
+  writeSettings(settings);
+  return { success: true };
+});
+
+ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => readSecret(scope, field) !== null);
 
 // ==========================================================================
 // IPC — repository
@@ -546,12 +592,16 @@ ipcMain.handle(
   'ai:complete',
   async (
     _event,
-    request: { provider: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> },
+    request: { provider: string; pluginId?: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> },
   ) => {
     try {
-      const config = request.config ?? {};
+      // Non-secret settings only -- baseUrl, model. An apiKey arriving from the
+      // renderer is dropped rather than used: trusting one is what made every
+      // plugin able to read every other plugin's key. The real key is read here,
+      // from a store the renderer cannot see.
+      const { apiKey: _rendererSuppliedKey, ...config } = request.config ?? {};
+      const apiKey = request.pluginId ? readSecret(request.pluginId, 'apiKey') : null;
       if (request.provider === 'anthropic') {
-        const apiKey = config.apiKey;
         if (!apiKey) return { success: false, error: 'Add an Anthropic API key in the plugin settings.' };
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -605,7 +655,6 @@ ipcMain.handle(
       }
 
       if (request.provider === 'openai') {
-        const apiKey = config.apiKey;
         if (!apiKey) return { success: false, error: 'Add an OpenAI API key in the plugin settings.' };
         const res = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
@@ -627,7 +676,6 @@ ipcMain.handle(
       }
 
       if (request.provider === 'google') {
-        const apiKey = config.apiKey;
         if (!apiKey) return { success: false, error: 'Add a Gemini API key in the plugin settings.' };
         const model = request.model || 'gemini-1.5-flash';
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
@@ -650,7 +698,6 @@ ipcMain.handle(
       }
 
       if (request.provider === 'openrouter') {
-        const apiKey = config.apiKey;
         if (!apiKey) return { success: false, error: 'Add an OpenRouter API key in the plugin settings.' };
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',

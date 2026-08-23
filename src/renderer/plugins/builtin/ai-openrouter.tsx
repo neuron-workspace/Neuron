@@ -22,6 +22,7 @@ const aiOpenrouter: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
+          pluginId="ai-openrouter"
           host={runtime}
           provider="openrouter"
           defaultModel="google/gemini-2.5-flash"

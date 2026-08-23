@@ -19,9 +19,36 @@ const categoryMeta: Record<PluginCategory, { label: string; icon: React.Componen
 function ConfigForm({ manifest }: { manifest: PluginManifest }) {
   const { getConfig, setConfig } = usePlugins();
   const [values, setValues] = useState<Record<string, string>>(getConfig(manifest.id));
+  // A password field can never be pre-filled: the value lives in the main
+  // process and there is no getter. All the renderer may know is whether one is
+  // set, so the field shows that and stays empty until the user types a
+  // replacement.
+  const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
   useEffect(() => setValues(getConfig(manifest.id)), [manifest.id, getConfig]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        (manifest.configSchema ?? [])
+          .filter((f) => f.type === 'password')
+          .map(async (f) => [f.key, await (window.electronAPI?.settings.hasSecret(manifest.id, f.key) ?? false)] as const),
+      );
+      if (!cancelled) setStoredSecrets(Object.fromEntries(entries));
+    })();
+    return () => { cancelled = true; };
+  }, [manifest.id, manifest.configSchema]);
   if (!manifest.configSchema?.length) return null;
-  const save = () => setConfig(manifest.id, values);
+  const save = () => {
+    setConfig(manifest.id, values);
+    // A submitted secret is now stored; reflect that and clear the input rather
+    // than leaving the typed value sitting in renderer state.
+    for (const field of manifest.configSchema ?? []) {
+      if (field.type === 'password' && values[field.key]) {
+        setStoredSecrets((prev) => ({ ...prev, [field.key]: true }));
+        setValues((prev) => ({ ...prev, [field.key]: '' }));
+      }
+    }
+  };
   return (
     <div className="mt-3 space-y-3 border-t border-[var(--divider)] pt-3">
       {manifest.configSchema.map((field) => (
@@ -30,7 +57,7 @@ function ConfigForm({ manifest }: { manifest: PluginManifest }) {
           <Input
             id={`${manifest.id}-${field.key}`}
             type={field.type === 'password' ? 'password' : 'text'}
-            placeholder={field.placeholder}
+            placeholder={field.type === 'password' && storedSecrets[field.key] ? 'Saved — type to replace' : field.placeholder}
             value={values[field.key] ?? ''}
             onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
             onBlur={save}

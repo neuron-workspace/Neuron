@@ -11,6 +11,8 @@ export interface AiMessage {
 
 export interface AiCompleteRequest {
   provider: string;
+  /** Identifies whose stored secret to use. The key itself never crosses IPC. */
+  pluginId?: string;
   model?: string;
   system?: string;
   messages: AiMessage[];
@@ -88,6 +90,9 @@ export interface ElectronAPI {
   settings: {
     get: <T = unknown>(key: string) => Promise<T | null>;
     set: (key: string, value: unknown) => Promise<{ success: boolean }>;
+    /** Store a secret in the main process. There is no getter, deliberately. */
+    setSecret: (scope: string, field: string, value: string) => Promise<{ success: boolean; error?: string }>;
+    hasSecret: (scope: string, field: string) => Promise<boolean>;
   };
 
   // Privileged plugin capabilities
