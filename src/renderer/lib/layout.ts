@@ -8,6 +8,8 @@ export interface WorkbenchLayout {
   bottomPanel: boolean;
   statusBar: boolean;
   zen: boolean;
+  /** Square workspace-map overlay pinned to the top-right of the editor. */
+  graphOverlay: boolean;
 }
 
 export const DEFAULT_LAYOUT: WorkbenchLayout = {
@@ -17,6 +19,7 @@ export const DEFAULT_LAYOUT: WorkbenchLayout = {
   bottomPanel: false,
   statusBar: true,
   zen: false,
+  graphOverlay: false,
 };
 
 /** Merge a stored layout over the defaults, ignoring junk. */

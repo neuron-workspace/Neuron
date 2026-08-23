@@ -7,6 +7,7 @@ import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import RightPanel from './components/RightPanel';
+import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import CreateModal from './components/CreateModal';
 import CommandPalette from './components/CommandPalette';
@@ -147,6 +148,8 @@ export default function App() {
   const bottomPanelOpen = layout.bottomPanel;
   const setSidebarOpen = (fn: (v: boolean) => boolean) => patchLayout({ sidebar: fn(layoutRef.current.sidebar) });
   const setRightPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ rightPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.rightPanel) });
+  const graphOverlayOpen = layout.graphOverlay;
+  const toggleGraphOverlay = () => patchLayout({ graphOverlay: !layoutRef.current.graphOverlay });
   const setBottomPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ bottomPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.bottomPanel) });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -523,6 +526,7 @@ export default function App() {
         case 'toggle-right': setRightPanelOpen((v) => !v); break;
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
+        case 'toggle-graph': toggleGraphOverlay(); break;
       }
     };
     window.addEventListener('keydown', handler);
@@ -739,6 +743,20 @@ export default function App() {
                             </div>
                           )}
                           {mainContent}
+                          {/* Anchored to <main>, not to the notes view: a
+                              workspace with a shell config renders a layout
+                              instead of notesView, and the map is just as
+                              useful there. Not the window, so it never covers
+                              the sidebar or status bar. Zen mode exists to
+                              remove chrome, so it hides this too. */}
+                          {graphOverlayOpen && !layout.zen && (
+                            <FloatingGraph
+                              notesData={notesData}
+                              selectedNote={selectedNote}
+                              onSelectNote={handleSelectNote}
+                              onClose={toggleGraphOverlay}
+                            />
+                          )}
                         </main>
                       </Panel>
                       {rightPanelOpen && (
@@ -790,6 +808,8 @@ export default function App() {
           onOpenGallery={() => setView('gallery')}
           onToggleShell={toggleShell}
           shellActive={!!shellConfig}
+          onToggleGraph={toggleGraphOverlay}
+          graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
         />
       </TooltipProvider>
