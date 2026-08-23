@@ -1,37 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Database } from 'lucide-react';
+import { parseDb, type DbFile, type DbOption, type DbProperty } from '../lib/db';
 
 // Read-only inline embed of a .db database inside MDX, via <DbView path="@Foo.db" />.
 // It reads the referenced file over the same IPC bridge the DbSurface editor uses
-// and re-reads on external change, so an embedded table stays live. The .db JSON
-// shape is duplicated here (a small, documented, stable format) rather than shared
-// with DbSurface — ponytail: dup the 3 read helpers, extract to db-model.ts if a
-// third reader appears.
-
-type PropType = 'text' | 'number' | 'checkbox' | 'date' | 'url' | 'select' | 'multiselect';
-interface DbOption { id: string; name: string; color: string }
-interface DbProperty { name: string; type: PropType; options?: DbOption[] }
-interface DbRow { id: string; values: Record<string, unknown> }
-interface DbDoc {
-  schema: { order: string[]; properties: Record<string, DbProperty> };
-  view?: { groupBy?: string | null };
-  rows: DbRow[];
-}
+// and re-reads on external change, so an embedded table stays live. Multi-table
+// files use the stable map key: <DbView path="@Planner.db" table="tasks" />.
 
 export type DbViewMode = 'table' | 'board' | 'card';
-
-function parseDb(text: string): DbDoc | null {
-  try {
-    const raw = JSON.parse(text) as Partial<DbDoc>;
-    if (!raw?.schema?.properties) return null;
-    const properties = raw.schema.properties;
-    const order = (raw.schema.order ?? Object.keys(properties)).filter((id) => properties[id]);
-    for (const id of Object.keys(properties)) if (!order.includes(id)) order.push(id);
-    return { schema: { order, properties }, view: raw.view ?? {}, rows: Array.isArray(raw.rows) ? raw.rows : [] };
-  } catch {
-    return null;
-  }
-}
 
 function normalizeMode(value: string | undefined): DbViewMode {
   const v = (value ?? '').toLowerCase();
@@ -68,12 +44,14 @@ function cellNodes(prop: DbProperty, value: unknown): React.ReactNode {
   return String(value);
 }
 
-interface DbViewProps { path: string; view?: string }
+/** `table` is the stable key from a v2 file's `tables` map. */
+interface DbViewProps { path: string; view?: string; table?: string }
 
-export default function DbView({ path, view }: DbViewProps) {
+export default function DbView({ path, view, table }: DbViewProps) {
   const rel = path.replace(/^@/, '');
   const mode = normalizeMode(view);
-  const [doc, setDoc] = useState<DbDoc | null>(null);
+  const [db, setDb] = useState<DbFile | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'missing' | 'invalid'>('loading');
 
   useEffect(() => {
@@ -81,17 +59,26 @@ export default function DbView({ path, view }: DbViewProps) {
     const load = () =>
       window.electronAPI.readNote(rel).then((text) => {
         if (!alive) return;
-        if (typeof text !== 'string' || text.startsWith('Error:')) { setState('missing'); setDoc(null); return; }
-        const parsed = parseDb(text);
-        if (parsed) { setDoc(parsed); setState('ready'); } else { setDoc(null); setState('invalid'); }
+        if (typeof text !== 'string' || text.startsWith('Error:')) { setState('missing'); setDb(null); setParseError(null); return; }
+        const parsed = parseDb(text, rel);
+        if (parsed.db) { setDb(parsed.db); setParseError(null); setState('ready'); }
+        else { setDb(null); setParseError(parsed.error); setState('invalid'); }
       });
     void load();
     const off = window.electronAPI.onNotesChanged((event, changed) => {
       if (changed === rel && event !== 'unlink') void load();
-      if (changed === rel && event === 'unlink') { setState('missing'); setDoc(null); }
+      if (changed === rel && event === 'unlink') { setState('missing'); setDb(null); setParseError(null); }
     });
     return () => { alive = false; off(); };
   }, [rel]);
+
+  const tableIds = db ? Object.keys(db.tables) : [];
+  const doc = db ? (table ? db.tables[table] : tableIds.length === 1 ? db.tables[tableIds[0]] : null) : null;
+  const selectionError = db && table && !db.tables[table]
+    ? `${rel} has no table named "${table}".`
+    : db && tableIds.length > 1 && !table
+      ? `${rel} contains multiple tables. Add table="${tableIds[0]}" to <DbView />.`
+      : null;
 
   const boardGroup = useMemo(() => {
     if (!doc) return null;
@@ -100,19 +87,20 @@ export default function DbView({ path, view }: DbViewProps) {
     return (wanted && properties[wanted]?.type === 'select' ? wanted : order.find((pid) => properties[pid].type === 'select')) ?? null;
   }, [doc]);
 
-  if (state !== 'ready' || !doc) {
+  if (state !== 'ready' || !doc || selectionError) {
     const msg = state === 'loading' ? 'Loading database…'
       : state === 'missing' ? `No database found at ${rel}`
-      : `${rel} isn't valid database JSON`;
+      : selectionError ?? parseError ?? `${rel} isn't valid database JSON`;
     return (
-      <div className="my-4 flex items-center gap-2 rounded-md border border-[var(--divider)] bg-[var(--surface)] px-3 py-2 font-sans text-xs text-[var(--ink-muted)]">
+      <div className="my-4 flex items-center gap-2 rounded-md border border-[var(--divider)] bg-[var(--surface)] px-3 py-2 font-sans text-xs text-[var(--ink-muted)]" role={state === 'loading' ? 'status' : 'alert'}>
         <Database className="h-3.5 w-3.5 shrink-0" /> {msg}
       </div>
     );
   }
 
   const { order, properties } = doc.schema;
-  const title = rel.split('/').pop()!.replace(/\.db$/i, '');
+  const fileTitle = rel.split('/').pop()!.replace(/\.db$/i, '');
+  const title = tableIds.length > 1 ? `${fileTitle} / ${doc.name}` : fileTitle;
   const titleProp = order.find((pid) => properties[pid].type === 'text') ?? order[0];
 
   const header = (
