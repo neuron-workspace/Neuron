@@ -743,13 +743,17 @@ export default function App() {
                             </div>
                           )}
                           {mainContent}
-                          {/* Anchored to <main>, not to the notes view: a
+                          {/* Notes only. It is a map of the workspace, so it
+                              has nothing to say over Settings, Plugins or
+                              Repositories -- and it was covering their controls,
+                              which an E2E click timeout caught. Anchored to
+                              <main> rather than the notes view because a
                               workspace with a shell config renders a layout
                               instead of notesView, and the map is just as
                               useful there. Not the window, so it never covers
                               the sidebar or status bar. Zen mode exists to
                               remove chrome, so it hides this too. */}
-                          {graphOverlayOpen && !layout.zen && (
+                          {graphOverlayOpen && !layout.zen && view === 'notes' && (
                             <FloatingGraph
                               notesData={notesData}
                               selectedNote={selectedNote}

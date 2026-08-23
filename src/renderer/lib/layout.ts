@@ -19,7 +19,7 @@ export const DEFAULT_LAYOUT: WorkbenchLayout = {
   bottomPanel: false,
   statusBar: true,
   zen: false,
-  graphOverlay: false,
+  graphOverlay: true,
 };
 
 /** Merge a stored layout over the defaults, ignoring junk. */

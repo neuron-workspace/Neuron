@@ -113,7 +113,24 @@ export const test = base.extend<AppFixture>({
     });
 
     await use(app);
-    await app.close();
+
+    // Bound the close, then kill. Electron does not always exit promptly -- it
+    // is holding a chokidar watcher, a loopback HTTP server, PTYs and webview
+    // partitions -- and on the CI runner `await app.close()` hung past the 60s
+    // test timeout, failing a green run of 29 tests with "Tearing down app
+    // exceeded the test timeout". Locally it always returned in under a second,
+    // so this only ever reproduced in CI.
+    //
+    // Whether Electron shuts down tidily is a product question with its own
+    // test, not something every fixture should block on.
+    let closed = false;
+    await Promise.race([
+      app.close().then(() => { closed = true; }).catch(() => { closed = true; }),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]);
+    // Only kill what did not close. Killing an already-exiting Electron costs
+    // real time across 29 tests and gains nothing.
+    if (!closed) { try { app.process().kill(); } catch { /* already gone */ } }
   },
 
   page: async ({ app }, use) => {

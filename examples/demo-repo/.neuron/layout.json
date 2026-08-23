@@ -1,10 +1,17 @@
 {
-  "direction": "horizontal",
+  "direction": "vertical",
   "children": [
-    { "size": 52, "group": { "direction": "vertical", "children": [
-      { "size": 70, "panel": { "type": "editor" } },
-      { "size": 30, "panel": { "type": "terminal" } }
-    ] } },
-    { "size": 28, "panel": { "type": "graph", "scope": "active", "title": "Linked notes" } }
+    {
+      "size": 72,
+      "panel": {
+        "type": "editor"
+      }
+    },
+    {
+      "size": 28,
+      "panel": {
+        "type": "terminal"
+      }
+    }
   ]
 }
