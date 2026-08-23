@@ -1,302 +1,87 @@
-<style>
-  /* "Loud" dark analytics aesthetic, running in Neuron's sandboxed HTML view:
-     no remote fonts (CSP-blocked), theme-aware, wired to real workspace data. */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    --bg: #070707; --card: #171717; --elevated: #202020;
-    --border: rgba(255,255,255,0.07); --border-strong: rgba(255,255,255,0.12);
-    --text-primary: #f7f7f5; --text-secondary: #99999f; --text-muted: #66666d;
-    --violet: #7c3aed; --violet-bright: #9b5cff; --lavender: #b980ff;
-    --lime: #b8f432; --cyan: #3fc7e8; --red: #ff5b57;
-    --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--bg); color: var(--text-primary);
-    font-family: var(--font-body); -webkit-font-smoothing: antialiased;
-    padding: 28px; min-height: 100vh;
-  }
-  body.theme-light {
-    --bg: #f5f5f6; --card: #ffffff; --elevated: #f0f0f2;
-    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
-    --text-primary: #16161a; --text-secondary: #5b5b63; --text-muted: #8a8a93;
-    --violet: #6d28d9; --violet-bright: #7c3aed;
-  }
-  .shell { width: 100%; max-width: 1240px; margin: 0 auto; }
-  .display { font-family: var(--font-display); }
+<header>
+  <h1>Workload</h1>
+  <p>The same <code>Planner.db</code>, but this view runs JavaScript. It derives
+  figures that no server-rendered table can: overdue counts against today's
+  date, and how the open work splits across projects.</p>
+</header>
 
-  /* Top nav */
-  .topnav { display: flex; align-items: center; justify-content: space-between; padding: 4px; margin-bottom: 32px; gap: 16px; flex-wrap: wrap; }
-  .logo-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .logo-mark { width: 30px; height: 30px; border-radius: 50%; flex: none;
-    background: conic-gradient(from 200deg, var(--lavender) 0deg, var(--violet-bright) 120deg, var(--violet) 300deg, var(--lavender) 360deg);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15); }
-  .wordmark { font-family: var(--font-display); font-weight: 800; font-size: 16.5px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .nav-right { display: flex; align-items: center; gap: 10px; }
-  .status-pill { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: 999px; background: var(--elevated); border: 1px solid var(--border); color: var(--text-secondary); }
-  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); }
-  .icon-btn { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--card); border: 1px solid var(--border); color: var(--text-secondary); cursor: pointer; transition: color .15s ease, border-color .15s ease, background .15s ease; }
-  .icon-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
-  .icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--violet-bright); }
-
-  /* Hero */
-  .hero { display: grid; grid-template-columns: 1fr; gap: 20px; margin-bottom: 20px; }
-  @media (min-width: 820px) { .hero { grid-template-columns: 0.86fr 1.14fr; } }
-  .hero-left { padding: 8px 20px 8px 4px; display: flex; flex-direction: column; justify-content: center; }
-  .greeting { font-family: var(--font-display); font-size: clamp(30px, 4vw, 40px); font-weight: 700; letter-spacing: -0.025em; line-height: 1.15; margin-bottom: 28px; }
-  .greeting .muted { color: var(--text-secondary); font-weight: 600; }
-  .metric-label { font-size: 13px; color: var(--text-secondary); font-weight: 500; margin-bottom: 10px; }
-  .metric-row { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 8px; flex-wrap: wrap; }
-  .metric-amount { font-family: var(--font-display); font-size: clamp(30px, 4vw, 40px); font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
-  .metric-delta { font-size: 13px; font-weight: 600; color: var(--lime); background: color-mix(in srgb, var(--lime) 14%, transparent); padding: 5px 10px 6px; border-radius: 999px; }
-  .sub-line { font-size: 13.5px; color: var(--text-secondary); margin-bottom: 26px; }
-  .sub-line span { color: var(--text-primary); font-weight: 600; }
-  .hero-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: 13.5px; font-weight: 600; padding: 11px 20px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; transition: background .15s ease, transform .06s ease, box-shadow .15s ease; }
-  .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--violet-bright); }
-  .btn:disabled { opacity: 0.5; cursor: default; }
-  .btn-primary { background: var(--text-primary); color: var(--bg); }
-  .btn-primary:hover { transform: translateY(-1px); }
-  .btn-secondary { background: transparent; color: var(--text-primary); border-color: var(--border-strong); }
-  .btn-secondary:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
-
-  /* Cards */
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 22px; box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 20px 40px -24px rgba(0,0,0,0.6); }
-  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; gap: 12px; }
-  .card-header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .card-icon { width: 30px; height: 30px; border-radius: 9px; background: var(--elevated); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); flex: none; }
-  .card-title { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; }
-
-  /* Bar chart (top tags) */
-  .bars { display: flex; flex-direction: column; gap: 12px; }
-  .bar-row { display: grid; grid-template-columns: 96px 1fr 34px; align-items: center; gap: 12px; font-size: 12.5px; }
-  .bar-name { color: var(--text-secondary); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bar-track { height: 10px; border-radius: 999px; background: var(--elevated); overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--violet), var(--violet-bright)); transition: width .5s cubic-bezier(0.16,1,0.3,1); }
-  .bar-val { color: var(--text-primary); font-weight: 700; text-align: right; }
-
-  /* Bottom grid */
-  .bottom-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
-  @media (min-width: 720px) { .bottom-grid { grid-template-columns: 1fr 1fr; } }
-  @media (min-width: 1040px) { .bottom-grid { grid-template-columns: 0.9fr 1fr 1.1fr; } }
-
-  /* Stat tiles */
-  .stat-list { display: flex; flex-direction: column; gap: 16px; }
-  .stat { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .stat-k { font-size: 12.5px; color: var(--text-secondary); font-weight: 500; }
-  .stat-v { font-family: var(--font-display); font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
-
-  /* Weekday activity bars */
-  .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; height: 120px; margin-top: 6px; }
-  .week-col { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; justify-content: flex-end; }
-  .week-bar { width: 100%; max-width: 22px; border-radius: 6px 6px 3px 3px; background: color-mix(in srgb, var(--violet-bright) 55%, transparent); min-height: 3px; transition: height .5s cubic-bezier(0.16,1,0.3,1); }
-  .week-bar.peak { background: var(--violet-bright); }
-  .week-label { font-size: 10.5px; color: var(--text-muted); font-weight: 500; }
-
-  /* Recent notes (tx-list) */
-  .tx-list { display: flex; flex-direction: column; }
-  .tx-row { display: flex; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border); gap: 12px; }
-  .tx-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .tx-row:first-child { padding-top: 0; }
-  .tx-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-  .tx-name { font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
-  .tx-chip { font-size: 11px; font-weight: 500; color: var(--text-secondary); background: var(--elevated); border: 1px solid var(--border); padding: 4px 9px; border-radius: 999px; white-space: nowrap; flex: none; }
-  .tx-date { font-size: 12px; color: var(--text-muted); white-space: nowrap; flex: none; min-width: 48px; text-align: right; }
-
-  .empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
-  .err { color: var(--red); font-size: 13px; margin: 14px 4px 0; }
-  .err:empty { display: none; }
-  .skeleton { color: var(--text-muted); }
-
-  @media (prefers-reduced-motion: reduce) {
-    .bar-fill, .week-bar, .btn, .icon-btn { transition: none; }
-  }
-</style>
-
-<div class="shell">
-  <div class="topnav">
-    <div class="logo-group">
-      <div class="logo-mark"></div>
-      <div class="wordmark display" id="brand">Workspace</div>
-    </div>
-    <div class="nav-right">
-      <div class="status-pill" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusPill">—</span></div>
-      <button class="icon-btn" id="refresh" type="button" title="Refresh" aria-label="Refresh dashboard">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 11a8 8 0 1 0-.9 4.5M20 5v6h-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-    </div>
-  </div>
-
-  <div class="hero">
-    <div class="hero-left">
-      <div class="greeting display">Your workspace,<br><span class="muted" id="wsName">…</span></div>
-      <div class="metric-label">Notes in workspace</div>
-      <div class="metric-row">
-        <div class="metric-amount display" id="noteCount">—</div>
-        <div class="metric-delta" id="tagDelta">—</div>
-      </div>
-      <div class="sub-line">Project status: <span id="statusInline">—</span></div>
-      <div class="hero-actions">
-        <button class="btn btn-primary" id="cycle" type="button">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 11a8 8 0 1 0-.9 4.5M20 5v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Cycle status
-        </button>
-        <button class="btn btn-secondary" id="refresh2" type="button">Refresh</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <div class="card-header-left">
-          <div class="card-icon">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 19V10M12 19V5M20 19v-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          </div>
-          <span class="card-title">Top tags</span>
-        </div>
-      </div>
-      <div class="bars" id="tagBars"><div class="empty skeleton">Loading tags…</div></div>
-    </div>
-  </div>
-
-  <p class="err" id="err" role="alert"></p>
-
-  <div class="bottom-grid">
-    <div class="card">
-      <div class="card-header"><div class="card-header-left"><span class="card-title">At a glance</span></div></div>
-      <div class="stat-list">
-        <div class="stat"><span class="stat-k">Notes</span><span class="stat-v display" id="statNotes">—</span></div>
-        <div class="stat"><span class="stat-k">Tags</span><span class="stat-v display" id="statTags">—</span></div>
-        <div class="stat"><span class="stat-k">Edited this week</span><span class="stat-v display" id="statWeek">—</span></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header"><div class="card-header-left">
-        <div class="card-icon">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <span class="card-title">Edits by weekday</span>
-      </div></div>
-      <div class="week" id="week"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-header"><div class="card-header-left">
-        <div class="card-icon">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </div>
-        <span class="card-title">Recent notes</span>
-      </div></div>
-      <div class="tx-list" id="recent"><div class="empty skeleton">Loading recent notes…</div></div>
-    </div>
-  </div>
+<div class="neuron-grid cols-3">
+  <section>
+    <span class="neuron-metric-label">Open</span>
+    <div class="neuron-metric" id="open">–</div>
+  </section>
+  <section>
+    <span class="neuron-metric-label">Overdue</span>
+    <div class="neuron-metric" id="overdue">–</div>
+  </section>
+  <section>
+    <span class="neuron-metric-label">Blocked</span>
+    <div class="neuron-metric" id="blocked">–</div>
+  </section>
 </div>
 
+<section>
+  <h2>Open work by project</h2>
+  <div id="split"><p class="neuron-empty">Reading Planner.db…</p></div>
+</section>
+
+<section>
+  <h2>Due next</h2>
+  <div id="soon"><p class="neuron-empty">Reading Planner.db…</p></div>
+</section>
+
 <script>
-  const api = (p, opts) => fetch('/api/v1' + p, opts).then((r) => r.json());
-  const STATES = ['active', 'paused', 'done'];
-  const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const check = (r) => { if (r && r.error) throw new Error(r.error.message || r.error.code || 'request failed'); return r; };
-  const fail = (msg, e) => { $('err').textContent = msg + (e && e.message ? ' (' + e.message + ')' : ''); };
-  const DOTS = ['var(--violet-bright)', 'var(--cyan)', 'var(--lime)', '#ff8fae', '#f0a24a'];
+  // Everything below is why this view needs script at all. "Overdue" is a
+  // comparison against the clock at render time, and the split is an
+  // aggregation across rows -- neither is something a table of rows can state.
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  function relDate(iso) {
-    if (!iso) return '';
-    const d = new Date(iso); if (isNaN(d)) return '';
-    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
-    if (days <= 0) return 'today';
-    if (days === 1) return '1d';
-    if (days < 7) return days + 'd';
-    if (days < 30) return Math.floor(days / 7) + 'w';
-    return Math.floor(days / 30) + 'mo';
-  }
+  const bar = (label, count, total) => {
+    const pct = total ? Math.round((count / total) * 100) : 0;
+    return '<div style="margin-bottom:.6rem">'
+      + '<div style="display:flex;justify-content:space-between;font-size:.8rem">'
+      + '<span>' + esc(label) + '</span><span>' + count + '</span></div>'
+      + '<div style="height:6px;border-radius:3px;background:var(--muted)">'
+      + '<div style="height:6px;border-radius:3px;width:' + pct + '%;background:var(--primary)"></div>'
+      + '</div></div>';
+  };
 
-  function renderStatus(value) {
-    const v = value || '—';
-    $('statusPill').textContent = v;
-    $('statusInline').textContent = v;
-    $('statusDot').style.background = v === 'done' ? 'var(--lime)' : v === 'paused' ? 'var(--red)' : 'var(--cyan)';
-  }
-
-  async function load() {
-    try {
-      const [ctx, notesRes, status] = await Promise.all([
-        api('/context').then(check),
-        api('/notes?limit=500').then(check),
-        api('/variables/projectStatus').then(check),
-      ]);
-      const notes = Array.isArray(notesRes.notes) ? notesRes.notes : [];
-      const wsName = (ctx.workspace && ctx.workspace.name) || 'Workspace';
-      $('brand').textContent = wsName;
-      $('wsName').textContent = wsName;
-
-      // Tag frequencies from real note metadata.
-      const counts = new Map();
-      for (const n of notes) for (const t of (n.tags || [])) counts.set(t, (counts.get(t) || 0) + 1);
-      const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
-      const max = top.length ? top[0][1] : 1;
-
-      $('noteCount').textContent = notes.length;
-      $('tagDelta').textContent = counts.size + ' tags';
-      $('statNotes').textContent = notes.length;
-      $('statTags').textContent = counts.size;
-      const weekAgo = Date.now() - 7 * 86400000;
-      $('statWeek').textContent = notes.filter((n) => n.modified && new Date(n.modified).getTime() >= weekAgo).length;
-
-      $('tagBars').innerHTML = top.length ? top.map(([name, c]) =>
-        '<div class="bar-row"><span class="bar-name">#' + esc(name) + '</span>' +
-        '<span class="bar-track"><span class="bar-fill" style="width:' + Math.round((c / max) * 100) + '%"></span></span>' +
-        '<span class="bar-val">' + c + '</span></div>').join('')
-        : '<div class="empty">No tags yet — add #tags to your notes.</div>';
-
-      // Edits by weekday (Mon–Sun) from modified timestamps.
-      const bins = [0, 0, 0, 0, 0, 0, 0]; // index 0 = Monday
-      for (const n of notes) {
-        if (!n.modified) continue;
-        const d = new Date(n.modified); if (isNaN(d)) continue;
-        bins[(d.getDay() + 6) % 7]++;
-      }
-      const wmax = Math.max(1, ...bins);
-      const labels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-      $('week').innerHTML = bins.map((v, i) =>
-        '<div class="week-col"><div class="week-bar' + (v === wmax && v > 0 ? ' peak' : '') + '" style="height:' + Math.round((v / wmax) * 100) + '%" title="' + v + ' edits"></div>' +
-        '<span class="week-label">' + labels[i] + '</span></div>').join('');
-
-      // Recent notes by modified date.
-      const recent = [...notes].filter((n) => n.modified).sort((a, b) => new Date(b.modified) - new Date(a.modified)).slice(0, 6);
-      $('recent').innerHTML = recent.length ? recent.map((n, i) => {
-        const tag = (n.tags && n.tags[0]) ? '<span class="tx-chip">#' + esc(n.tags[0]) + '</span>' : '';
-        return '<div class="tx-row"><span class="tx-dot" style="background:' + DOTS[i % DOTS.length] + '"></span>' +
-          '<span class="tx-name" title="' + esc(n.path) + '">' + esc(n.title || n.path) + '</span>' + tag +
-          '<span class="tx-date">' + relDate(n.modified) + '</span></div>';
-      }).join('') : '<div class="empty">No notes yet.</div>';
-
-      renderStatus(status.value);
-      $('err').textContent = '';
-    } catch (e) {
-      fail('Couldn’t load workspace data — reload the view to retry.', e);
+  (async () => {
+    // connect-src is 'self', so this can reach Neuron's loopback API and
+    // nothing else. There is no route off this machine.
+    const res = await fetch('./api/v1/db?path=Planner.db&table=tasks');
+    if (!res.ok) {
+      document.getElementById('split').innerHTML =
+        '<p class="neuron-empty">Could not read Planner.db.</p>';
+      return;
     }
-  }
+    const { rows } = await res.json();
+    const tasks = rows.map((r) => r.values);
 
-  async function cycle() {
-    const btn = $('cycle');
-    btn.disabled = true;
-    try {
-      const cur = $('statusPill').textContent.trim();
-      const next = STATES[(STATES.indexOf(cur) + 1) % STATES.length];
-      const res = check(await api('/variables/projectStatus', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: next }),
-      }));
-      renderStatus(res.value || next);
-      $('err').textContent = '';
-    } catch (e) {
-      fail('Couldn’t update the status — reload and try again.', e);
-    } finally {
-      btn.disabled = false;
-    }
-  }
+    const open = tasks.filter((t) => t.status !== 'done');
+    const today = new Date().toISOString().slice(0, 10);
+    const overdue = open.filter((t) => t.due && t.due < today);
+    const blocked = open.filter((t) => t.status === 'blocked');
 
-  $('cycle').addEventListener('click', cycle);
-  $('refresh').addEventListener('click', load);
-  $('refresh2').addEventListener('click', load);
-  load();
+    document.getElementById('open').textContent = open.length;
+    document.getElementById('overdue').textContent = overdue.length;
+    document.getElementById('blocked').textContent = blocked.length;
+
+    const byProject = new Map();
+    for (const t of open) byProject.set(t.project, (byProject.get(t.project) ?? 0) + 1);
+    const ranked = [...byProject.entries()].sort((a, b) => b[1] - a[1]);
+    document.getElementById('split').innerHTML =
+      ranked.length ? ranked.map(([p, n]) => bar(p, n, open.length)).join('')
+                    : '<p class="neuron-empty">Nothing open.</p>';
+
+    const soon = open.filter((t) => t.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 5);
+    document.getElementById('soon').innerHTML = soon.length
+      ? '<div class="neuron-scroll"><table class="neuron-table"><thead><tr><th>Task</th><th>Due</th><th>Project</th></tr></thead><tbody>'
+        + soon.map((t) => '<tr><td>' + esc(t.title) + '</td><td>' + esc(t.due)
+          + (t.due < today ? ' <span class="neuron-badge">overdue</span>' : '')
+          + '</td><td>' + esc(t.project) + '</td></tr>').join('')
+        + '</tbody></table></div>'
+      : '<p class="neuron-empty">Nothing scheduled.</p>';
+  })();
 </script>

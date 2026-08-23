@@ -10,8 +10,15 @@ test('canvas opens as a board, not raw JSON', async ({ page }) => {
   await expect(page.locator('.cm-content')).toHaveCount(0);
 });
 
-test('database opens as a typed table', async ({ page }) => {
-  await page.locator('.note-row', { hasText: 'Projects.db' }).first().click();
+test('a multi-table database opens its schema overview, then drills into a table', async ({ page }) => {
+  await page.locator('.note-row', { hasText: 'Planner.db' }).first().click();
+
+  // Planner.db holds two tables, so it opens the overview rather than guessing
+  // which one you meant (D28). A single-table file opens straight into it.
+  await expect(page.getByText('Tasks', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Projects', { exact: true }).first()).toBeVisible();
+
+  await page.getByText('Tasks', { exact: true }).first().click();
   await expect(page.locator('.vw-content, table').first()).toBeVisible();
 });
 

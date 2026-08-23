@@ -329,7 +329,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         const view = jsxStr.match(/view="([^"]+)"/)?.[1];
         const table = jsxStr.match(/table="([^"]+)"/)?.[1];
         if (!path) {
-          const err = new Error('<DbView /> needs a path, e.g. <DbView path="@Projects.db" />.') as MDXParseError;
+          const err = new Error('<DbView /> needs a path, e.g. <DbView path="@Planner.db" />.') as MDXParseError;
           err.block = jsxStr;
           err.remediation = 'Add a path attribute pointing at a .db file relative to the workspace root, prefixed with @.';
           throw err;

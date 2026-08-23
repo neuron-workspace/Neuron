@@ -18,7 +18,7 @@ HTMX views have their own architecture and threat model, documented in
 
 ## Embedding a database in MDX (`<DbView>`)
 
-Notes render a `.db` inline with `<DbView path="@Projects.db" view="board" />`.
+Notes render a `.db` inline with `<DbView path="@Planner.db" table="tasks" view="board" />`.
 `path` is workspace-root-relative, prefixed with `@`; `view` is `table`
 (default), `board`, or `card`. The component reads the file over the same
 `notes:read` bridge as the DbSurface editor and re-reads on `notes:changed`, so
