@@ -195,6 +195,34 @@ function noteTags(content: string): string[] {
 
 // --- server ------------------------------------------------------------------
 
+/**
+ * A standalone error page for the document route.
+ *
+ * These are served before any session exists, so they cannot link the themed
+ * neuron.css and cannot know the workspace theme. A bare <p> inherits the
+ * platform default and renders near-black on the dark app shell -- technically
+ * present, practically invisible, which is how a plain error reads as a blank
+ * pane. So the page carries its own minimal styling and follows the OS scheme.
+ */
+function errorDocument(message: string): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Neuron view</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 2rem;
+    font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #ffffff; color: #1c1c1a;
+  }
+  p { max-width: 30rem; text-align: center; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #11181c; color: #e8ebed; }
+  }
+</style>
+</head><body><p>${esc(message)}</p></body></html>`;
+}
+
 export function createViewServer(sessions: SessionManager, htmxJsPath: string): Promise<ViewServer> {
   let origin = '';
 
@@ -219,7 +247,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const docMatch = url.pathname.match(/^\/views\/([\w-]+)\/document$/);
     if (docMatch && req.method === 'GET') {
       const session = sessions.consumeBoot(docMatch[1], url.searchParams.get('boot'));
-      if (!session) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, '<!doctype html><p>This view session is no longer valid. Reload the tab.</p>'); return; }
+      if (!session) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument('This view session is no longer valid. Reload the tab.')); return; }
       serveDocument({ req, res, url, session, requestId });
       return;
     }

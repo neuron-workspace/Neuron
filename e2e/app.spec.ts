@@ -38,3 +38,23 @@ test('an edit reaches disk as plain Markdown', async ({ page, workspace }) => {
     .poll(() => readFileSync(file, 'utf-8').includes('e2e-marker'), { timeout: 15_000 })
     .toBe(true);
 });
+
+test('MDX import statements are not rendered as prose', async ({ page, workspace }) => {
+  // A note that declares its components must not show the declaration to the
+  // reader. Reading view is a line parser, not a real MDX compiler, so ESM
+  // statements fell straight through as text.
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  writeFileSync(
+    join(workspace, 'esm-note.mdx'),
+    ["import { Callout } from '../components'", '', '# Heading', '', 'Body text.', ''].join('\n'),
+  );
+
+  await page.locator('button[aria-label="Refresh explorer"]').click();
+  await page.locator('.note-row', { hasText: 'esm-note' }).first().click();
+  const prose = page.locator('.preview-prose').first();
+  await expect(prose).toBeVisible();
+  await expect(prose).toContainText('Body text.');
+  await expect(prose).not.toContainText('import {');
+  await expect(prose).not.toContainText('../components');
+});
