@@ -1,9 +1,9 @@
 {
   "name": "neuron",
-  "version": "1.4.1",
+  "version": "0.4.2",
   "description": "Local-first Markdown and MDX knowledge workspace",
-  "author": "Neuron contributors <contributors@neuron.notes>",
-  "license": "MIT",
+  "author": "Shivam Khetan <shivkhetan18@gmail.com>",
+  "license": "Apache-2.0",
   "private": false,
   "main": "dist/main/main.js",
   "type": "commonjs",

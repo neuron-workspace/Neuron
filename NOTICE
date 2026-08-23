@@ -1,0 +1,11 @@
+Neuron
+Copyright 2026 Shivam Khetan
+
+This product includes software developed as part of the Neuron project
+(https://github.com/shiv-khetan/Neuron).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+Third-party dependencies retain their own licenses; the Apache License applied
+to Neuron does not alter them. Run `npm ls --omit=dev` to enumerate the runtime
+dependency tree, and see each package's own LICENSE for its terms.
