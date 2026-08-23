@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
   createSection: (relativePath: string) => ipcRenderer.invoke('notes:create-section', relativePath),
+  journal: {
+    list: (relativePath?: string) => ipcRenderer.invoke('journal:list', relativePath),
+    restore: (entryId: string) => ipcRenderer.invoke('journal:restore', entryId),
+  },
   getNotesDirectory: () => ipcRenderer.invoke('notes:get-dir'),
   logError: (errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) =>
     ipcRenderer.invoke('notes:log-error', errorData),

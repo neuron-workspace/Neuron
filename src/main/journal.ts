@@ -9,6 +9,19 @@ export interface JournalLimits {
   maxAgeMs: number;
   maxTotalBytes: number;
   maxFileBytes: number;
+  /**
+   * Minimum gap between two overwrite pre-images of the same file.
+   *
+   * Neuron saves on every keystroke, so without this a single sentence produces
+   * dozens of near-identical entries, the retention budget is spent in minutes,
+   * and the history a user actually wants -- the state before this editing
+   * session -- is pruned away by the noise of the session itself. Coalescing
+   * keeps the OLDEST entry in the window, which is the one worth restoring.
+   *
+   * Deletes are never coalesced: a delete is the one operation whose pre-image
+   * has no second chance.
+   */
+  coalesceMs: number;
 }
 
 export const DEFAULT_JOURNAL_LIMITS: Readonly<JournalLimits> = Object.freeze({
@@ -16,6 +29,7 @@ export const DEFAULT_JOURNAL_LIMITS: Readonly<JournalLimits> = Object.freeze({
   maxAgeMs: 30 * 24 * 60 * 60 * 1000,
   maxTotalBytes: 512 * 1024 * 1024,
   maxFileBytes: 16 * 1024 * 1024,
+  coalesceMs: 2 * 60 * 1000,
 });
 
 export interface JournalEntry {
@@ -57,7 +71,12 @@ function isInside(root: string, candidate: string): boolean {
 
 function validateLimits(limits: JournalLimits): void {
   for (const [name, value] of Object.entries(limits)) {
-    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer.`);
+    // coalesceMs alone may be 0, which means "record every write" -- a real
+    // setting, and the one the retention tests need to exercise pruning.
+    const floor = name === 'coalesceMs' ? 0 : 1;
+    if (!Number.isSafeInteger(value) || value < floor) {
+      throw new Error(`${name} must be a ${floor === 0 ? 'non-negative' : 'positive'} integer.`);
+    }
   }
 }
 
@@ -77,6 +96,10 @@ export class WriteJournal {
     const target = this.existingWorkspaceFile(workspaceRoot, filePath);
     if (target === 'missing') return { status: 'not-needed' };
     if (!target) return { status: 'rejected' };
+
+    if (operation === 'overwrite' && this.recentlyCaptured(target.workspaceRoot, target.relativePath)) {
+      return { status: 'not-needed' };
+    }
 
     try {
       const stat = fs.statSync(target.fullPath);
@@ -158,6 +181,22 @@ export class WriteJournal {
       const message = 'Failed to restore journal entry.';
       try { this.reportError(message, error); } catch { /* best effort */ }
       return { success: false, error: message };
+    }
+  }
+
+  /** True when an overwrite pre-image for this file is younger than coalesceMs. */
+  private recentlyCaptured(workspaceRoot: string, relativePath: string): boolean {
+    try {
+      const store = this.storeDirectory(workspaceRoot);
+      if (!fs.existsSync(store)) return false;
+      const cutoff = this.now() - this.limits.coalesceMs;
+      return this.readEntries(store).some(
+        (entry) => entry.relativePath === relativePath && entry.createdAt >= cutoff,
+      );
+    } catch {
+      // Unreadable store: fall through and attempt the capture. Capturing one
+      // extra entry is strictly better than silently skipping the only one.
+      return false;
     }
   }
 

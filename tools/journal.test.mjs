@@ -104,7 +104,7 @@ const newUserData = () => {
 {
   const ws = newWorkspace();
   let clock = 1_000_000;
-  const journal = new WriteJournal(newUserData(), { limits: { maxEntries: 3 }, now: () => clock++ });
+  const journal = new WriteJournal(newUserData(), { limits: { maxEntries: 3, coalesceMs: 0 }, now: () => clock++ });
   const file = join(ws, 'churn.md');
   for (let i = 0; i < 10; i++) {
     writeFileSync(file, `version ${i}\n`);
@@ -122,7 +122,7 @@ const newUserData = () => {
 {
   const ws = newWorkspace();
   let clock = 1_000_000;
-  const journal = new WriteJournal(newUserData(), { limits: { maxAgeMs: 100 }, now: () => clock });
+  const journal = new WriteJournal(newUserData(), { limits: { maxAgeMs: 100, coalesceMs: 0 }, now: () => clock });
   const file = join(ws, 'aged.md');
 
   writeFileSync(file, 'old\n');
@@ -142,7 +142,7 @@ const newUserData = () => {
 {
   const ws = newWorkspace();
   let clock = 1_000_000;
-  const journal = new WriteJournal(newUserData(), { limits: { maxTotalBytes: 300 }, now: () => clock++ });
+  const journal = new WriteJournal(newUserData(), { limits: { maxTotalBytes: 300, coalesceMs: 0 }, now: () => clock++ });
   const file = join(ws, 'fat.md');
   for (let i = 0; i < 6; i++) {
     writeFileSync(file, Buffer.alloc(100, 65 + i));
@@ -172,6 +172,44 @@ const newUserData = () => {
   assert.equal(result.status, 'failed', 'an unwritable store reports failure');
   assert.ok(typeof result.error === 'string' && result.error.length > 0);
   assert.deepEqual(journal.list(ws), [], 'a broken store lists nothing rather than throwing');
+}
+
+// --- overwrites coalesce; deletes never do ----------------------------------
+{
+  const ws = newWorkspace();
+  let clock = 1_000_000;
+  const journal = new WriteJournal(newUserData(), { limits: { coalesceMs: 1000 }, now: () => clock });
+  const file = join(ws, 'typed.md');
+
+  // Neuron saves on every keystroke. Nine "keystrokes" inside the window must
+  // leave ONE entry, holding the text from before the session -- not the text
+  // from one keystroke ago, which is what makes history worth having.
+  const original = 'the original sentence';
+  writeFileSync(file, original);
+  for (let i = 0; i < 9; i++) {
+    journal.capturePreImage(ws, file, 'overwrite');
+    writeFileSync(file, original + ' typing'.repeat(i + 1));
+    clock += 50;
+  }
+  const entries = journal.list(ws);
+  assert.equal(entries.length, 1, 'rapid overwrites coalesce into one entry');
+
+  const restored = journal.restore(ws, entries[0].id);
+  assert.equal(restored.success, true, restored.error);
+  assert.equal(readFileSync(file, 'utf-8'), original, 'the kept entry is the OLDEST in the window');
+
+  // Past the window, a new entry is recorded again.
+  clock += 5000;
+  writeFileSync(file, 'much later');
+  journal.capturePreImage(ws, file, 'overwrite');
+  assert.equal(journal.list(ws).length, 2, 'a later edit starts a new entry');
+
+  // A delete is never coalesced away -- it is the operation with no second chance.
+  clock += 10;
+  journal.capturePreImage(ws, file, 'delete');
+  const afterDelete = journal.list(ws);
+  assert.equal(afterDelete.length, 3, 'delete captures even inside the coalesce window');
+  assert.equal(afterDelete[0].operation, 'delete');
 }
 
 // --- workspaces do not share a store ----------------------------------------

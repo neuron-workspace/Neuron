@@ -3,7 +3,7 @@ import { autoUpdater } from 'electron-updater';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
-import { capturePreImage, configureWriteJournal } from './journal';
+import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -407,6 +407,24 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
     console.error(`Failed to delete note ${relativePath}:`, err);
     return { success: false, error: message };
   }
+});
+
+// Version history. Reads the write journal captured on every overwrite/delete.
+// Main-process only and deliberately not reachable from a view: the journal holds
+// pre-images from across the whole workspace, so exposing it to a capability-scoped
+// view would hand it file contents outside its path policy (DECISIONS.md D20).
+ipcMain.handle('journal:list', (_event, relativePath?: string) => {
+  const repo = activeRepoPath();
+  if (!repo) return [];
+  const entries = listJournalEntries(repo);
+  return relativePath ? entries.filter((e) => e.relativePath === relativePath) : entries;
+});
+
+ipcMain.handle('journal:restore', (_event, entryId: string) => {
+  const repo = activeRepoPath();
+  if (!repo) return { success: false, error: 'No workspace is open.' };
+  const result = restoreJournalEntry(repo, entryId);
+  return result.success ? { success: true } : { success: false, error: result.error };
 });
 
 ipcMain.handle('notes:create-section', async (_event, relativePath: string) => {

@@ -31,6 +31,16 @@ export interface NetRequestResult {
 }
 
 /** Result of opening an HTMX view: ready to render, awaiting approval, or failed. */
+export interface JournalEntry {
+  id: string;
+  relativePath: string;
+  operation: 'overwrite' | 'delete';
+  createdAt: number;
+  originalBytes: number;
+  state: 'captured' | 'skipped';
+  skipReason?: 'file-too-large';
+}
+
 export type HtmxViewOpenResult =
   | { status: 'ready'; sessionId: string; url: string; partition: string; name: string }
   | { status: 'needs-approval'; name: string; permissions: string[]; description?: string }
@@ -105,6 +115,10 @@ export interface ElectronAPI {
     approve: (relativePath: string, scope: 'always' | 'once') => Promise<{ success: boolean; error?: string }>;
     close: (sessionId: string) => Promise<{ success: boolean }>;
     resetApproval: (relativePath: string) => Promise<{ success: boolean }>;
+  };
+  journal: {
+    list: (relativePath?: string) => Promise<JournalEntry[]>;
+    restore: (entryId: string) => Promise<{ success: boolean; error?: string }>;
   };
   cookies: {
     importChrome: (domain?: string) => Promise<{ success: boolean; imported?: number; skipped?: number; error?: string }>;
