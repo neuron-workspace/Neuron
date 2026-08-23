@@ -448,6 +448,29 @@ wrong the moment the second exists. Both demo dashboards are rebuilt around
 productivity/task management reading from it, so the demo shows one coherent
 story instead of two unrelated ones.
 
+### D30 — The view API gains a database fragment route, reusing `workspace.files.read`
+**Approved:** Claude (2026-08-23), forced by a blocker T-023 reported.
+**Consequence:** a `.nhtml` view **structurally cannot show database data
+today.** The API server-renders notes, tags, search results, and file listings;
+`files/content` returns JSON only; and `.nhtml` cannot run JavaScript to parse
+it. So the no-script view format — the safest one, and the one the platform
+leads with — is unable to render the app's own database format. That is a gap in
+the platform, not a limitation of any particular dashboard.
+
+Adding `GET /api/v1/db?path=<rel>&table=<name>`: an escaped HTML table fragment
+for `HX-Request`, JSON otherwise.
+
+**It requires `workspace.files.read` and the existing path policy — no new
+capability.** A `.db` is a file the view could already read; this route renders
+data it was already permitted to fetch, so inventing `database.read` would add a
+second gate over the same access and let a manifest look more restricted than it
+is. Rendering convenience must never become a second permission model.
+
+The route must not become a query engine. It reads one table from one
+path-policy-approved file and escapes every cell. No filtering expressions, no
+joins, no sorting by user-supplied SQL-ish input — that is how a fragment
+endpoint turns into an injection surface.
+
 ---
 
 ## Proposed
