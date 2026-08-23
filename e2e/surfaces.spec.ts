@@ -20,8 +20,13 @@ test('an HTML view names the file and asks for its declared permissions before i
 
   // A view does not run until its manifest permissions are granted -- the
   // prompt is the security boundary, so assert it appears BEFORE the webview.
-  await expect(page.getByText('Team dashboard.html', { exact: false })).toBeVisible();
-  await expect(page.getByText('requests workspace access', { exact: false })).toBeVisible();
+  // Scope to the prompt: the filename also appears in the title bar, the sidebar
+  // row and the tab, so a bare getByText matches four elements. What matters
+  // here is that the PROMPT names the real file -- the manifest's self-declared
+  // name is attacker-controlled, so identifying the view by path is the control.
+  const prompt = page.getByText('requests workspace access');
+  await expect(prompt).toBeVisible();
+  await expect(prompt).toContainText('Team dashboard.html');
   await expect(page.locator('webview')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Allow for this view' }).click();

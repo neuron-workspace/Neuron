@@ -1,5 +1,5 @@
 import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -22,23 +22,33 @@ export interface AppFixture {
 
 export const test = base.extend<AppFixture>({
   workspace: async ({}, use) => {
+    // Sweep leftovers from previous runs. Cleanup happens HERE, not in teardown:
+    // Electron holds file handles on Windows after close -- the main process
+    // watches this directory with chokidar and HTML views add webview partitions
+    // and loopback sessions on top -- so deleting on the way out raced those
+    // handles and blew Playwright's 60s worker-teardown budget. That surfaced as
+    // a different test failing every run, because the timeout attaches to
+    // whichever test the worker happened to be on. Deleting on the way IN has no
+    // race: nothing holds those directories any more.
+    const stale = Date.now() - 60 * 60 * 1000;
+    for (const name of readdirSync(tmpdir())) {
+      if (!name.startsWith('neuron-e2e-')) continue;
+      const dir = join(tmpdir(), name);
+      try {
+        if (statSync(dir).mtimeMs < stale) rmSync(dir, { recursive: true, force: true });
+      } catch { /* another run owns it, or the OS already reaped it */ }
+    }
+
     const dir = mkdtempSync(join(tmpdir(), 'neuron-e2e-'));
     const workspace = join(dir, 'workspace');
     cpSync(join(repoRoot, 'examples', 'demo-repo'), workspace, { recursive: true });
     await use(workspace);
 
-    // Windows holds file handles after the process that opened them exits, and
-    // the main process runs a chokidar watcher rooted in this very directory.
-    // A bare rmSync therefore raced the watcher's release and blocked long
-    // enough to blow Playwright's 60s worker-teardown budget -- which surfaces
-    // as a failure pinned to whichever test the worker was running, so it
-    // looked like a different flaky test each run rather than one teardown bug.
-    // Retry briefly, and never fail the suite over a leftover temp directory.
+    // One quick attempt, never blocking. If handles are still held the sweep
+    // above collects it next run; a stranded temp directory is not a test result.
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-    } catch {
-      // The OS reaps %TEMP%; a stranded fixture directory is not a test result.
-    }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 1, retryDelay: 50 });
+    } catch { /* swept next run */ }
   },
 
   app: async ({ workspace }, use) => {
