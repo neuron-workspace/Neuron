@@ -1,6 +1,6 @@
 # Neuron production-readiness roadmap
 
-Date: 2026-07-11 · Baseline commit: `6b88bab` (v1.4.0) · Author: audit pass 1.
+Date: 2026-07-11 · Baseline commit: `6b88bab` (v0.4.0) · Author: audit pass 1.
 
 This is the durable plan a future contributor executes without this chat. It
 records the verified state of the repo, an Obsidian comparison, a
