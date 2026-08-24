@@ -34,5 +34,9 @@ test('a Run button shows its command and runs it in the terminal', async ({ page
   // the terminal so this cannot pass on the note's own copy of the command.
   const terminal = page.locator('.xterm');
   await expect(terminal).toBeVisible();
-  await expect(terminal).toContainText('neuron-ran-this', { timeout: 20_000 });
+  // Generous: the command is held until the shell announces itself, and a cold
+  // CI runner starting cmd.exe or bash for the first time is slow. 20s was not
+  // enough there, and the failure looked like a broken feature rather than a
+  // slow machine.
+  await expect(terminal).toContainText('neuron-ran-this', { timeout: 60_000 });
 });

@@ -129,8 +129,23 @@ export const test = base.extend<AppFixture>({
       new Promise((resolve) => setTimeout(resolve, 5000)),
     ]);
     // Only kill what did not close. Killing an already-exiting Electron costs
-    // real time across 29 tests and gains nothing.
-    if (!closed) { try { app.process().kill(); } catch { /* already gone */ } }
+    // real time across 40 tests and gains nothing.
+    //
+    // Kill the TREE. Electron's renderer, GPU and utility children inherit the
+    // worker's stdio, so killing the main process alone leaves them holding
+    // pipes the worker waits on -- a green run of 40 tests still failed with
+    // "Worker teardown timeout of 180000ms exceeded", after every test passed.
+    if (!closed) {
+      const pid = app.process().pid;
+      try {
+        if (pid && process.platform === 'win32') {
+          const { execFileSync } = await import('node:child_process');
+          execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        } else {
+          app.process().kill();
+        }
+      } catch { /* already gone */ }
+    }
   },
 
   page: async ({ app }, use) => {
