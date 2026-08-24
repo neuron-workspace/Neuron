@@ -7,7 +7,7 @@
 // system, so asking the operating system is the thing under test.
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { isAlive, killTree, sweepStrandedApps, shutdown } from './procs.mjs';
+import { isAlive, killTree, sweepStrandedApps, shutdown, parseElapsed } from './procs.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitGone = async (pid, ms = 5000) => {
@@ -18,6 +18,20 @@ const waitGone = async (pid, ms = 5000) => {
   }
   return false;
 };
+
+// --- elapsed time, in both shapes ps reports --------------------------------
+// Linux etimes is a count of seconds; macOS and BSD etime is [[dd-]hh:]mm:ss.
+// Reading the formatted one as a number gives NaN, the age guard reads that as
+// "too young", and every stranded process survives the sweep. The
+// cross-platform CI matrix caught this on its first run.
+assert.equal(parseElapsed('42'), 42, 'Linux etimes is already seconds');
+assert.equal(parseElapsed('00:07'), 7);
+assert.equal(parseElapsed('01:30'), 90);
+assert.equal(parseElapsed('1:02:03'), 3723, 'hh:mm:ss');
+assert.equal(parseElapsed('2-03:04:05'), 183845, 'dd-hh:mm:ss');
+assert.equal(parseElapsed('0:00'), 0);
+assert.ok(Number.isNaN(parseElapsed(undefined)));
+assert.ok(Number.isNaN(parseElapsed('bogus')));
 
 // --- isAlive ----------------------------------------------------------------
 assert.equal(isAlive(process.pid), true, 'this process is alive');
