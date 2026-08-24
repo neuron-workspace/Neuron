@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, openNote } from './fixtures';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -13,28 +13,9 @@ import { join } from 'node:path';
  * detaches as the tree re-renders. The palette lists every note by full path
  * and is what a user reaches for anyway.
  */
-async function openNote(page: import('@playwright/test').Page, path: string) {
-  // Click the title-bar trigger rather than pressing Ctrl+K. The shortcut runs
-  // through a global keydown handler attached on mount, so a press issued while
-  // the renderer is still hydrating lands nowhere -- this spec passed alone and
-  // failed about one run in two. Retrying the press is worse, not better: the
-  // binding TOGGLES, so a second press closes what the first opened.
-  const trigger = page.getByRole('button', { name: /Search & commands/ });
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-
-  const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible();
-
-  // Filter first. The unfiltered list is long enough that the wanted entry may
-  // be scrolled out of view, and a click on an off-screen item never lands.
-  await dialog.getByRole('combobox').or(dialog.locator('input')).first().fill(path);
-  await dialog.getByText(path, { exact: false }).first().click();
-  await expect(dialog).toBeHidden();
-}
 
 test('closing a tab keeps the note on disk', async ({ page, workspace }) => {
-  await openNote(page, 'markdown-basics.mdx');
+  await openNote(page, 'guides/markdown-basics.mdx');
   await openNote(page, 'getting-started.mdx');
 
   const tabs = page.locator('nav[aria-label="Open notes"]');
@@ -47,7 +28,7 @@ test('closing a tab keeps the note on disk', async ({ page, workspace }) => {
 
   // Closing a tab is not deleting a note. A user who conflates the two loses
   // work, so this is the assertion that matters, not the tab count.
-  expect(readFileSync(join(workspace, 'markdown-basics.mdx'), 'utf-8').length).toBeGreaterThan(0);
+  expect(readFileSync(join(workspace, 'guides', 'markdown-basics.mdx'), 'utf-8').length).toBeGreaterThan(0);
 });
 
 test('frontmatter renders as editable properties', async ({ page }) => {

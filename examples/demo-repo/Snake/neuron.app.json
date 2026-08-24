@@ -1,0 +1,12 @@
+{
+  "name": "Snake",
+  "version": "1.0.0",
+  "description": "A folder mini-app. Keeps its high score in a workspace variable, and asks for nothing else — no file access, no network.",
+  "permissions": [
+    "variables.read",
+    "variables.write"
+  ],
+  "allowedReadPaths": [],
+  "allowedWritePaths": [],
+  "networkPolicy": "none"
+}
