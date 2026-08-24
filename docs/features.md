@@ -283,7 +283,7 @@ daily note** to the command palette.
 
 Built-in plugins are trusted application code and can receive the host runtime,
 including note operations, terminal, AI, and network clients. Folder-loaded
-third-party plugins are not enabled in version 0.4.2. Developers can read the
+third-party plugins are not enabled in version 0.4.3. Developers can read the
 [Plugin API](plugin-api.md), but adding a plugin currently means including and
 reviewing it with the application.
 
@@ -326,7 +326,7 @@ signing and platform-specific caveats are maintained in the
 ## Use or change keyboard shortcuts
 
 `Mod` means Ctrl on Windows/Linux and Command on macOS. These are the complete
-default configurable shortcuts in version 0.4.2:
+default configurable shortcuts in version 0.4.3:
 
 | Action | Default |
 | --- | --- |

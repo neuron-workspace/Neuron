@@ -1,7 +1,7 @@
 # Contributing to Neuron
 
 Thank you for helping improve Neuron. This guide takes a clean clone through a
-reviewable pull request. Neuron 0.4.2 is licensed under Apache 2.0; contributing
+reviewable pull request. Neuron 0.4.3 is licensed under Apache 2.0; contributing
 code means it will be distributed under the repository's license.
 
 Before coding, search existing issues and read the
