@@ -6,6 +6,13 @@
 // wrong: it has already caught every open task being due in September, which
 // made both dashboards render zero overdue and zero due-this-week, the two
 // numbers they exist to show.
+//
+// examples/demo-repo is a live workspace as well as a tracked fixture, so it
+// drifts under you: the dashboard's quick capture appends real rows to
+// Planner.db. Re-run this before committing anything in that folder -- a
+// `git add -A` after a few minutes of clicking around will otherwise carry
+// somebody's test task into the repository, which is exactly how this suite
+// first earned its keep.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -86,7 +93,9 @@ for (const [label, expected] of Object.entries(counts)) {
   const found = mdx.match(new RegExp(`label="${label}"\\s+value="(\\d+)"`));
   assert.ok(found, `Dashboard.mdx has no <Stat label="${label}">`);
   assert.equal(Number(found[1]), expected,
-    `Dashboard.mdx says ${label}=${found[1]}, Planner.db says ${expected}`);
+    `Dashboard.mdx says ${label}=${found[1]}, Planner.db says ${expected}. `
+    + "If you have had the app open on examples/demo-repo, the dashboard's quick "
+    + 'capture writes there for real -- check git diff for rows you added by hand.');
   checked++;
 }
 
