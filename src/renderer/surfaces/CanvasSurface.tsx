@@ -281,6 +281,26 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
     setPan({ x: (rect.width - box.width * z) / 2 - box.x * z, y: (rect.height - box.height * z) / 2 - box.y * z });
   };
   const zoomFit = () => fitRect(boundsOf(d().nodes));
+
+  // Fit once, when a canvas is first opened.
+  //
+  // It used to start at pan (80,80) zoom 1, which is the top-left of an infinite
+  // plane -- so a board whose content sits anywhere else opened on empty space
+  // with cards sliced off at the edges, and "Zoom to fit" was something you had
+  // to know to press. Opening a board should show you the board.
+  //
+  // Keyed by path so switching canvases refits, and guarded so it never fights
+  // a user who has already panned this one.
+  const fittedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (fittedFor.current === path) return;
+    const nodes = d().nodes;
+    // Nothing to fit to yet: the document is still loading.
+    if (!nodes.length || !containerRef.current) return;
+    fittedFor.current = path;
+    fitRect(boundsOf(nodes));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, doc]);
   const zoomFitSelection = () => fitRect(boundsOf(d().nodes.filter((n) => selNodesRef.current.has(n.id))));
   const zoomBy = (factor: number) => {
     const el = containerRef.current;
@@ -534,6 +554,7 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
   return (
     <div
       ref={containerRef}
+      data-canvas-surface
       className="relative h-full w-full overflow-hidden bg-[var(--canvas)] outline-none"
       style={{ backgroundImage: 'radial-gradient(var(--divider) 1px, transparent 1px)', backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px`, cursor: 'grab' }}
       tabIndex={0}
@@ -665,6 +686,7 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
           return (
             <div
               key={n.id}
+              data-canvas-node={n.id}
               className="group/n absolute flex flex-col overflow-hidden rounded-lg"
               style={{
                 left: n.x, top: n.y, width: n.width, height: n.height,
