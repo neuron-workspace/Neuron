@@ -147,3 +147,37 @@ test('the graph panel can be dragged to a new position', async ({ page }) => {
   expect(after.x).toBeGreaterThan(0);
   expect(after.y).toBeGreaterThan(0);
 });
+
+test('nodes glide to their new places instead of jumping', async ({ page }) => {
+  const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+  const centreOf = async (label: string) => {
+    const box = await graph.locator(`.graph-node[aria-label="Open ${label}"]`).boundingBox();
+    return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : null;
+  };
+
+  // Select by clicking a node, not through the palette. Waiting for the palette
+  // dialog to tear down takes longer than the 320ms tween, so the first sample
+  // arrived after the animation had already finished -- the test missed it, the
+  // feature was fine.
+  const target = graph.locator('.graph-node').nth(3);
+  const label = await target.getAttribute('aria-label');
+  const name = label!.replace(/^Open /, '');
+
+  const before = await centreOf(name);
+  expect(before).not.toBeNull();
+
+  await target.click();
+  await page.waitForTimeout(80);
+  const midFlight = await centreOf(name);
+
+  await page.waitForTimeout(700);
+  const arrived = await centreOf(name);
+  expect(arrived).not.toBeNull();
+
+  // Clicking recentres the graph on that node, so it has real distance to
+  // cover, and 80ms in it must still be short of home.
+  const travelled = Math.hypot(arrived!.x - before!.x, arrived!.y - before!.y);
+  const remaining = Math.hypot(arrived!.x - midFlight!.x, arrived!.y - midFlight!.y);
+  expect(travelled).toBeGreaterThan(20);
+  expect(remaining).toBeGreaterThan(1);
+});

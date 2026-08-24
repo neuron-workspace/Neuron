@@ -154,6 +154,52 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
     return { nodes: placed, links: computedLinks, extent: { minX, minY, w, h } };
   }, [notesData, selectedNote]);
 
+  // Opening a note re-lays the graph out breadth-first from that note, so nodes
+  // move. Tweened in JS rather than with a CSS transition because a CSS
+  // transform would animate the circles while the links snapped: x1/y1/x2/y2 are
+  // not animatable geometry properties. Drawing edges from the same interpolated
+  // positions keeps the whole graph moving as one thing.
+  const [drawn, setDrawn] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const frameRef = useRef(0);
+
+  useEffect(() => {
+    const target = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
+
+    const reduced = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    // First paint, or a node set with nothing in common, has nothing to animate
+    // from -- tweening in from a stale layout would look like a glitch.
+    const from = new Map(drawn);
+    const shared = [...target.keys()].filter((id) => from.has(id)).length;
+    if (reduced || shared === 0) { setDrawn(target); return; }
+
+    const start = performance.now();
+    const DURATION = 320;
+    cancelAnimationFrame(frameRef.current);
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / DURATION);
+      // ease-out cubic: most of the distance early, settling gently.
+      const e = 1 - Math.pow(1 - t, 3);
+      const next = new Map<string, { x: number; y: number }>();
+      for (const [id, to] of target) {
+        const at = from.get(id);
+        next.set(id, at ? { x: at.x + (to.x - at.x) * e, y: at.y + (to.y - at.y) * e } : to);
+      }
+      setDrawn(next);
+      if (t < 1) frameRef.current = requestAnimationFrame(step);
+    };
+    frameRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frameRef.current);
+    // `drawn` is the animation's own output; depending on it would restart the
+    // tween on every frame.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes]);
+
+  /** Where a node is being painted right now, mid-tween or at rest. */
+  const at = (node: PlacedNode) => drawn.get(node.id) ?? { x: node.x, y: node.y };
+
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   // Camera over the fitted extent. scale 1 shows everything; higher zooms in.
@@ -269,9 +315,11 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
         onWheel={zoom}
       >
         {links.map((link, idx) => {
-          const s = nodeById.get(link.source);
-          const t = nodeById.get(link.target);
-          if (!s || !t) return null;
+          const sn = nodeById.get(link.source);
+          const tn = nodeById.get(link.target);
+          if (!sn || !tn) return null;
+          const s = at(sn);
+          const t = at(tn);
           const incident = hasFocus && (link.source === selectedNote || link.target === selectedNote);
           const bothNear = hasFocus && !incident
             && (link.source === selectedNote || neighbours.has(link.source))
@@ -308,7 +356,7 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
           return (
             <g
               key={node.id}
-              transform={`translate(${node.x}, ${node.y})`}
+              transform={`translate(${at(node).x}, ${at(node).y})`}
               className="graph-node cursor-pointer"
               role="button"
               tabIndex={0}
