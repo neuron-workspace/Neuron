@@ -168,18 +168,45 @@ test('nodes glide to their new places instead of jumping', async ({ page }) => {
   const before = await centreOf(name);
   expect(before).not.toBeNull();
 
+  // Sample from inside the page, on requestAnimationFrame.
+  //
+  // The previous version took one boundingBox 80ms after the click and required
+  // the 320ms tween to still be running. That races the machine: on a loaded
+  // runner the 80ms wait plus a driver round-trip lands after the animation has
+  // finished, and the test fails on a feature that worked. It had already been
+  // rewritten once for this and it failed again during a run that took two and
+  // a half times as long as usual.
+  //
+  // Sampling in-page removes the race entirely, because the sampler and the
+  // animation now share one clock. If the renderer is starved the tween is
+  // starved with it, and the samples still land mid-flight.
   await target.click();
-  await page.waitForTimeout(80);
-  const midFlight = await centreOf(name);
+  const points: [number, number][] = await page.evaluate(async (selector) => {
+    const el = document.querySelector(selector);
+    if (!el) return [];
+    const seen: [number, number][] = [];
+    const began = performance.now();
+    await new Promise<void>((resolve) => {
+      const tick = () => {
+        const r = el.getBoundingClientRect();
+        seen.push([r.x + r.width / 2, r.y + r.height / 2]);
+        if (performance.now() - began > 600) resolve();
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    return seen;
+  }, `.graph-node[aria-label="Open ${name}"]`);
 
-  await page.waitForTimeout(700);
-  const arrived = await centreOf(name);
-  expect(arrived).not.toBeNull();
+  expect(points.length).toBeGreaterThan(3);
 
-  // Clicking recentres the graph on that node, so it has real distance to
-  // cover, and 80ms in it must still be short of home.
-  const travelled = Math.hypot(arrived!.x - before!.x, arrived!.y - before!.y);
-  const remaining = Math.hypot(arrived!.x - midFlight!.x, arrived!.y - midFlight!.y);
+  const arrived = points[points.length - 1];
+  const travelled = Math.hypot(arrived[0] - before!.x, arrived[1] - before!.y);
   expect(travelled).toBeGreaterThan(20);
-  expect(remaining).toBeGreaterThan(1);
+
+  // A tween passes through intermediate positions; a jump reports the
+  // destination from the very first frame. Rounding to the half pixel keeps
+  // sub-pixel jitter from counting as movement.
+  const distinct = new Set(points.map(([x, y]) => `${Math.round(x * 2)},${Math.round(y * 2)}`));
+  expect(distinct.size, 'the node teleported instead of gliding').toBeGreaterThan(2);
 });

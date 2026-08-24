@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { shutdown } from './procs.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(repoRoot, 'docs', 'screenshots');
@@ -130,7 +131,10 @@ if (leak) { throw new Error(`refusing to write a screenshot showing a local path
 await page.screenshot({ path: join(out, 'workspace-light.png') });
 console.log('wrote docs/screenshots/workspace-light.png');
 
-await app.close().catch(() => {});
+// process.exit below would end this script but not the Electron tree it
+// started, which is one of the ways strays accumulated in the first place.
+const outcome = await shutdown(app);
+if (outcome === 'survived') console.warn('Electron survived shutdown; a stray process is still running.');
 if (vite) { try { process.kill(-vite.pid); } catch { vite.kill(); } }
 try { rmSync(dir, { recursive: true, force: true }); } catch { /* the OS will */ }
 process.exit(0);

@@ -3,6 +3,10 @@ import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, sta
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
+// Plain JS so the screenshot script can share it. e2e/ is outside both
+// tsconfigs, so there is nothing to type here.
+// @ts-expect-error -- untyped .mjs helper, covered by tools/procs.test.mjs
+import { shutdown, sweepStrandedApps } from '../tools/procs.mjs';
 
 const repoRoot = resolve(__dirname, '..');
 
@@ -58,6 +62,15 @@ export const test = base.extend<AppFixture>({
           if (statSync(dir).mtimeMs < stale) { rmSync(dir, { recursive: true, force: true }); budget--; }
         } catch { /* another run owns it, or the OS already reaped it */ }
       }
+
+      // And the processes, not just their directories. Teardown covers the
+      // normal path; this covers Ctrl-C and crashed workers, which leave a full
+      // tree running with nothing left to clean it up. Scoped to command lines
+      // naming one of our throwaway user-data directories and to processes over
+      // ten minutes old, so a developer's own `npm run dev` and a suite running
+      // in a second terminal are both out of reach.
+      const strays = sweepStrandedApps();
+      if (strays > 0) console.warn(`[fixtures] killed ${strays} Electron process(es) stranded by an earlier run.`);
     }
 
     const dir = mkdtempSync(join(tmpdir(), 'neuron-e2e-'));
@@ -114,37 +127,23 @@ export const test = base.extend<AppFixture>({
 
     await use(app);
 
-    // Bound the close, then kill. Electron does not always exit promptly -- it
-    // is holding a chokidar watcher, a loopback HTTP server, PTYs and webview
-    // partitions -- and on the CI runner `await app.close()` hung past the 60s
-    // test timeout, failing a green run of 29 tests with "Tearing down app
-    // exceeded the test timeout". Locally it always returned in under a second,
-    // so this only ever reproduced in CI.
+    // Close, then verify -- do not trust the promise.
     //
-    // Whether Electron shuts down tidily is a product question with its own
-    // test, not something every fixture should block on.
-    let closed = false;
-    await Promise.race([
-      app.close().then(() => { closed = true; }).catch(() => { closed = true; }),
-      new Promise((resolve) => setTimeout(resolve, 5000)),
-    ]);
-    // Only kill what did not close. Killing an already-exiting Electron costs
-    // real time across 40 tests and gains nothing.
+    // The previous version escalated to a kill only when `close()` failed to
+    // resolve inside five seconds. It is entirely possible for close to resolve
+    // while the process keeps running, and when that happened nothing killed
+    // anything: eighteen Electron trees accumulated over two hours of runs and
+    // were only noticed when one of them held a file lock that broke a build.
     //
-    // Kill the TREE. Electron's renderer, GPU and utility children inherit the
-    // worker's stdio, so killing the main process alone leaves them holding
-    // pipes the worker waits on -- a green run of 40 tests still failed with
-    // "Worker teardown timeout of 180000ms exceeded", after every test passed.
-    if (!closed) {
-      const pid = app.process().pid;
-      try {
-        if (pid && process.platform === 'win32') {
-          const { execFileSync } = await import('node:child_process');
-          execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
-        } else {
-          app.process().kill();
-        }
-      } catch { /* already gone */ }
+    // `shutdown` asks the operating system whether the pid is still there and
+    // kills the whole tree if it is. The tree matters -- renderer, GPU and
+    // utility children inherit the worker's stdio, and orphans holding those
+    // pipes are why a green run of 40 tests once failed on worker teardown.
+    const outcome = await shutdown(app);
+    if (outcome === 'survived') {
+      // Never silent. A process that outlives SIGKILL means something changed,
+      // and the next symptom would be an unrelated file lock hours later.
+      console.warn('[fixtures] Electron survived shutdown; a stray process is still running.');
     }
   },
 
