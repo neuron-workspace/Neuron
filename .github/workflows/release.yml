@@ -53,6 +53,7 @@ jobs:
         shell: bash
         env:
           WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           # Decided in the script, not in an `if:` expression. Whether a
           # step's own env is in scope for its own condition is exactly the
@@ -62,6 +63,14 @@ jobs:
             exit 0
           fi
           printf '%s' "$WINDOWS_CERT_BASE64" | base64 -d > "$RUNNER_TEMP/signing.pfx"
+          # Exported here rather than set on the build step, so the variables
+          # simply do not exist on macOS and Linux. Setting them there to an
+          # empty string is not the same as leaving them unset: electron-builder
+          # read the empty CSC_LINK as a certificate path, resolved it to the
+          # working directory, and failed the macOS build with
+          # "/Users/runner/work/Neuron/Neuron not a file".
+          echo "CSC_LINK=$RUNNER_TEMP/signing.pfx" >> "$GITHUB_ENV"
+          echo "CSC_KEY_PASSWORD=$WINDOWS_CERT_PASSWORD" >> "$GITHUB_ENV"
           echo "path=$RUNNER_TEMP/signing.pfx" >> "$GITHUB_OUTPUT"
           echo "Certificate staged; electron-builder will sign."
 
@@ -71,8 +80,6 @@ jobs:
           npx electron-builder ${{ matrix.args }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          CSC_LINK: ${{ steps.cert.outputs.path }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
 
       # Built separately, and after the installers, for two reasons: a failure
       # here must not lose the .exe artifacts, and the Store package is not a
