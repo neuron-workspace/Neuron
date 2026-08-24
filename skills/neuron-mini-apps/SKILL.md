@@ -98,7 +98,7 @@ instead of the folder's files), put two files in the folder:
 
 ```json
 {
-  "name": "Launch board",
+  "name": "Snake",
   "permissions": ["workspace.search", "notes.read", "tags.read", "variables.read"],
   "allowedReadPaths": ["**"],
   "networkPolicy": "none"

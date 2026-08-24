@@ -87,11 +87,11 @@
         {
           "id": "t1",
           "values": {
-            "title": "Draft the release checklist",
+            "title": "Draft the launch checklist",
             "status": "doing",
             "priority": "high",
             "due": "2026-08-21",
-            "project": "Release 0.5",
+            "project": "Website refresh",
             "blocker": "",
             "done": false
           }
@@ -99,23 +99,23 @@
         {
           "id": "t2",
           "values": {
-            "title": "Sign the Windows installer",
+            "title": "Sign the hosting contract",
             "status": "blocked",
             "priority": "high",
             "due": "2026-08-26",
-            "project": "Release 0.5",
-            "blocker": "Partner Center identity and signing certificate are not configured",
+            "project": "Website refresh",
+            "blocker": "Legal is still reviewing the vendor terms",
             "done": false
           }
         },
         {
           "id": "t3",
           "values": {
-            "title": "Write the upgrade notes",
+            "title": "Write the announcement post",
             "status": "todo",
             "priority": "medium",
             "due": "2026-08-27",
-            "project": "Release 0.5",
+            "project": "Website refresh",
             "blocker": "",
             "done": false
           }
@@ -123,11 +123,11 @@
         {
           "id": "t4",
           "values": {
-            "title": "Cut the release branch",
+            "title": "Freeze the content for review",
             "status": "todo",
             "priority": "medium",
             "due": "2026-09-04",
-            "project": "Release 0.5",
+            "project": "Website refresh",
             "blocker": "",
             "done": false
           }
@@ -135,11 +135,11 @@
         {
           "id": "t5",
           "values": {
-            "title": "Audit dependency advisories",
+            "title": "Audit the old pages for dead links",
             "status": "done",
             "priority": "medium",
             "due": "2026-08-18",
-            "project": "Release 0.5",
+            "project": "Website refresh",
             "blocker": "",
             "done": true
           }
@@ -147,11 +147,11 @@
         {
           "id": "t15",
           "values": {
-            "title": "Verify the updater feed on a clean profile",
+            "title": "Test the checkout flow on a clean account",
             "status": "todo",
             "priority": "high",
             "due": "2026-09-01",
-            "project": "Release 0.5",
+            "project": "Website refresh",
             "blocker": "",
             "done": false
           }
@@ -159,11 +159,11 @@
         {
           "id": "t6",
           "values": {
-            "title": "Rewrite the onboarding note",
+            "title": "Rewrite the getting-started article",
             "status": "doing",
             "priority": "medium",
             "due": "2026-08-24",
-            "project": "Docs refresh",
+            "project": "Help centre",
             "blocker": "",
             "done": false
           }
@@ -171,11 +171,11 @@
         {
           "id": "t7",
           "values": {
-            "title": "Screenshot the canvas surface",
+            "title": "Screenshot the new dashboard",
             "status": "todo",
             "priority": "low",
             "due": "2026-09-12",
-            "project": "Docs refresh",
+            "project": "Help centre",
             "blocker": "",
             "done": false
           }
@@ -183,11 +183,11 @@
         {
           "id": "t8",
           "values": {
-            "title": "Document the plugin sandbox",
+            "title": "Document the refund policy",
             "status": "done",
             "priority": "high",
             "due": "2026-08-21",
-            "project": "Docs refresh",
+            "project": "Help centre",
             "blocker": "",
             "done": true
           }
@@ -195,11 +195,11 @@
         {
           "id": "t9",
           "values": {
-            "title": "Trim the getting-started page",
+            "title": "Trim the FAQ page",
             "status": "todo",
             "priority": "low",
             "due": "2026-09-19",
-            "project": "Docs refresh",
+            "project": "Help centre",
             "blocker": "",
             "done": false
           }
@@ -207,11 +207,11 @@
         {
           "id": "t16",
           "values": {
-            "title": "Record the keyboard navigation walkthrough",
+            "title": "Record the setup walkthrough",
             "status": "todo",
             "priority": "medium",
             "due": "2026-08-31",
-            "project": "Docs refresh",
+            "project": "Help centre",
             "blocker": "",
             "done": false
           }
@@ -219,11 +219,11 @@
         {
           "id": "t10",
           "values": {
-            "title": "Profile the search index",
+            "title": "Profile the slow list screen",
             "status": "doing",
             "priority": "high",
             "due": "2026-08-22",
-            "project": "Performance",
+            "project": "Mobile app",
             "blocker": "",
             "done": false
           }
@@ -231,11 +231,11 @@
         {
           "id": "t11",
           "values": {
-            "title": "Split the CodeMirror chunk",
+            "title": "Split the onboarding bundle",
             "status": "todo",
             "priority": "medium",
             "due": "2026-08-28",
-            "project": "Performance",
+            "project": "Mobile app",
             "blocker": "",
             "done": false
           }
@@ -243,23 +243,23 @@
         {
           "id": "t12",
           "values": {
-            "title": "Measure cold start on Windows ARM",
+            "title": "Measure cold start on older phones",
             "status": "blocked",
             "priority": "low",
             "due": "2026-09-20",
-            "project": "Performance",
-            "blocker": "Waiting for access to Windows ARM test hardware",
+            "project": "Mobile app",
+            "blocker": "Waiting on loaner handsets from IT",
             "done": false
           }
         },
         {
           "id": "t17",
           "values": {
-            "title": "Budget startup work by phase",
+            "title": "Budget the next phase of work",
             "status": "todo",
             "priority": "medium",
             "due": "2026-10-02",
-            "project": "Performance",
+            "project": "Mobile app",
             "blocker": "",
             "done": false
           }
@@ -267,11 +267,11 @@
         {
           "id": "t13",
           "values": {
-            "title": "Add restore coverage",
+            "title": "Recruit five interview participants",
             "status": "done",
             "priority": "high",
             "due": "2026-08-23",
-            "project": "Recovery",
+            "project": "Customer research",
             "blocker": "",
             "done": true
           }
@@ -279,11 +279,11 @@
         {
           "id": "t14",
           "values": {
-            "title": "Set retention limits for the journal",
+            "title": "Set a retention window for recordings",
             "status": "todo",
             "priority": "medium",
             "due": "2026-09-11",
-            "project": "Recovery",
+            "project": "Customer research",
             "blocker": "",
             "done": false
           }
@@ -291,11 +291,11 @@
         {
           "id": "t18",
           "values": {
-            "title": "Exercise conflict recovery from version history",
+            "title": "Run the pilot interview",
             "status": "done",
             "priority": "medium",
             "due": "2026-08-13",
-            "project": "Recovery",
+            "project": "Customer research",
             "blocker": "",
             "done": true
           }
@@ -303,11 +303,11 @@
         {
           "id": "t19",
           "values": {
-            "title": "Make wiki-links open their target note",
+            "title": "Make the welcome email link to the guide",
             "status": "todo",
             "priority": "high",
             "due": "2026-08-20",
-            "project": "Wiki navigation",
+            "project": "Onboarding revamp",
             "blocker": "",
             "done": false
           }
@@ -315,11 +315,11 @@
         {
           "id": "t20",
           "values": {
-            "title": "Cover missing wiki-link targets",
+            "title": "Cover the empty-account first run",
             "status": "doing",
             "priority": "medium",
             "due": "2026-09-07",
-            "project": "Wiki navigation",
+            "project": "Onboarding revamp",
             "blocker": "",
             "done": false
           }
@@ -327,11 +327,11 @@
         {
           "id": "t21",
           "values": {
-            "title": "Style wiki-links in preview",
+            "title": "Restyle the progress checklist",
             "status": "done",
             "priority": "medium",
             "due": "2026-08-08",
-            "project": "Wiki navigation",
+            "project": "Onboarding revamp",
             "blocker": "",
             "done": true
           }
@@ -339,11 +339,11 @@
         {
           "id": "t22",
           "values": {
-            "title": "Keep the active tab visible in narrow splits",
+            "title": "Keep the meeting rooms bookable during the move",
             "status": "todo",
             "priority": "high",
             "due": "2026-09-02",
-            "project": "Workspace polish",
+            "project": "Office move",
             "blocker": "",
             "done": false
           }
@@ -351,11 +351,11 @@
         {
           "id": "t23",
           "values": {
-            "title": "Align empty states across side panels",
+            "title": "Align desk labels across floors",
             "status": "todo",
             "priority": "medium",
             "due": "2026-09-08",
-            "project": "Workspace polish",
+            "project": "Office move",
             "blocker": "",
             "done": false
           }
@@ -363,11 +363,11 @@
         {
           "id": "t24",
           "values": {
-            "title": "Check long filenames in the tab strip",
+            "title": "Check long names on the door signs",
             "status": "todo",
             "priority": "low",
             "due": "2026-09-16",
-            "project": "Workspace polish",
+            "project": "Office move",
             "blocker": "",
             "done": false
           }
@@ -375,11 +375,11 @@
         {
           "id": "t25",
           "values": {
-            "title": "Write the trust-boundary FAQ",
+            "title": "Write the spend-approval FAQ",
             "status": "todo",
             "priority": "medium",
             "due": "2026-09-05",
-            "project": "Plugin trust",
+            "project": "Budget planning",
             "blocker": "",
             "done": false
           }
@@ -387,11 +387,11 @@
         {
           "id": "t26",
           "values": {
-            "title": "Reduce the example plugin manifest",
+            "title": "Reduce the expense form to one page",
             "status": "done",
             "priority": "high",
             "due": "2026-08-04",
-            "project": "Plugin trust",
+            "project": "Budget planning",
             "blocker": "",
             "done": true
           }
@@ -447,63 +447,63 @@
         {
           "id": "p1",
           "values": {
-            "name": "Release 0.5",
+            "name": "Website refresh",
             "status": "active",
-            "owner": "Shivam",
+            "owner": "John Doe",
             "target": "2026-09-15"
           }
         },
         {
           "id": "p2",
           "values": {
-            "name": "Docs refresh",
+            "name": "Help centre",
             "status": "active",
-            "owner": "Shivam",
+            "owner": "Jane Roe",
             "target": "2026-09-30"
           }
         },
         {
           "id": "p3",
           "values": {
-            "name": "Performance",
+            "name": "Mobile app",
             "status": "paused",
-            "owner": "Shivam",
+            "owner": "Alex Kim",
             "target": "2026-10-14"
           }
         },
         {
           "id": "p4",
           "values": {
-            "name": "Recovery",
+            "name": "Customer research",
             "status": "active",
-            "owner": "Shivam",
+            "owner": "Maria Santos",
             "target": "2026-08-15"
           }
         },
         {
           "id": "p5",
           "values": {
-            "name": "Wiki navigation",
+            "name": "Onboarding revamp",
             "status": "active",
-            "owner": "Shivam",
+            "owner": "John Doe",
             "target": "2026-09-18"
           }
         },
         {
           "id": "p6",
           "values": {
-            "name": "Workspace polish",
+            "name": "Office move",
             "status": "active",
-            "owner": "Shivam",
+            "owner": "Jane Roe",
             "target": "2026-09-22"
           }
         },
         {
           "id": "p7",
           "values": {
-            "name": "Plugin trust",
+            "name": "Budget planning",
             "status": "active",
-            "owner": "Shivam",
+            "owner": "Alex Kim",
             "target": "2026-09-25"
           }
         }

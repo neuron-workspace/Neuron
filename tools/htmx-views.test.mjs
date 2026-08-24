@@ -95,19 +95,19 @@ assert.ok(!noManifestGrants.needsApproval, 'an unmanifested view renders without
 
 // --- view + manifest paths (plain files vs folder apps) -----------------------
 assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
-assert.ok(m.isViewPath('Launch board/index.html'), 'a folder app uses index.html');
+assert.ok(m.isViewPath('Snake/index.html'), 'a folder app uses index.html');
 assert.ok(!m.isViewPath('notes/readme.md'), 'plain notes are not views');
 assert.ok(!m.isViewPath('notes/readme.htm'), 'only the .html extension is a view');
-assert.equal(m.appManifestPathFor('Launch board/index.html'), 'Launch board/neuron.app.json');
+assert.equal(m.appManifestPathFor('Snake/index.html'), 'Snake/neuron.app.json');
 assert.equal(m.appManifestPathFor('index.html'), null, 'the workspace root cannot be a folder app');
-assert.equal(m.appManifestPathFor('Launch board/report.html'), null, 'only index.html can be a folder app entry');
+assert.equal(m.appManifestPathFor('Snake/report.html'), null, 'only index.html can be a folder app entry');
 // Plain-view manifests mirror their path under .neuron/manifests:
 assert.equal(m.manifestPathFor('projects/tracker.html'), '.neuron/manifests/projects/tracker.json');
 assert.equal(m.manifestPathFor('projects/index.html'), '.neuron/manifests/projects/index.json');
 // A folder app's manifest is the co-located marker, never under .neuron:
-assert.equal(m.manifestPathFor('Launch board/index.html', true), 'Launch board/neuron.app.json');
+assert.equal(m.manifestPathFor('Snake/index.html', true), 'Snake/neuron.app.json');
 assert.equal(m.legacyManifestPathFor('projects/tracker.html'), 'projects/tracker.neuron.json');
-assert.equal(m.defaultViewName('Launch board/index.html', true), 'Launch board', 'folder app is named for its folder');
+assert.equal(m.defaultViewName('Snake/index.html', true), 'Snake', 'folder app is named for its folder');
 assert.equal(m.defaultViewName('a/b/Report.html'), 'Report', 'plain view is named for its file');
 
 // --- variables validation ---------------------------------------------------------

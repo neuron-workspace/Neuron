@@ -128,7 +128,7 @@ test('the dashboard view actually loads its data, not just its markup', async ({
 });
 
 test('a folder mini-app collapses to one explorer entry', async ({ page }) => {
-  await expect(page.locator('.note-row', { hasText: 'Launch board' }).first()).toBeVisible();
+  await expect(page.locator('.note-row', { hasText: 'Snake' }).first()).toBeVisible();
   // The folder's internals (index.html, neuron.app.json) must not be listed as
   // notes. Scoped to explorer rows -- the strings appear in demo note prose too.
   await expect(page.locator('.note-row', { hasText: 'index.html' })).toHaveCount(0);

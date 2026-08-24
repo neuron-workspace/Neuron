@@ -286,7 +286,7 @@ Dependency-free, bounded, and it does **not** touch the editor:
 - **Documented** the kit's `kbd` in `docs/htmx-views.md` and this roadmap.
 - The broader "standardize cards/buttons/toolbar/empty states + HTMX example styles" slice was
   substantially completed earlier this cycle: the kit was rewritten to a shadcn-style,
-  token-driven system with semantic-element defaults; the Launch board, starter templates,
+  token-driven system with semantic-element defaults; the demo views, starter templates,
   folder mini-app, and `.ndash` example were standardized onto it.
 
 **Explicitly deferred:** no editor replacement; no BlockNote/Yoopta/Novel/Mina; the slash menu
