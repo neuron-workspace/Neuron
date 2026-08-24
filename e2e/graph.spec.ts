@@ -60,3 +60,49 @@ test('no full-height graph column remains in the shell layout', async ({ page, w
   // And the floating graph is what shows the workspace instead.
   await expect(page.getByRole('complementary', { name: 'Workspace graph' })).toBeVisible();
 });
+
+test('the graph recentres on the open note, zooms, and pans', async ({ page }) => {
+  const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+  // The panel holds two svgs -- the graph and the close icon.
+  const svg = graph.locator('svg[data-graph-canvas]');
+  const box = async () => (await svg.getAttribute('viewBox'))!.split(' ').map(Number);
+
+  const open = async (name: string) => {
+    await page.getByRole('button', { name: /Search & commands/ }).click();
+    const dialog = page.locator('[role="dialog"]');
+    await expect(dialog).toBeVisible();
+    await dialog.locator('input').first().fill(name);
+    await dialog.getByText(name, { exact: false }).first().click();
+    await expect(dialog).toBeHidden();
+  };
+
+  // Recentres: two different notes cannot share a viewport origin, because the
+  // camera follows the node. Comparing against the *fitted* box would be
+  // comparing against a moving baseline -- the extent grows as notes load.
+  await open('markdown-basics');
+  const [ax, ay] = await box();
+  await open('getting-started');
+  await expect.poll(async () => {
+    const [bx, by] = await box();
+    return Math.abs(bx - ax) + Math.abs(by - ay);
+  }, { timeout: 10_000 }).toBeGreaterThan(1);
+
+  // Wheel zooms in: a narrower viewport shows less of the graph, larger.
+  const [, , beforeW] = await box();
+  const rect = (await svg.boundingBox())!;
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  await page.mouse.wheel(0, -240);
+  await expect.poll(async () => (await box())[2], { timeout: 10_000 }).toBeLessThan(beforeW);
+
+  // Dragging the background pans, and does not snap back to the selected node.
+  const [zx, zy] = await box();
+  // Grab empty space, not the centre: after zooming to a note the centre IS
+  // that node, and beginPan deliberately ignores a press on one so a click
+  // still opens it.
+  await page.mouse.move(rect.x + 12, rect.y + rect.height - 12);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + 72, rect.y + rect.height - 52, { steps: 8 });
+  await page.mouse.up();
+  const [px, py] = await box();
+  expect(Math.abs(px - zx) + Math.abs(py - zy)).toBeGreaterThan(1);
+});

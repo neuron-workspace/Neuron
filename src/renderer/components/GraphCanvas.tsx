@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 export interface NoteData {
   path: string;
@@ -68,7 +68,7 @@ function radiusFor(degree: number): number {
  * visible so the wider structure is never lost.
  */
 export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emptyHint }: GraphCanvasProps) {
-  const { nodes, links, viewBox } = useMemo(() => {
+  const { nodes, links, extent } = useMemo(() => {
     const cells = hexSpiral(notesData.length);
     const placed: PlacedNode[] = notesData.map((note, i) => {
       const { q, r } = cells[i];
@@ -109,10 +109,77 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
     const w = Math.max(...xs, 0) - Math.min(...xs, 0) + pad * 2 || 200;
     const h = Math.max(...ys, 0) - Math.min(...ys, 0) + pad * 2 || 200;
 
-    return { nodes: placed, links: computedLinks, viewBox: `${minX} ${minY} ${w} ${h}` };
+    return { nodes: placed, links: computedLinks, extent: { minX, minY, w, h } };
   }, [notesData]);
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+
+  // Camera over the fitted extent. scale 1 shows everything; higher zooms in.
+  // Selecting a note recentres on it: on a workspace of any size the fitted view
+  // makes every node a dot, so you can see the shape but not read it. Panning is
+  // left to the user from there rather than snapping back.
+  const [cam, setCam] = useState<{ cx: number; cy: number; scale: number } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  useEffect(() => {
+    const node = selectedNote ? nodeById.get(selectedNote) : undefined;
+    if (!node) { setCam(null); return; }
+    // 2.4x reads labels around the active note while keeping its neighbourhood
+    // in frame; the rest of the workspace is a drag away.
+    setCam({ cx: node.x, cy: node.y, scale: 2.4 });
+  }, [selectedNote, nodeById]);
+
+  const viewBox = useMemo(() => {
+    if (!cam) return [extent.minX, extent.minY, extent.w, extent.h].join(' ');
+    const w = extent.w / cam.scale;
+    const h = extent.h / cam.scale;
+    return [cam.cx - w / 2, cam.cy - h / 2, w, h].join(' ');
+  }, [cam, extent]);
+
+  const centred = () => ({ cx: extent.minX + extent.w / 2, cy: extent.minY + extent.h / 2, scale: 1 });
+
+  /** Pixels to graph units at the current zoom, so a drag tracks the cursor. */
+  const unitsPerPixel = () => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    return rect ? (extent.w / (cam?.scale ?? 1)) / rect.width : 1;
+  };
+
+  const beginPan = (event: React.PointerEvent<SVGSVGElement>) => {
+    // Only the background pans. A press on a node is a click, not a drag.
+    if ((event.target as Element).closest('.graph-node')) return;
+    const base = cam ?? centred();
+    dragRef.current = { x: event.clientX, y: event.clientY, cx: base.cx, cy: base.cy };
+    setCam(base);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const pan = (event: React.PointerEvent<SVGSVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const k = unitsPerPixel();
+    setCam((prev) => (prev ? {
+      ...prev,
+      cx: drag.cx - (event.clientX - drag.x) * k,
+      cy: drag.cy - (event.clientY - drag.y) * k,
+    } : prev));
+  };
+
+  const endPan = (event: React.PointerEvent<SVGSVGElement>) => {
+    dragRef.current = null;
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* never captured */ }
+  };
+
+  const zoom = (event: React.WheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    setCam((prev) => {
+      const base = prev ?? centred();
+      // Clamped: below 1 there is nothing further to reveal, and past 8 one node
+      // fills the square.
+      const scale = Math.min(8, Math.max(1, base.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      return { ...base, scale };
+    });
+  };
 
   // Direct neighbours of the active note (either link direction).
   const { hasFocus, neighbours } = useMemo(() => {
@@ -145,7 +212,19 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
 
   return (
     <div className="relative h-full w-full select-none">
-      <svg className="h-full w-full" viewBox={viewBox} preserveAspectRatio="xMidYMid meet">
+      <svg
+        ref={svgRef}
+        data-graph-canvas
+        className="h-full w-full touch-none"
+        style={{ cursor: dragRef.current ? 'grabbing' : 'grab' }}
+        viewBox={viewBox}
+        preserveAspectRatio="xMidYMid meet"
+        onPointerDown={beginPan}
+        onPointerMove={pan}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+        onWheel={zoom}
+      >
         {links.map((link, idx) => {
           const s = nodeById.get(link.source);
           const t = nodeById.get(link.target);
