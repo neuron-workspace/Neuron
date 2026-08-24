@@ -34,13 +34,15 @@
     "test:terminal-bus": "node tools/terminal-bus.test.mjs",
     "test:demo-data": "node tools/demo-data.test.mjs",
     "test:e2e": "npm run build:main && playwright test",
-    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast && npm run test:terminal-bus && npm run test:demo-data && npm run test:procs && npm run test:wikilinks",
+    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast && npm run test:terminal-bus && npm run test:demo-data && npm run test:procs && npm run test:wikilinks",
     "shoot": "node tools/shoot.mjs",
     "test:procs": "node tools/procs.test.mjs",
     "test:wikilinks": "node tools/wikilinks.test.mjs",
     "verify:appx": "node tools/verify-appx.mjs",
     "store:shots": "node tools/store-shots.mjs",
-    "store:logos": "node tools/store-logos.mjs"
+    "store:logos": "node tools/store-logos.mjs",
+    "smoke": "node tools/smoke-packaged.mjs",
+    "test:deps": "node tools/deps.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",
@@ -107,7 +109,8 @@
     "sql.js": "^1.14.1",
     "tailwind-merge": "^2.4.0",
     "vaul": "^1.1.2",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

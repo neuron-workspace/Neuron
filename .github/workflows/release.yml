@@ -81,6 +81,17 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      # Launch what was just packaged, before anything is published.
+      #
+      # 0.4.3 shipped an application that could not start: `zod` is a peer
+      # dependency of the AI SDK, npm hoists peers to the root so development
+      # and every end-to-end test worked, and electron-builder does not follow
+      # peers -- so it was absent from app.asar. Nothing in the suite had ever
+      # launched the artifact users download.
+      - name: Smoke-test the packaged application
+        if: runner.os == 'Windows'
+        run: npm run smoke -- release/win-unpacked
+
       # Built separately, and after the installers, for two reasons: a failure
       # here must not lose the .exe artifacts, and the Store package is not a
       # download -- electron-builder deliberately leaves it unsigned because
