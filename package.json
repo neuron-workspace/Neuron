@@ -38,7 +38,9 @@
     "shoot": "node tools/shoot.mjs",
     "test:procs": "node tools/procs.test.mjs",
     "test:wikilinks": "node tools/wikilinks.test.mjs",
-    "verify:appx": "node tools/verify-appx.mjs"
+    "verify:appx": "node tools/verify-appx.mjs",
+    "store:shots": "node tools/store-shots.mjs",
+    "store:logos": "node tools/store-logos.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",

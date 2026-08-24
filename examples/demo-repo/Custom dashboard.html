@@ -19,12 +19,17 @@
   .pb { background: var(--paper); padding: 1rem; min-height: 100vh; }
   .pb * { box-sizing: border-box; }
 
+  /* Every track is minmax(0, ...) rather than a bare fr. A grid track defaults
+     to min-width:auto, which is min-content, so long unbreakable content can
+     push a board wider than its container. Not a bug that was observed here --
+     the view measures scrollWidth equal to clientWidth -- but the failure is
+     silent when it does happen, and the guard costs nothing. */
   .pb .pb-grid {
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) 2.2fr;
+    grid-template-columns: minmax(180px, 1fr) minmax(0, 2.2fr);
     gap: .75rem;
   }
-  .pb .pb-sub { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  .pb .pb-sub { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .75rem; }
   @media (max-width: 720px) {
     .pb .pb-grid, .pb .pb-sub { grid-template-columns: 1fr; }
   }
@@ -99,7 +104,7 @@
   /* --- board, workload and capture ------------------------------------- */
 
   .pb .pb-stack { display: grid; gap: .75rem; margin-top: .75rem; }
-  .pb .pb-half { display: grid; grid-template-columns: 1.35fr 1fr; gap: .75rem; }
+  .pb .pb-half { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: .75rem; }
   @media (max-width: 720px) { .pb .pb-half { grid-template-columns: 1fr; } }
 
   .pb .pb-kan { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; }
