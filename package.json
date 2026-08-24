@@ -171,9 +171,9 @@
     "appx": {
       "applicationId": "Neuron",
       "displayName": "Neuron",
-      "identityName": "REPLACE.WITH.PartnerCenter.IdentityName",
-      "publisher": "CN=REPLACE-WITH-PARTNER-CENTER-PUBLISHER-ID",
-      "publisherDisplayName": "REPLACE_WITH_PUBLISHER_DISPLAY_NAME",
+      "identityName": "ShivamKhetan.NeuronDesktop",
+      "publisher": "CN=7632F1A5-D41D-4A68-802B-CBBC1A910C2A",
+      "publisherDisplayName": "Shivam Khetan",
       "backgroundColor": "#1a1a1a",
       "languages": [
         "en-US"

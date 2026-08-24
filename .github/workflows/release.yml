@@ -22,9 +22,8 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            # nsis + portable only. appx carries placeholder Partner Center
-            # identity values (T-020) and fails the build; the Store package is
-            # produced separately by `npm run dist:store` once those are real.
+            # nsis + portable here; the Store package is built by its own step
+            # below so an appx failure cannot cost you the installers.
             args: --win nsis portable --x64
           - name: Linux x64
             os: ubuntu-latest
@@ -74,6 +73,26 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           CSC_LINK: ${{ steps.cert.outputs.path }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+
+      # Built separately, and after the installers, for two reasons: a failure
+      # here must not lose the .exe artifacts, and the Store package is not a
+      # download -- electron-builder deliberately leaves it unsigned because
+      # Partner Center signs it on submission. It goes to a different place
+      # than the release, so it gets its own artifact.
+      - name: Build the Microsoft Store package
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win appx --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload the Store package
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-store-appx
+          retention-days: 14
+          if-no-files-found: error
+          path: release/*.appx
 
       - name: Remove the certificate from the runner
         if: always() && steps.cert.outputs.path != ''
@@ -140,8 +159,17 @@ jobs:
           # electron-updater does not push it to stable users.
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: false
+          # Explicit extensions rather than artifacts/**/* so the Store package
+          # stays out. It is unsigned by design and only Partner Center can do
+          # anything with it; on a download page it is a support ticket.
           files: |
-            artifacts/**/*
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.blockmap
+            artifacts/**/latest*.yml
             SHA256SUMS.txt
 
       # Policy: keep only the newest patch per major.minor. After publishing

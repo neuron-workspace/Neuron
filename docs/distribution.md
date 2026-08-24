@@ -108,21 +108,37 @@ notarization credentials. Not currently configured.
 
 ## Microsoft Store
 
-The Store build is produced separately from the GitHub release matrix, because
-the appx target needs identity values that only exist in Partner Center.
+The Partner Center identity is filled in, and verified against a real build:
 
-1. In Partner Center, open the app → **Product management → Product identity**.
-2. Copy three values into `build.appx` in `package.json`:
+| Partner Center field | `build.appx` key | Value |
+| --- | --- | --- |
+| Package/Identity/Name | `identityName` | `ShivamKhetan.NeuronDesktop` |
+| Package/Identity/Publisher | `publisher` | `CN=7632F1A5-...` |
+| Package/Properties/PublisherDisplayName | `publisherDisplayName` | `Shivam Khetan` |
 
-   | Partner Center field | `package.json` key |
-   | --- | --- |
-   | Package/Identity/Name | `identityName` |
-   | Package/Identity/Publisher | `publisher` (the whole `CN=...` string) |
-   | Package/Properties/PublisherDisplayName | `publisherDisplayName` |
+**None of these are secrets.** They are written into the manifest of every MSIX
+that ships, so anyone who installs the app can read all three, and they appear
+in the Store listing anyway. The certificate private key is the secret; the
+identity is a public name.
 
-3. `npm run dist:store` produces the `.appx` in `release/`.
-4. Test-install it locally first — see the signing section above.
-5. Upload the `.appx` in Partner Center and submit.
+Two ways to get the package:
+
+- **From CI.** Tagging a release builds it and attaches it to the workflow run
+  as the `neuron-store-appx` artifact. It is deliberately *not* attached to the
+  GitHub release: it is unsigned by design, and only Partner Center can do
+  anything with it.
+- **Locally.** `npm run dist:store` writes it to `release/prod/`.
+
+Then test-install it (see the signing section above), upload it in Partner
+Center, and submit.
+
+`package.json`'s `build` block is the single source of truth.
+`tools/electron-builder.env.cjs` spreads it and overrides only the test/prod
+differences. Both are live -- the release workflow reads `package.json`, the
+`dist:*` scripts read the cjs file -- and while they were maintained separately
+they drifted: the identity was filled in on one side and still a
+`REPLACE.WITH...` placeholder on the other, and the appx built happily with
+placeholders in its manifest. If you change packaging, change `package.json`.
 
 The package version must be plain numeric (`0.4.3`), with no prerelease
 suffix. This is why the version is `0.4.3` rather than `0.4.3-beta.1`; the
