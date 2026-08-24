@@ -14,98 +14,533 @@
           "done"
         ],
         "properties": {
-          "title": { "name": "Task", "type": "text" },
+          "title": {
+            "name": "Task",
+            "type": "text"
+          },
           "status": {
             "name": "Status",
             "type": "select",
             "options": [
-              { "id": "todo", "name": "Todo", "color": "#8b8b8b" },
-              { "id": "doing", "name": "In progress", "color": "#528fd1" },
-              { "id": "blocked", "name": "Blocked", "color": "#c0705f" },
-              { "id": "done", "name": "Done", "color": "#5aa06c" }
+              {
+                "id": "todo",
+                "name": "Todo",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "doing",
+                "name": "In progress",
+                "color": "#528fd1"
+              },
+              {
+                "id": "blocked",
+                "name": "Blocked",
+                "color": "#c0705f"
+              },
+              {
+                "id": "done",
+                "name": "Done",
+                "color": "#5aa06c"
+              }
             ]
           },
           "priority": {
             "name": "Priority",
             "type": "select",
             "options": [
-              { "id": "low", "name": "Low", "color": "#8b8b8b" },
-              { "id": "medium", "name": "Medium", "color": "#528fd1" },
-              { "id": "high", "name": "High", "color": "#c0705f" }
+              {
+                "id": "low",
+                "name": "Low",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "medium",
+                "name": "Medium",
+                "color": "#528fd1"
+              },
+              {
+                "id": "high",
+                "name": "High",
+                "color": "#c0705f"
+              }
             ]
           },
-          "due": { "name": "Due", "type": "date" },
-          "project": { "name": "Project", "type": "text" },
-          "blocker": { "name": "Blocked by", "type": "text" },
-          "done": { "name": "Done", "type": "checkbox" }
+          "due": {
+            "name": "Due",
+            "type": "date"
+          },
+          "project": {
+            "name": "Project",
+            "type": "text"
+          },
+          "blocker": {
+            "name": "Blocked by",
+            "type": "text"
+          },
+          "done": {
+            "name": "Done",
+            "type": "checkbox"
+          }
         }
       },
       "rows": [
-        { "id": "t1", "values": { "title": "Draft the release checklist", "status": "doing", "priority": "high", "due": "2026-08-21", "project": "Release 0.5", "blocker": "", "done": false } },
-        { "id": "t2", "values": { "title": "Sign the Windows installer", "status": "blocked", "priority": "high", "due": "2026-08-26", "project": "Release 0.5", "blocker": "Partner Center identity and signing certificate are not configured", "done": false } },
-        { "id": "t3", "values": { "title": "Write the upgrade notes", "status": "todo", "priority": "medium", "due": "2026-08-27", "project": "Release 0.5", "blocker": "", "done": false } },
-        { "id": "t4", "values": { "title": "Cut the release branch", "status": "todo", "priority": "medium", "due": "2026-09-04", "project": "Release 0.5", "blocker": "", "done": false } },
-        { "id": "t5", "values": { "title": "Audit dependency advisories", "status": "done", "priority": "medium", "due": "2026-08-18", "project": "Release 0.5", "blocker": "", "done": true } },
-        { "id": "t15", "values": { "title": "Verify the updater feed on a clean profile", "status": "todo", "priority": "high", "due": "2026-09-01", "project": "Release 0.5", "blocker": "", "done": false } },
-
-        { "id": "t6", "values": { "title": "Rewrite the onboarding note", "status": "doing", "priority": "medium", "due": "2026-08-24", "project": "Docs refresh", "blocker": "", "done": false } },
-        { "id": "t7", "values": { "title": "Screenshot the canvas surface", "status": "todo", "priority": "low", "due": "2026-09-12", "project": "Docs refresh", "blocker": "", "done": false } },
-        { "id": "t8", "values": { "title": "Document the plugin sandbox", "status": "done", "priority": "high", "due": "2026-08-21", "project": "Docs refresh", "blocker": "", "done": true } },
-        { "id": "t9", "values": { "title": "Trim the getting-started page", "status": "todo", "priority": "low", "due": "2026-09-19", "project": "Docs refresh", "blocker": "", "done": false } },
-        { "id": "t16", "values": { "title": "Record the keyboard navigation walkthrough", "status": "todo", "priority": "medium", "due": "2026-08-31", "project": "Docs refresh", "blocker": "", "done": false } },
-
-        { "id": "t10", "values": { "title": "Profile the search index", "status": "doing", "priority": "high", "due": "2026-08-22", "project": "Performance", "blocker": "", "done": false } },
-        { "id": "t11", "values": { "title": "Split the CodeMirror chunk", "status": "todo", "priority": "medium", "due": "2026-08-28", "project": "Performance", "blocker": "", "done": false } },
-        { "id": "t12", "values": { "title": "Measure cold start on Windows ARM", "status": "blocked", "priority": "low", "due": "2026-09-20", "project": "Performance", "blocker": "Waiting for access to Windows ARM test hardware", "done": false } },
-        { "id": "t17", "values": { "title": "Budget startup work by phase", "status": "todo", "priority": "medium", "due": "2026-10-02", "project": "Performance", "blocker": "", "done": false } },
-
-        { "id": "t13", "values": { "title": "Add restore coverage", "status": "done", "priority": "high", "due": "2026-08-23", "project": "Recovery", "blocker": "", "done": true } },
-        { "id": "t14", "values": { "title": "Set retention limits for the journal", "status": "todo", "priority": "medium", "due": "2026-09-11", "project": "Recovery", "blocker": "", "done": false } },
-        { "id": "t18", "values": { "title": "Exercise conflict recovery from version history", "status": "done", "priority": "medium", "due": "2026-08-13", "project": "Recovery", "blocker": "", "done": true } },
-
-        { "id": "t19", "values": { "title": "Make wiki-links open their target note", "status": "todo", "priority": "high", "due": "2026-08-20", "project": "Wiki navigation", "blocker": "", "done": false } },
-        { "id": "t20", "values": { "title": "Cover missing wiki-link targets", "status": "doing", "priority": "medium", "due": "2026-09-07", "project": "Wiki navigation", "blocker": "", "done": false } },
-        { "id": "t21", "values": { "title": "Style wiki-links in preview", "status": "done", "priority": "medium", "due": "2026-08-08", "project": "Wiki navigation", "blocker": "", "done": true } },
-
-        { "id": "t22", "values": { "title": "Keep the active tab visible in narrow splits", "status": "todo", "priority": "high", "due": "2026-09-02", "project": "Workspace polish", "blocker": "", "done": false } },
-        { "id": "t23", "values": { "title": "Align empty states across side panels", "status": "todo", "priority": "medium", "due": "2026-09-08", "project": "Workspace polish", "blocker": "", "done": false } },
-        { "id": "t24", "values": { "title": "Check long filenames in the tab strip", "status": "todo", "priority": "low", "due": "2026-09-16", "project": "Workspace polish", "blocker": "", "done": false } },
-
-        { "id": "t25", "values": { "title": "Write the trust-boundary FAQ", "status": "todo", "priority": "medium", "due": "2026-09-05", "project": "Plugin trust", "blocker": "", "done": false } },
-        { "id": "t26", "values": { "title": "Reduce the example plugin manifest", "status": "done", "priority": "high", "due": "2026-08-04", "project": "Plugin trust", "blocker": "", "done": true } }
+        {
+          "id": "t1",
+          "values": {
+            "title": "Draft the release checklist",
+            "status": "doing",
+            "priority": "high",
+            "due": "2026-08-21",
+            "project": "Release 0.5",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t2",
+          "values": {
+            "title": "Sign the Windows installer",
+            "status": "blocked",
+            "priority": "high",
+            "due": "2026-08-26",
+            "project": "Release 0.5",
+            "blocker": "Partner Center identity and signing certificate are not configured",
+            "done": false
+          }
+        },
+        {
+          "id": "t3",
+          "values": {
+            "title": "Write the upgrade notes",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-08-27",
+            "project": "Release 0.5",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t4",
+          "values": {
+            "title": "Cut the release branch",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-04",
+            "project": "Release 0.5",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t5",
+          "values": {
+            "title": "Audit dependency advisories",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-18",
+            "project": "Release 0.5",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t15",
+          "values": {
+            "title": "Verify the updater feed on a clean profile",
+            "status": "todo",
+            "priority": "high",
+            "due": "2026-09-01",
+            "project": "Release 0.5",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t6",
+          "values": {
+            "title": "Rewrite the onboarding note",
+            "status": "doing",
+            "priority": "medium",
+            "due": "2026-08-24",
+            "project": "Docs refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t7",
+          "values": {
+            "title": "Screenshot the canvas surface",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-12",
+            "project": "Docs refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t8",
+          "values": {
+            "title": "Document the plugin sandbox",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-21",
+            "project": "Docs refresh",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t9",
+          "values": {
+            "title": "Trim the getting-started page",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-19",
+            "project": "Docs refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t16",
+          "values": {
+            "title": "Record the keyboard navigation walkthrough",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-08-31",
+            "project": "Docs refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t10",
+          "values": {
+            "title": "Profile the search index",
+            "status": "doing",
+            "priority": "high",
+            "due": "2026-08-22",
+            "project": "Performance",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t11",
+          "values": {
+            "title": "Split the CodeMirror chunk",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-08-28",
+            "project": "Performance",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t12",
+          "values": {
+            "title": "Measure cold start on Windows ARM",
+            "status": "blocked",
+            "priority": "low",
+            "due": "2026-09-20",
+            "project": "Performance",
+            "blocker": "Waiting for access to Windows ARM test hardware",
+            "done": false
+          }
+        },
+        {
+          "id": "t17",
+          "values": {
+            "title": "Budget startup work by phase",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-10-02",
+            "project": "Performance",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t13",
+          "values": {
+            "title": "Add restore coverage",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-23",
+            "project": "Recovery",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t14",
+          "values": {
+            "title": "Set retention limits for the journal",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-11",
+            "project": "Recovery",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t18",
+          "values": {
+            "title": "Exercise conflict recovery from version history",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-13",
+            "project": "Recovery",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t19",
+          "values": {
+            "title": "Make wiki-links open their target note",
+            "status": "todo",
+            "priority": "high",
+            "due": "2026-08-20",
+            "project": "Wiki navigation",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t20",
+          "values": {
+            "title": "Cover missing wiki-link targets",
+            "status": "doing",
+            "priority": "medium",
+            "due": "2026-09-07",
+            "project": "Wiki navigation",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t21",
+          "values": {
+            "title": "Style wiki-links in preview",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-08",
+            "project": "Wiki navigation",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t22",
+          "values": {
+            "title": "Keep the active tab visible in narrow splits",
+            "status": "todo",
+            "priority": "high",
+            "due": "2026-09-02",
+            "project": "Workspace polish",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t23",
+          "values": {
+            "title": "Align empty states across side panels",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-08",
+            "project": "Workspace polish",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t24",
+          "values": {
+            "title": "Check long filenames in the tab strip",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-16",
+            "project": "Workspace polish",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t25",
+          "values": {
+            "title": "Write the trust-boundary FAQ",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-05",
+            "project": "Plugin trust",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t26",
+          "values": {
+            "title": "Reduce the example plugin manifest",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-04",
+            "project": "Plugin trust",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "tmt6t6v1y",
+          "values": {
+            "title": "Please do this",
+            "project": "Release 0.5",
+            "priority": "medium",
+            "status": "todo",
+            "due": "",
+            "done": false
+          }
+        },
+        {
+          "id": "tmt6t7vyh",
+          "values": {
+            "title": "Take a look at my project neuron",
+            "project": "Release 0.5",
+            "priority": "medium",
+            "status": "todo",
+            "due": "",
+            "done": false
+          }
+        }
       ]
     },
     "projects": {
       "name": "Projects",
       "schema": {
-        "order": ["name", "status", "owner", "target"],
+        "order": [
+          "name",
+          "status",
+          "owner",
+          "target"
+        ],
         "properties": {
-          "name": { "name": "Project", "type": "text" },
+          "name": {
+            "name": "Project",
+            "type": "text"
+          },
           "status": {
             "name": "Status",
             "type": "select",
             "options": [
-              { "id": "active", "name": "Active", "color": "#528fd1" },
-              { "id": "paused", "name": "Paused", "color": "#8b8b8b" },
-              { "id": "shipped", "name": "Shipped", "color": "#5aa06c" }
+              {
+                "id": "active",
+                "name": "Active",
+                "color": "#528fd1"
+              },
+              {
+                "id": "paused",
+                "name": "Paused",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "shipped",
+                "name": "Shipped",
+                "color": "#5aa06c"
+              }
             ]
           },
-          "owner": { "name": "Owner", "type": "text" },
-          "target": { "name": "Target", "type": "date" }
+          "owner": {
+            "name": "Owner",
+            "type": "text"
+          },
+          "target": {
+            "name": "Target",
+            "type": "date"
+          }
         }
       },
       "rows": [
-        { "id": "p1", "values": { "name": "Release 0.5", "status": "active", "owner": "Shivam", "target": "2026-09-15" } },
-        { "id": "p2", "values": { "name": "Docs refresh", "status": "active", "owner": "Shivam", "target": "2026-09-30" } },
-        { "id": "p3", "values": { "name": "Performance", "status": "paused", "owner": "Shivam", "target": "2026-10-14" } },
-        { "id": "p4", "values": { "name": "Recovery", "status": "active", "owner": "Shivam", "target": "2026-08-15" } },
-        { "id": "p5", "values": { "name": "Wiki navigation", "status": "active", "owner": "Shivam", "target": "2026-09-18" } },
-        { "id": "p6", "values": { "name": "Workspace polish", "status": "active", "owner": "Shivam", "target": "2026-09-22" } },
-        { "id": "p7", "values": { "name": "Plugin trust", "status": "active", "owner": "Shivam", "target": "2026-09-25" } }
+        {
+          "id": "p1",
+          "values": {
+            "name": "Release 0.5",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-15"
+          }
+        },
+        {
+          "id": "p2",
+          "values": {
+            "name": "Docs refresh",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-30"
+          }
+        },
+        {
+          "id": "p3",
+          "values": {
+            "name": "Performance",
+            "status": "paused",
+            "owner": "Shivam",
+            "target": "2026-10-14"
+          }
+        },
+        {
+          "id": "p4",
+          "values": {
+            "name": "Recovery",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-08-15"
+          }
+        },
+        {
+          "id": "p5",
+          "values": {
+            "name": "Wiki navigation",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-18"
+          }
+        },
+        {
+          "id": "p6",
+          "values": {
+            "name": "Workspace polish",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-22"
+          }
+        },
+        {
+          "id": "p7",
+          "values": {
+            "name": "Plugin trust",
+            "status": "active",
+            "owner": "Shivam",
+            "target": "2026-09-25"
+          }
+        }
       ]
     }
   },
   "relations": [
-    { "from": { "table": "tasks", "property": "project" }, "to": { "table": "projects" } }
+    {
+      "from": {
+        "table": "tasks",
+        "property": "project"
+      },
+      "to": {
+        "table": "projects"
+      }
+    }
   ]
 }

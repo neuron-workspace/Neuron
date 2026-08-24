@@ -216,6 +216,10 @@ function createWindow() {
     killAllPtys();
     mainWindow = null;
   });
+  // ...and again on the way out, because 'closed' is not on every exit path.
+  // A shell that outlives the app is not a test problem: it is a process the
+  // user never sees and cannot stop.
+  app.once('before-quit', killAllPtys);
 
   setupWatcher();
 }
