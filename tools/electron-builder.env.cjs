@@ -53,7 +53,11 @@ module.exports = {
     // Partner Center value can never be present on one path and missing on the
     // other.
     applicationId: isTest ? 'NeuronTest' : base.appx.applicationId,
-    displayName: productName,
+    // NOT productName. Package/Properties/DisplayName must exactly match a name
+    // reserved in Partner Center, and the product's own name has no bearing on
+    // what that reservation says. Tying the two together is what got the first
+    // upload rejected: "uses a display name that you have not reserved".
+    displayName: isTest ? `${base.appx.displayName} Test` : base.appx.displayName,
     identityName: isTest ? `${base.appx.identityName}.Test` : base.appx.identityName,
   },
   portable: {

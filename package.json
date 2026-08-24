@@ -37,7 +37,8 @@
     "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast && npm run test:terminal-bus && npm run test:demo-data && npm run test:procs && npm run test:wikilinks",
     "shoot": "node tools/shoot.mjs",
     "test:procs": "node tools/procs.test.mjs",
-    "test:wikilinks": "node tools/wikilinks.test.mjs"
+    "test:wikilinks": "node tools/wikilinks.test.mjs",
+    "verify:appx": "node tools/verify-appx.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",
@@ -172,7 +173,7 @@
     },
     "appx": {
       "applicationId": "Neuron",
-      "displayName": "Neuron",
+      "displayName": "Neuron Desktop",
       "identityName": "ShivamKhetan.NeuronDesktop",
       "publisher": "CN=7632F1A5-D41D-4A68-802B-CBBC1A910C2A",
       "publisherDisplayName": "Shivam Khetan",
