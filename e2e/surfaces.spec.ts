@@ -15,6 +15,9 @@ test('canvas opens as a board, fitted to its content', async ({ page }) => {
   // without anyone pressing "Zoom to fit".
   const view = (await page.locator('[data-canvas-surface]').boundingBox())!;
   const cards = page.locator('[data-canvas-node]');
+  // count() takes one sample and does not retry, so it raced the file read and
+  // saw an empty board on a slower runner.
+  await expect(cards.first()).toBeVisible();
   const count = await cards.count();
   expect(count).toBeGreaterThan(0);
 

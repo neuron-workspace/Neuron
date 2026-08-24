@@ -12,7 +12,7 @@
 //
 // Nothing in the suite ever launched the artifact users download. This does.
 import { _electron as electron } from '@playwright/test';
-import { existsSync, mkdtempSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -20,6 +20,10 @@ import { fileURLToPath } from 'node:url';
 import { shutdown } from './procs.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const { build = {}, build: { productName = 'neuron' } = {} } = JSON.parse(
+  readFileSync(join(root, 'package.json'), 'utf-8'),
+);
 
 /**
  * The packaged executable, wherever this platform puts it.
@@ -52,9 +56,20 @@ function findExecutable(dir) {
     return exe ? join(dir, exe) : null;
   }
 
-  // Linux: no extension, so identify it by the executable bit and by not being
-  // one of the shipped shared objects or resource blobs.
+  // Linux: name the binary rather than hunting for it. electron-builder calls
+  // it `executableName`, which defaults to productName lowercased.
+  //
+  // The first version scanned for the executable bit and took the first hit.
+  // The directory also holds chrome-sandbox and chrome_crashpad_handler, which
+  // are executable, are extensionless like the app, and sort ahead of it -- so
+  // the scan launched chrome-sandbox, and Playwright reported only "Process
+  // failed to launch", naming nothing.
+  const named = join(dir, (build.executableName ?? productName).toLowerCase());
+  if (existsSync(named)) return named;
+
+  // Fall back to the scan, minus Electron's own helpers.
   const candidate = readdirSync(dir).find((f) => {
+    if (/^chrome[-_]/i.test(f)) return false;
     if (/\.(so|so\.\d+|pak|dat|bin|json|html|txt|md|desktop|png)$/i.test(f)) return false;
     const full = join(dir, f);
     try {
