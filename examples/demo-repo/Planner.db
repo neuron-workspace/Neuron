@@ -395,28 +395,6 @@
             "blocker": "",
             "done": true
           }
-        },
-        {
-          "id": "tmt6t6v1y",
-          "values": {
-            "title": "Please do this",
-            "project": "Release 0.5",
-            "priority": "medium",
-            "status": "todo",
-            "due": "",
-            "done": false
-          }
-        },
-        {
-          "id": "tmt6t7vyh",
-          "values": {
-            "title": "Take a look at my project neuron",
-            "project": "Release 0.5",
-            "priority": "medium",
-            "status": "todo",
-            "due": "",
-            "done": false
-          }
         }
       ]
     },
