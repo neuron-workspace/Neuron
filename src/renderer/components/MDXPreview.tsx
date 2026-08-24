@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
+import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
@@ -14,6 +15,8 @@ interface MDXPreviewProps {
   showProperties?: boolean;
   tagSuggestions?: string[];
   onTagClick?: (tag: string) => void;
+  notes?: string[];
+  onWikiLinkClick?: (note: string) => void;
   defaultPropertiesCollapsed?: boolean;
 }
 
@@ -67,7 +70,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, onLineClick, showProperties = true, tagSuggestions = [], onTagClick, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
+export default function MDXPreview({ mdxContent, onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
   const [renderedContent, setRenderedContent] = useState<React.ReactNode[]>([]);
   const [compilationError, setCompilationError] = useState<{
     message: string;
@@ -80,6 +83,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
   const fm = useMemo(() => parseFrontmatter(mdxContent), [mdxContent]);
   const fmLineOffset = fm.hasFrontmatter ? (mdxContent.slice(0, fm.bodyStart).match(/\n/g)?.length ?? 0) : 0;
   const lineClick = (index: number) => onLineClick?.(index + fmLineOffset);
+  const wikiNotes = useMemo(() => buildWikiIndex(notes), [notes]);
 
   useEffect(() => {
     setCompilationError(null);
@@ -108,7 +112,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         });
       }
     }
-  }, [fm.body]);
+  }, [fm.body, wikiNotes, onWikiLinkClick]);
 
   // Parsing helper to split and evaluate markdown vs custom components
   function parseMDX(content: string): React.ReactNode[] {
@@ -547,10 +551,33 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         parts.push(<code key={key++} className="rounded border border-[var(--divider)] bg-[var(--md-code-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--md-code)]">{item.slice(1, -1)}</code>);
       } else if (item.startsWith('[[') && item.endsWith(']]')) {
         const linkTarget = item.slice(2, -2);
+        const resolved = resolveWikiLink(wikiNotes, linkTarget);
         parts.push(
-          <span key={key++} className="font-medium text-[var(--md-link)] underline decoration-dotted underline-offset-4">
-            {linkTarget}
-          </span>
+          resolved ? (
+            <button
+              key={key++}
+              type="button"
+              aria-label={`Open note ${resolved}`}
+              title={`Open ${resolved}`}
+              className="cursor-pointer border-0 bg-transparent p-0 align-baseline font-[inherit] font-medium text-[var(--md-link)] underline decoration-solid underline-offset-4"
+              onClick={(event) => {
+                event.stopPropagation();
+                onWikiLinkClick?.(resolved);
+              }}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
+              {linkTarget}
+            </button>
+          ) : (
+            <span
+              key={key++}
+              title={`No note found for "${linkTarget}"`}
+              className="cursor-default font-medium text-[var(--md-text)] decoration-dotted underline-offset-4"
+              style={{ textDecorationLine: 'underline line-through' }}
+            >
+              {linkTarget}<span className="sr-only"> (missing note)</span>
+            </span>
+          )
         );
       } else if (/<[bB][rR]\s*\/?>/.test(item)) {
         parts.push(<br key={key++} />);

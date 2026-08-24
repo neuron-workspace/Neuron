@@ -5,12 +5,13 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import type { DecorationSet } from '@codemirror/view';
-import { StateField } from '@codemirror/state';
+import { StateEffect, StateField } from '@codemirror/state';
 import type { EditorState, Range } from '@codemirror/state';
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { Badge, Callout, parseSemanticType, MarkdownTable, parseMarkdownTable } from './mdx-components';
 import { Run } from './RunButton';
+import { buildWikiIndex, resolveWikiLink, type WikiIndex } from '../lib/wikilinks';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 
@@ -20,6 +21,8 @@ interface LiveEditorProps {
   colorScheme?: 'dark' | 'light';
   tagSuggestions?: string[];
   onTagClick?: (tag: string) => void;
+  notes?: string[];
+  onWikiLinkClick?: (note: string) => void;
   onRequestRawMode?: () => void; // escape hatch: edit frontmatter as YAML
   removeEmptyFrontmatter?: boolean;
   defaultPropertiesCollapsed?: boolean;
@@ -38,6 +41,13 @@ interface FmConfig {
   defaultCollapsed: boolean;
 }
 let fmConfig: FmConfig = { tagSuggestions: [], removeEmpty: true, defaultCollapsed: false };
+
+interface WikiConfig {
+  index: WikiIndex;
+  onOpen?: (note: string) => void;
+}
+let wikiConfig: WikiConfig = { index: buildWikiIndex([]) };
+const refreshWikiLinks = StateEffect.define<void>();
 
 // Replace ONLY the frontmatter block, leaving the body untouched so caret,
 // selection and undo history in the body survive. `next` is the full document
@@ -217,6 +227,51 @@ class TaskCheckboxWidget extends WidgetType {
       view.focus();
     });
     return checkbox;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+class WikiLinkWidget extends WidgetType {
+  constructor(
+    private readonly target: string,
+    private readonly note?: string,
+  ) {
+    super();
+  }
+
+  eq(other: WikiLinkWidget) {
+    return other.target === this.target && other.note === this.note;
+  }
+
+  toDOM() {
+    if (this.note) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'cm-lp-link';
+      button.textContent = this.target;
+      button.title = `Open ${this.note}`;
+      button.setAttribute('aria-label', `Open note ${this.note}`);
+      button.style.cssText = 'border:0;padding:0;background:transparent;font:inherit;cursor:pointer;text-decoration-style:solid';
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        wikiConfig.onOpen?.(this.note!);
+      });
+      return button;
+    }
+
+    const missing = document.createElement('span');
+    missing.textContent = this.target;
+    missing.title = `No note found for "${this.target}"`;
+    missing.style.cssText = 'color:var(--md-text);font-weight:500;cursor:default;text-decoration-line:underline line-through;text-decoration-style:dotted;text-underline-offset:.2em';
+    const explanation = document.createElement('span');
+    explanation.className = 'sr-only';
+    explanation.textContent = ' (missing note)';
+    missing.append(explanation);
+    return missing;
   }
 
   ignoreEvent() {
@@ -429,10 +484,15 @@ function buildDecorations(state: EditorState): DecorationSet {
       const from = line.from + wm.index;
       const to = from + wm[0].length;
       if (isOccupied(from, to)) continue;
-      ranges.push(Decoration.mark({ class: 'cm-lp-link' }).range(from + 2, to - 2));
+      const target = wm[1];
+      const resolved = resolveWikiLink(wikiConfig.index, target) ?? undefined;
       if (!caretInside(from, to)) {
-        ranges.push(Decoration.replace({}).range(from, from + 2));
-        ranges.push(Decoration.replace({}).range(to - 2, to));
+        ranges.push(Decoration.replace({ widget: new WikiLinkWidget(target, resolved) }).range(from, to));
+      } else {
+        ranges.push(Decoration.mark(resolved
+          ? { class: 'cm-lp-link' }
+          : { attributes: { title: `No note found for "${target}"`, style: 'text-decoration-line:underline line-through;text-decoration-style:dotted' } },
+        ).range(from + 2, to - 2));
       }
     }
   }
@@ -445,18 +505,20 @@ const liveEditorField = StateField.define<DecorationSet>({
     return buildDecorations(state);
   },
   update(deco, tr) {
-    if (tr.docChanged || tr.selection) return buildDecorations(tr.state);
+    if (tr.docChanged || tr.selection || tr.effects.some((effect) => effect.is(refreshWikiLinks))) return buildDecorations(tr.state);
     return deco.map(tr.changes);
   },
   provide: (field) => EditorView.decorations.from(field),
 });
 
-export default function LiveEditor({ value, onChange, colorScheme = 'dark', tagSuggestions = [], onTagClick, onRequestRawMode, removeEmptyFrontmatter = true, defaultPropertiesCollapsed = false }: LiveEditorProps) {
+export default function LiveEditor({ value, onChange, colorScheme = 'dark', tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onRequestRawMode, removeEmptyFrontmatter = true, defaultPropertiesCollapsed = false }: LiveEditorProps) {
   const editorRef = useRef<any>(null);
 
   // Keep the frontmatter widget's config current without re-creating editor
   // extensions (which would reset editor state).
   fmConfig = { tagSuggestions, onTagClick, onRequestRawMode, removeEmpty: removeEmptyFrontmatter, defaultCollapsed: defaultPropertiesCollapsed };
+  const wikiNotes = useMemo(() => buildWikiIndex(notes), [notes]);
+  wikiConfig = { index: wikiNotes, onOpen: onWikiLinkClick };
 
   const extensions = useMemo(
     () => [
@@ -466,6 +528,10 @@ export default function LiveEditor({ value, onChange, colorScheme = 'dark', tagS
     ],
     [],
   );
+
+  useEffect(() => {
+    editorRef.current?.view?.dispatch({ effects: refreshWikiLinks.of(undefined) });
+  }, [wikiNotes, onWikiLinkClick]);
 
   useEffect(() => {
     const handleResize = () => {
