@@ -99,4 +99,13 @@ for (const [label, expected] of Object.entries(counts)) {
   checked++;
 }
 
+// The workspace ships with a clean slate. Snake writes its high score into
+// variables.json for real, so playing the demo in place leaves a number behind
+// that a `git add -A` would carry into the repository -- the same way quick
+// capture once carried two invented tasks in. This is cheaper than remembering.
+const vars = JSON.parse(readFileSync(join(repo, '.neuron', 'variables.json'), 'utf-8'));
+assert.equal(vars.variables.snakeHighScore.value, 0,
+  'examples/demo-repo ships with a high score of 0 -- someone played Snake in the tracked '
+  + 'workspace. Reset it before committing.');
+
 console.log(`demo-data: ${rows.length} tasks, ${projects.rows.length} projects, ${checked} hand-typed stats match`);

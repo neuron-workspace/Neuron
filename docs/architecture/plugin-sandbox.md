@@ -167,16 +167,21 @@ API.
 
 ## Worked example
 
-`examples/demo-repo/plugins/recent-notes/` is a real installed plugin. It uses
-the bundled htmx runtime to request `/api/v1/notes?limit=12` and render a recent
-notes table. Its manifest requests only `notes.read` and limits the read policy
-to `**/*.md` and `**/*.mdx`. It requests no file-write, create, delete, search,
-tag, variable, terminal, AI, or network authority and contains no remote asset.
+`examples/demo-repo/Snake/` is a folder app on this path. Its manifest requests
+only `variables.read` and `variables.write`, with both `allowedReadPaths` and
+`allowedWritePaths` empty, so a document running arbitrary JavaScript in the
+sandbox cannot reach a single note -- the one thing it persists is a high score
+in a declared workspace variable. It requests no file, search, tag, terminal, AI
+or network authority and contains no remote asset.
 
-In the demo workspace, the Plugins page discovers the folder and opens
-`plugins/recent-notes/index.html`. The standard HTML surface then owns approval,
-session creation, rendering, and teardown. No main-process change is required
-for this minimal path.
+Neuron discovers the folder from its `neuron.app.json` and opens
+`Snake/index.html`. The standard HTML surface then owns approval, session
+creation, rendering, and teardown. No main-process change is required for this
+minimal path.
+
+The demo workspace previously carried a `plugins/recent-notes/` example on the
+same path; it was removed when the workspace was made generic, and Snake covers
+the same ground with a tighter manifest.
 
 ## Explicit non-solutions and follow-up work
 

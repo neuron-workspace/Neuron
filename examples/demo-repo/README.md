@@ -18,7 +18,6 @@ Then start at **getting-started** in the sidebar and follow the links.
 | projects/ | Project notes with frontmatter, matching the projects in `Planner.db` |
 | daily/ | A dated journal entry |
 | properties/ | Frontmatter examples, including one with deliberately invalid YAML |
-| plugins/ | A least-privilege HTML plugin |
 | .neuron/ | Workspace config: layout, variables, view manifests, templates, fragments |
 
 ## The showcase files
@@ -31,7 +30,6 @@ Then start at **getting-started** in the sidebar and follow the links.
 | Planner.db | A multi-table database with table, board, and card layouts |
 | Idea board.canvas | A JSON Canvas spatial board with groups and labelled connections |
 | Snake/ | A folder mini-app — a game that asks for two capabilities and no file access |
-| Launch board/ | A folder mini-app built on htmx, with no JavaScript of its own |
 
 ## The guides
 
@@ -43,7 +41,7 @@ Then start at **getting-started** in the sidebar and follow the links.
 | guides/wikilinks-and-tags | `[[wikilinks]]`, the graph, and `#tags` |
 | guides/sections-and-workspaces | Folders, nesting, and workspaces |
 | guides/plugins-and-ai | Enabling Claude, a local model, and Daily Notes |
-| guides/monitoring-runbook | A small runbook the daily note works through |
+| guides/weekly-review | A short, repeatable pass over the work |
 
 ## Try these
 
