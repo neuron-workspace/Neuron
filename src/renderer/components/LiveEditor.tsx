@@ -10,6 +10,7 @@ import type { EditorState, Range } from '@codemirror/state';
 import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { Badge, Callout, parseSemanticType, MarkdownTable, parseMarkdownTable } from './mdx-components';
+import { Run } from './RunButton';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 
@@ -302,6 +303,28 @@ function buildDecorations(state: EditorState): DecorationSet {
     const node = <Badge text={t[1]} type={parseSemanticType(bm[0].match(/type="([^"]*)"/)?.[1])} />;
     if (!caretInside(start, end)) {
       ranges.push(Decoration.replace({ widget: new ReactWidget(bm[0], node, false, start, end) }).range(start, end));
+    }
+  }
+
+  // Inline Run: the one component that does something when clicked, so leaving
+  // it as raw text in the editor would make the editing view the only place its
+  // behaviour is invisible.
+  const runRe = /<Run\b[^>]*\/>/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = runRe.exec(text)) !== null) {
+    const start = rm.index;
+    const end = start + rm[0].length;
+    if (isOccupied(start, end)) continue;
+    occupied.push({ from: start, to: end });
+    const node = (
+      <Run
+        cmd={rm[0].match(/cmd="([^"]*)"/)?.[1]}
+        label={rm[0].match(/label="([^"]*)"/)?.[1]}
+        tone={rm[0].match(/tone="([^"]*)"/)?.[1]}
+      />
+    );
+    if (!caretInside(start, end)) {
+      ranges.push(Decoration.replace({ widget: new ReactWidget(rm[0], node, false, start, end) }).range(start, end));
     }
   }
 

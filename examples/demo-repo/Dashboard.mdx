@@ -3,42 +3,119 @@ title: Dashboard
 type: dashboard
 tags:
   - planner
+  - weekly-review
 ---
 
-# Today
+# Planner
 
-<Grid cols="4" gap="sm">
-<Stat label="Priority" value="3" tone="accent" />
-<Stat label="Overdue" value="2" tone="danger" />
-<Stat label="Blocked" value="2" />
-<Stat label="Done this week" value="3" tone="positive" />
+<Callout type="info" title="Snapshot, not a formula">
+The metric strip is checked against `Planner.db` as of today. The live tables
+below remain the source of truth when the plan changes.
+</Callout>
+
+<Grid cols="5" gap="sm">
+<Cell cols="1"><Stat label="Open" value="20" tone="plain" /></Cell>
+<Cell cols="1"><Stat label="Overdue" value="3" tone="danger" /></Cell>
+<Cell cols="1"><Stat label="Due this week" value="5" tone="accent" /></Cell>
+<Cell cols="1"><Stat label="Blocked" value="2" tone="surface" /></Cell>
+<Cell cols="1"><Stat label="Done" value="6" tone="positive" /></Cell>
 </Grid>
 
 <Divider label="Focus" />
 
-<Row gap="md" align="stretch">
+<Row gap="lg" align="stretch">
+<Col gap="md">
+<Card title="Move today" tone="accent">
 
-<Card title="Today" tone="accent">
-
-- [ ] Draft the release checklist — past due
-- [ ] Profile the search index — past due
 - [ ] Rewrite the onboarding note
-- [x] Add restore coverage
+- [ ] Draft the release checklist
+- [ ] Make wiki-links open their target note
+- [ ] Write the upgrade notes
+
+Start with [[Release 0.5]], then hand the documentation thread back to
+[[Docs refresh]].
+
+</Card>
+<Card title="Waiting on" tone="danger">
+
+- **Sign the Windows installer** — Partner Center identity and the signing certificate
+- **Measure cold start on Windows ARM** — access to suitable test hardware
+
+</Card>
+</Col>
+
+<Col gap="md">
+<Card title="Project pulse">
+
+| Project | State | Next move |
+| --- | --- | --- |
+| [[Release 0.5]] | active | unblock signing |
+| [[Docs refresh]] | active | finish onboarding |
+| [[Performance]] | paused | keep measurements queued |
+| [[Recovery]] | past target | settle retention |
+| [[Wiki navigation]] | active | make links navigable |
+
+</Card>
+</Col>
+</Row>
+
+<Divider label="Run" />
+
+<Row gap="sm" wrap="true">
+
+<Card title="Editor" pad="sm">
+
+<Run label="Open this workspace in VS Code" cmd="code ." tone="accent" />
+
+<Run label="Start a Claude session" cmd="claude" />
 
 </Card>
 
-<Card title="Blocked">
+<Card title="Checks" pad="sm">
 
-- **Store submission** — Partner Center identity is still a placeholder
-- **Signing** — no Authenticode or Developer ID yet
+<Run label="Run the tests" cmd="npm test" />
+
+<Run label="What changed" cmd="git status --short" />
 
 </Card>
 
 </Row>
 
-<Divider label="Work" />
+<Callout type="warning" title="What a Run button is, and is not">
+Each button sends one command to the workspace terminal, opening it if it is
+closed. The command is printed on the button because that is the security
+design, not decoration: the label is what the note's author claims, the command
+is what actually happens, and a note can arrive by clone or by sync. Read the
+command, not the label. A command may only be one line — a second line could
+run something the button never showed you, so those are refused outright.
+</Callout>
 
-<Grid gap="md">
+<Divider label="Weekly review" />
+
+<Card title="Review the shape of the work">
+<Grid cols="2" gap="md">
+<Cell cols="1">
+<Card title="What changed" tone="positive">
+
+- [x] Restore coverage landed
+- [x] The plugin sandbox is documented
+- [x] Dependency advisories were audited
+
+</Card>
+</Cell>
+<Cell cols="1">
+<Card title="Questions for Friday" tone="surface">
+
+- Does [[Recovery]] need a new target?
+- Is [[Performance]] still intentionally paused?
+- Which workspace polish item should follow the release?
+
+</Card>
+</Cell>
+</Grid>
+</Card>
+
+<Divider label="Live data" />
 
 <Card title="Tasks">
 <DbView path="@Planner.db" table="tasks" />
@@ -48,9 +125,7 @@ tags:
 <DbView path="@Planner.db" table="projects" />
 </Card>
 
-</Grid>
-
-<Divider label="Review" />
+<Divider label="About" />
 
 <Callout type="warning" title="Not built yet">
 
@@ -71,8 +146,9 @@ placeholder and says so rather than showing three empty cards.
 
 <Callout type="info" title="How this page is built">
 Everything above is ordinary Markdown plus layout components — `Grid`, `Row`,
-`Col`, `Card`, `Stat`, `Divider` — and a live `DbView` reading `Planner.db`.
-The file stays plain MDX on disk, so it is readable and editable without Neuron.
+`Col`, `Cell`, `Card`, `Stat`, `Divider` — a live `DbView` reading `Planner.db`,
+and `Run` buttons wired to the terminal. The file stays plain MDX on disk, so it
+is readable and editable without Neuron.
 
 The counts at the top are typed by hand, like anything else in a note. For a
 dashboard that computes — overdue against today's date, a board grouped by

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
+import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
@@ -350,6 +351,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         Cell: (a, k) => <Cell {...a}>{k}</Cell>,
         Card: (a, k) => <Card {...a}>{k}</Card>,
         Stat: (a) => <Stat {...a} />,
+        Run: (a) => <Run {...a} />,
         Divider: (a) => <Divider {...a} />,
       };
       const layoutMatch = jsxStr.match(/^<([A-Z][A-Za-z0-9]*)\b/);
@@ -396,7 +398,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
 
       const err = new Error(`Component "<${tagName} />" is not registered in Neuron.`) as MDXParseError;
       err.block = jsxStr;
-      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge />, <Callout />, and <DbView />.`;
+      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge />, <Callout />, <Run />, and <DbView />.`;
       throw err;
 
     } catch (caughtError: unknown) {
