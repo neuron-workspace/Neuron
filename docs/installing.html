@@ -9,9 +9,12 @@
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <title>Installing Neuron</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet" />
+    <!-- Self-hosted. This page tells visitors Neuron makes no network calls;
+         fetching its own fonts from Google would contradict that on the very
+         page making the claim. Regenerate with `node tools/fonts.mjs`. -->
+    <link rel="preload" href="./fonts/source-serif-4-400-3.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./fonts/archivo-400-0.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="./fonts.css" />
 
     <style>
       :root {
@@ -78,9 +81,7 @@
       }
       .nav-in { display: flex; align-items: center; height: 60px; gap: 1rem; max-width: 1120px; }
       .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 600; font-size: 16px; letter-spacing: -0.02em; text-decoration: none; color: var(--ink); }
-      .brand-mark { width: 22px; height: 22px; display: grid; grid-template: repeat(3,1fr)/repeat(3,1fr); gap: 2px; }
-      .brand-mark i { background: var(--ink); border-radius: 1px; }
-      .brand-mark i:nth-child(2n) { opacity: 0.35; }
+      .brand-mark { width: 22px; height: 22px; display: block; color: var(--ink); flex: none; }
       .nav-in .back { margin-left: auto; font-size: 14px; color: var(--ink-2); text-decoration: none; }
       .nav-in .back:hover { color: var(--ink); }
 
@@ -224,7 +225,16 @@
     <header class="nav">
       <div class="wrap nav-in">
         <a class="brand" href="./">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+            <rect width="512" height="512" rx="112" fill="currentColor" />
+            <g transform="translate(256,256)" fill="#ffffff">
+              <polygon points="-24,-136 24,-136 16,6 -16,6" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(72)" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(144)" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(216)" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(288)" />
+            </g>
+          </svg>
           Neuron
         </a>
         <a class="back" href="./">← All downloads</a>
@@ -384,8 +394,12 @@ gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo sh
 
     <script>
       const params = new URLSearchParams(location.search);
-      const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : 'shiv-khetan';
-      const repository = location.pathname.split('/').filter(Boolean)[0] || 'Neuron';
+      const safeName = (value, fallback) =>
+        (/^[A-Za-z0-9._-]{1,100}$/.test(value ?? '') ? value : fallback);
+      const owner = location.hostname.endsWith('.github.io')
+        ? safeName(location.hostname.split('.')[0], 'shiv-khetan')
+        : 'shiv-khetan';
+      const repository = safeName(location.pathname.split('/').filter(Boolean)[0], 'Neuron');
       const base = `https://github.com/${owner}/${repository}`;
       document.querySelectorAll('[data-issues]').forEach((a) => { a.href = `${base}/issues`; });
 

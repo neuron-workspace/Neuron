@@ -12,9 +12,12 @@
     <meta property="og:description" content="Notes as plain files. Databases, canvases and sandboxed views on top. No account, no telemetry." />
     <meta property="og:type" content="website" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet" />
+    <!-- Self-hosted. This page tells visitors Neuron makes no network calls;
+         fetching its own fonts from Google would contradict that on the very
+         page making the claim. Regenerate with `node tools/fonts.mjs`. -->
+    <link rel="preload" href="./fonts/source-serif-4-400-3.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./fonts/archivo-400-0.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="./fonts.css" />
 
     <style>
       /* ===================================================================
@@ -146,19 +149,7 @@
         text-decoration: none;
         margin-right: 0.5rem;
       }
-      .brand-mark {
-        width: 22px;
-        height: 22px;
-        display: grid;
-        grid-template: repeat(3, 1fr) / repeat(3, 1fr);
-        gap: 2px;
-      }
-      .brand-mark i {
-        background: var(--ink);
-        border-radius: 1px;
-      }
-      .brand-mark i:nth-child(2), .brand-mark i:nth-child(4),
-      .brand-mark i:nth-child(6), .brand-mark i:nth-child(8) { opacity: 0.35; }
+      .brand-mark { width: 22px; height: 22px; display: block; color: var(--ink); flex: none; }
 
       .nav-links { display: flex; gap: 1.5rem; font-size: 14px; }
       .nav-links a { text-decoration: none; color: var(--ink-2); }
@@ -281,66 +272,21 @@
         pointer-events: none;
       }
 
-      /* --- app window mock -------------------------------------------------- */
-      .mock {
+      /* --- hero screenshot ---------------------------------------------- */
+      /* A real capture of the app, produced by tools/shoot.mjs against the
+         demo workspace. A drawn approximation here is a promise the product
+         then has to keep. */
+      .shot {
+        margin: 0;
         position: relative;
         z-index: var(--z-raised);
-        width: min(100%, 620px);
-        background: #ffffff;
+        width: min(100%, 900px);
         border-radius: 8px;
-        box-shadow: 0 30px 60px -20px rgba(6, 20, 70, 0.45), 0 2px 8px rgba(6, 20, 70, 0.18);
         overflow: hidden;
-        text-align: left;
+        background: var(--paper);
+        box-shadow: 0 30px 60px -20px rgba(6, 20, 70, 0.5), 0 2px 10px rgba(6, 20, 70, 0.2);
       }
-      .mock-bar {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.55rem 0.8rem;
-        border-bottom: 1px solid var(--line);
-        font-size: 11px;
-        color: var(--ink-3);
-      }
-      .mock-bar .dots { display: flex; gap: 5px; }
-      .mock-bar .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
-      .mock-body { display: grid; grid-template-columns: 132px 1fr; min-height: 220px; }
-      .mock-side { border-right: 1px solid var(--line); padding: 0.7rem 0.6rem; background: var(--paper-2); }
-      .mock-side .row {
-        font-size: 11px;
-        color: var(--ink-3);
-        padding: 0.3rem 0.45rem;
-        border-radius: 3px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .mock-side .row.on { background: #fff; color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-      .mock-main { padding: 1rem 1.1rem; }
-      .mock-h { font-family: "Source Serif 4", serif; font-size: 18px; letter-spacing: -0.02em; }
-      .mock-meta { font-size: 10.5px; color: var(--ink-3); margin-top: 0.15rem; }
-      .mock-lines { margin-top: 0.9rem; display: grid; gap: 0.42rem; }
-      .mock-lines i { display: block; height: 7px; border-radius: 2px; background: var(--paper-3); }
-      .mock-lines i:nth-child(2) { width: 92%; }
-      .mock-lines i:nth-child(3) { width: 74%; }
-      .mock-lines i.blue { background: color-mix(in srgb, var(--blue) 28%, var(--paper-3)); width: 38%; }
-      .mock-type {
-        margin-top: 0.9rem;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 11.5px;
-        color: var(--ink-2);
-        min-height: 1.2em;
-      }
-      .caret {
-        display: inline-block;
-        width: 6px;
-        height: 1em;
-        background: var(--blue);
-        vertical-align: -2px;
-        animation: blink 1.05s steps(2, start) infinite;
-      }
-      @keyframes blink { to { visibility: hidden; } }
-      @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
-      @media (max-width: 560px) { .mock-body { grid-template-columns: 1fr; } .mock-side { display: none; } }
+      .shot img { display: block; width: 100%; height: auto; }
 
       /* --- format strip (the honest analogue of a logo wall) ---------------- */
       .formats {
@@ -526,7 +472,16 @@
     <header class="nav">
       <div class="wrap nav-in">
         <a class="brand" href="#top">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+            <rect width="512" height="512" rx="112" fill="currentColor" />
+            <g transform="translate(256,256)" fill="#ffffff">
+              <polygon points="-24,-136 24,-136 16,6 -16,6" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(72)" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(144)" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(216)" />
+              <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(288)" />
+            </g>
+          </svg>
           Neuron
         </a>
         <nav class="nav-links" aria-label="Sections">
@@ -566,30 +521,12 @@
           <p class="hero-note rise rise-4">Free forever. No telemetry, no sign-in, no cloud round-trip.</p>
 
           <div class="panel rise rise-4">
-            <div class="mock">
-              <div class="mock-bar">
-                <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
-                <span>research —  notes/architecture.mdx</span>
-              </div>
-              <div class="mock-body">
-                <div class="mock-side" aria-hidden="true">
-                  <div class="row">daily/</div>
-                  <div class="row">projects/</div>
-                  <div class="row on">architecture.mdx</div>
-                  <div class="row">Planner.db</div>
-                  <div class="row">Idea board.canvas</div>
-                  <div class="row">Dashboard.mdx</div>
-                </div>
-                <div class="mock-main">
-                  <div class="mock-h">Architecture</div>
-                  <div class="mock-meta">Edited just now · saved locally</div>
-                  <div class="mock-lines" aria-hidden="true">
-                    <i></i><i></i><i class="blue"></i><i></i>
-                  </div>
-                  <div class="mock-type"><span id="typeline"></span><span class="caret" aria-hidden="true"></span></div>
-                </div>
-              </div>
-            </div>
+            <figure class="shot">
+              <img
+                src="./screenshots/workspace-light.png"
+                width="1803" height="1020" loading="eager" decoding="async"
+                alt="Neuron in light theme: a file tree on the left, a Dashboard note open in reading view showing a five-metric strip and a focus card built from layout components." />
+            </figure>
           </div>
         </div>
       </section>
@@ -793,15 +730,31 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
 
     <script>
       // --- repository links -----------------------------------------------
-      const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : 'shiv-khetan';
-      const repository = location.pathname.split('/').filter(Boolean)[0] || 'Neuron';
+      //
+      // Both of these come out of location, so both are constrained to the
+      // characters GitHub actually allows in a name before they are used to
+      // build a URL or reach markup. A path segment is not attacker-controlled
+      // on Pages today, but "not reachable today" is a poor thing to rest an
+      // injection on.
+      const safeName = (value, fallback) =>
+        (/^[A-Za-z0-9._-]{1,100}$/.test(value ?? '') ? value : fallback);
+
+      const owner = location.hostname.endsWith('.github.io')
+        ? safeName(location.hostname.split('.')[0], 'shiv-khetan')
+        : 'shiv-khetan';
+      const repository = safeName(location.pathname.split('/').filter(Boolean)[0], 'Neuron');
       const base = `https://github.com/${owner}/${repository}`;
+
+      // Everything below builds markup from GitHub API values. Only the repo
+      // owner can publish a release, so this is hygiene rather than a hole --
+      // but an asset filename is still a string from a server, and strings
+      // from servers do not belong in innerHTML unescaped.
+      const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       document.querySelectorAll('[data-repository]').forEach((a) => { a.href = base; });
       document.querySelectorAll('[data-issues]').forEach((a) => { a.href = `${base}/issues`; });
       document.querySelectorAll('[data-latest]').forEach((a) => { a.href = `${base}/releases/latest`; });
       document.querySelectorAll('[data-releases]').forEach((a) => { a.href = `${base}/releases`; });
-
-      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
       // --- platform -----------------------------------------------------------
       const ua = navigator.userAgent;
@@ -841,8 +794,8 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
 
           if (version) document.getElementById('strip-version').textContent = version.replace(/^v/, '');
           document.getElementById('dl-meta').innerHTML =
-            `<span class="chip">${version}</span>released ${date}` +
-            (downloads ? ` · ${downloads.toLocaleString()} downloads` : '');
+            `<span class="chip">${esc(version)}</span>released ${esc(date)}` +
+            (downloads ? ` · ${esc(downloads.toLocaleString())} downloads` : '');
 
           const byOS = { windows: [], mac: [], linux: [] };
           for (const asset of release.assets || []) {
@@ -854,13 +807,13 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
             const box = document.getElementById(`dl-${os}`);
             if (!box) continue;
             if (!byOS[os].length) {
-              box.innerHTML = `<p class="empty">No ${OS_LABEL[os]} build in this release. <a href="${base}/releases" style="color:var(--blue)">All releases</a></p>`;
+              box.innerHTML = `<p class="empty">No ${esc(OS_LABEL[os])} build in this release. <a href="${esc(base)}/releases" style="color:var(--blue)">All releases</a></p>`;
               continue;
             }
             box.innerHTML = byOS[os].map((a) => `
-              <a class="asset" href="${installHref(a, os)}">
-                <span class="asset-name">${a.name}</span>
-                <span class="asset-size">${fmtBytes(a.size)}</span>
+              <a class="asset" href="${esc(installHref(a, os))}">
+                <span class="asset-name">${esc(a.name)}</span>
+                <span class="asset-size">${esc(fmtBytes(a.size))}</span>
                 ${dlIcon}
               </a>`).join('');
           }
@@ -882,28 +835,10 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
         .catch(() => {
           document.getElementById('dl-meta').textContent = 'Could not reach the GitHub API — downloads are on the Releases page.';
           document.querySelectorAll('.assets').forEach((box) => {
-            box.innerHTML = `<a class="asset" href="${base}/releases"><span class="asset-name">Open the Releases page</span>${dlIcon}</a>`;
+            box.innerHTML = `<a class="asset" href="${esc(base)}/releases"><span class="asset-name">Open the Releases page</span>${dlIcon}</a>`;
           });
         });
 
-      // --- typewriter in the mock ------------------------------------------------
-      const typeline = document.getElementById('typeline');
-      const PHRASES = ['Plain files. Zero lock-in.', 'Boards from .canvas files.', 'Tables from .db files.', 'Dashboards from .html views.'];
-      if (reduced) {
-        typeline.textContent = PHRASES[0];
-      } else {
-        let i = 0, pos = 0, deleting = false;
-        const step = () => {
-          const text = PHRASES[i];
-          pos += deleting ? -1 : 1;
-          typeline.textContent = text.slice(0, pos);
-          let delay = deleting ? 28 : 52;
-          if (!deleting && pos === text.length) { delay = 2100; deleting = true; }
-          if (deleting && pos === 0) { deleting = false; i = (i + 1) % PHRASES.length; delay = 350; }
-          setTimeout(step, delay);
-        };
-        setTimeout(step, 800);
-      }
     </script>
   </body>
 </html>
