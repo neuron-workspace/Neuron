@@ -1,19 +1,40 @@
-import { useMemo } from 'react';
-import { LayoutDashboard } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { LayoutDashboard, RotateCcw, X } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { SurfaceProps } from './index';
 import { parseLayout, type LayoutChild, type LayoutGroup } from './layout';
 import { getPanel, type PanelContext } from './panels';
 
-function PanelBody({ spec, surface }: PanelContext) {
+function PanelBody({ spec, surface, onClose, label }: PanelContext & { onClose: () => void; label: string }) {
   const Renderer = getPanel(spec.type);
   if (!Renderer) {
     return <div className="grid h-full place-items-center px-4 text-center text-xs text-[var(--ink-muted)]">Unknown panel type "{spec.type}".</div>;
   }
-  return <Renderer spec={spec} surface={surface} />;
+  return (
+    <div className="group/panel relative h-full min-h-0">
+      <Renderer spec={spec} surface={surface} />
+      {/* Revealed on hover and on keyboard focus. Always-visible chrome on every
+          panel would cost more than the control is worth, but focus-visible
+          keeps it reachable without a mouse. */}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label={`Close ${label} panel`}
+        className="interactive absolute right-1.5 top-1.5 z-30 grid h-6 w-6 place-items-center rounded-md bg-[var(--surface)]/85 text-[var(--ink-muted)] opacity-0 backdrop-blur-sm transition-opacity duration-150 hover:bg-[var(--surface-hover)] hover:text-[var(--ink)] focus-visible:opacity-100 group-hover/panel:opacity-100"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
 }
 
-function renderGroup(group: LayoutGroup, surface: SurfaceProps, key: string) {
+function renderGroup(
+  group: LayoutGroup,
+  surface: SurfaceProps,
+  key: string,
+  hidden: Set<string>,
+  hide: (id: string) => void,
+) {
   const handleClass = group.direction === 'horizontal' ? 'resize-handle resize-handle-v' : 'resize-handle resize-handle-h';
   return (
     <PanelGroup
@@ -21,24 +42,33 @@ function renderGroup(group: LayoutGroup, surface: SurfaceProps, key: string) {
       autoSaveId={`neuron.config.${key}`}
       className={group.direction === 'horizontal' ? 'flex min-h-0' : 'flex min-h-0 flex-col'}
     >
-      {group.children.map((child: LayoutChild, i) => {
-        const childKey = `${key}.${i}`;
-        return (
+      {group.children
+        .map((child: LayoutChild, i) => ({ child, childKey: `${key}.${i}`, i }))
+        // A hidden panel is dropped from the tree rather than sized to zero, so
+        // its siblings actually reclaim the space instead of butting against a
+        // collapsed strip.
+        .filter(({ childKey }) => !hidden.has(childKey))
+        .map(({ child, childKey, i }) => (
           <Panel key={childKey} id={childKey} order={i + 1} defaultSize={child.size} minSize={8} className="min-h-0 min-w-0">
             {child.group
-              ? renderGroup(child.group, surface, childKey)
+              ? renderGroup(child.group, surface, childKey, hidden, hide)
               : child.panel
-                ? <PanelBody spec={child.panel} surface={surface} />
+                ? <PanelBody spec={child.panel} surface={surface} onClose={() => hide(childKey)} label={child.panel.type} />
                 : null}
           </Panel>
-        );
-      }).flatMap((node, i) => (i === 0 ? [node] : [<PanelResizeHandle key={`h-${key}-${i}`} className={handleClass} />, node]))}
+        ))
+        .flatMap((node, i) => (i === 0 ? [node] : [<PanelResizeHandle key={`h-${key}-${i}`} className={handleClass} />, node]))}
     </PanelGroup>
   );
 }
 
 export function LayoutSurface(props: SurfaceProps) {
   const group = useMemo(() => parseLayout(props.content), [props.content]);
+  // Session-scoped on purpose: .neuron/layout.json is the user's own file and a
+  // click on a close button should not rewrite it. Reopening the workspace
+  // brings the declared layout back.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const hide = (id: string) => setHidden((prev) => new Set(prev).add(id));
 
   if (!group) {
     return (
@@ -49,7 +79,23 @@ export function LayoutSurface(props: SurfaceProps) {
     );
   }
 
-  return <div className="h-full w-full">{renderGroup(group, props, '0')}</div>;
+  return (
+    <div className="relative h-full w-full">
+      {renderGroup(group, props, '0', hidden, hide)}
+      {/* Closing must not be one-way. Without this, hiding the terminal would
+          mean editing .neuron/layout.json by hand to get it back. */}
+      {hidden.size > 0 && (
+        <button
+          type="button"
+          onClick={() => setHidden(new Set())}
+          className="interactive absolute bottom-3 right-3 z-30 flex items-center gap-1.5 rounded-md border divider-color bg-[var(--surface)] px-2.5 py-1 text-[11px] text-[var(--ink-secondary)] shadow-lg hover:text-[var(--ink)]"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Restore {hidden.size} panel{hidden.size === 1 ? '' : 's'}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default LayoutSurface;
