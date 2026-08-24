@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
   createSection: (relativePath: string) => ipcRenderer.invoke('notes:create-section', relativePath),
+  journal: {
+    list: (relativePath?: string) => ipcRenderer.invoke('journal:list', relativePath),
+    restore: (entryId: string) => ipcRenderer.invoke('journal:restore', entryId),
+  },
   getNotesDirectory: () => ipcRenderer.invoke('notes:get-dir'),
   logError: (errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) =>
     ipcRenderer.invoke('notes:log-error', errorData),
@@ -53,6 +57,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+    // Write-only by design: a secret can be stored and its presence checked,
+    // never read back into the renderer.
+    setSecret: (scope: string, field: string, value: string) => ipcRenderer.invoke('settings:set-secret', scope, field, value),
+    hasSecret: (scope: string, field: string) => ipcRenderer.invoke('settings:has-secret', scope, field),
   },
 
   // Privileged plugin capabilities

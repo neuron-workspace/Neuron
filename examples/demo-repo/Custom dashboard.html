@@ -1,0 +1,503 @@
+<style>
+  /* Scoped to this document. Palette is defined once, with a light variant, so
+     the poster look survives a theme switch instead of going unreadable — the
+     served kit is token-driven and these bold flats are deliberately not. */
+  .pb {
+    --ink: #0d0d0d;
+    --paper: #12100e;
+    --amber: #e8a54b;
+    --clay: #b8503c;
+    --moss: #7f9a6d;
+    --steel: #b9b9b4;
+    --rule: rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    .pb { --paper: #e9e7e1; --rule: rgba(0, 0, 0, .28); }
+  }
+
+  .pb { background: var(--paper); padding: 1rem; min-height: 100vh; }
+  .pb * { box-sizing: border-box; }
+
+  .pb .pb-grid {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) 2.2fr;
+    gap: .75rem;
+  }
+  .pb .pb-sub { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  @media (max-width: 720px) {
+    .pb .pb-grid, .pb .pb-sub { grid-template-columns: 1fr; }
+  }
+
+  .pb .pb-card {
+    border-radius: 14px;
+    padding: 1rem;
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+    min-height: 0;
+  }
+  .pb .pb-amber { background: var(--amber); }
+  .pb .pb-clay  { background: var(--clay); }
+  .pb .pb-moss  { background: var(--moss); }
+  .pb .pb-steel { background: var(--steel); }
+
+  .pb .pb-eyebrow {
+    font: 600 10px/1 ui-monospace, "JetBrains Mono", monospace;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    opacity: .72;
+  }
+  .pb .pb-huge {
+    font: 800 clamp(30px, 6vw, 56px)/0.86 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -.045em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .pb .pb-num { font: 800 clamp(34px, 7vw, 68px)/0.82 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.05em; }
+  .pb .pb-mono { font: 500 11px/1.45 ui-monospace, "JetBrains Mono", monospace; }
+
+  .pb .pb-rule { height: 1px; background: var(--rule); border: 0; margin: .2rem 0; }
+  .pb .pb-row { display: flex; align-items: center; gap: .5rem; }
+  .pb .pb-between { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+
+  .pb .pb-slot {
+    border: 1.5px solid var(--rule);
+    border-radius: 6px;
+    padding: .18rem .5rem;
+    font: 600 12px/1.3 ui-monospace, monospace;
+    min-width: 3.4rem;
+    text-align: right;
+  }
+
+  /* ADSR-style meter: four bars whose heights carry the status split. */
+  .pb .pb-meter { display: flex; align-items: flex-end; gap: .35rem; height: 54px; }
+  .pb .pb-bar { width: 14px; background: var(--ink); border-radius: 2px 2px 0 0; opacity: .82; }
+  .pb .pb-legend { display: flex; gap: .35rem; }
+  .pb .pb-legend span { width: 14px; text-align: center; }
+
+  .pb .pb-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .3rem; }
+  .pb .pb-list li { display: flex; gap: .5rem; align-items: baseline; }
+  .pb .pb-tick { font: 700 11px/1.4 ui-monospace, monospace; opacity: .6; }
+
+  .pb .pb-arrow { font-size: 42px; line-height: 1; font-weight: 700; }
+  .pb .pb-tag {
+    display: inline-block;
+    border: 1.5px solid var(--ink);
+    border-radius: 999px;
+    padding: 0 .45rem;
+    font: 700 10px/1.6 ui-monospace, monospace;
+  }
+  .pb .pb-vert {
+    writing-mode: vertical-rl;
+    font: 800 clamp(20px, 3vw, 30px)/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -.02em;
+    opacity: .9;
+  }
+
+  /* --- board, workload and capture ------------------------------------- */
+
+  .pb .pb-stack { display: grid; gap: .75rem; margin-top: .75rem; }
+  .pb .pb-half { display: grid; grid-template-columns: 1.35fr 1fr; gap: .75rem; }
+  @media (max-width: 720px) { .pb .pb-half { grid-template-columns: 1fr; } }
+
+  .pb .pb-kan { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; }
+  @media (max-width: 720px) { .pb .pb-kan { grid-template-columns: 1fr 1fr; } }
+  .pb .pb-col {
+    background: rgba(0, 0, 0, .07);
+    border-radius: 8px;
+    padding: .45rem;
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    min-height: 5rem;
+  }
+  .pb .pb-chip {
+    background: rgba(255, 255, 255, .55);
+    border-radius: 5px;
+    padding: .32rem .4rem;
+    font: 500 11px/1.3 ui-monospace, "JetBrains Mono", monospace;
+    display: flex;
+    gap: .35rem;
+    align-items: flex-start;
+  }
+  .pb .pb-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; margin-top: .3rem; background: var(--ink); }
+  .pb .pb-dot.high { background: var(--clay); }
+  .pb .pb-dot.medium { opacity: .55; }
+  .pb .pb-dot.low { opacity: .25; }
+  .pb .pb-late { font-weight: 700; color: var(--clay); }
+
+  .pb .pb-track { height: 7px; border-radius: 999px; background: rgba(0, 0, 0, .16); overflow: hidden; }
+  .pb .pb-fill { height: 100%; background: var(--ink); opacity: .7; border-radius: 999px; }
+
+  .pb .pb-field { display: flex; flex-direction: column; gap: .2rem; }
+  .pb .pb-input, .pb .pb-select {
+    width: 100%;
+    border: 1.5px solid var(--rule);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .35);
+    color: var(--ink);
+    padding: .3rem .45rem;
+    font: 500 12px/1.4 ui-monospace, "JetBrains Mono", monospace;
+  }
+  .pb .pb-btn {
+    border: 1.5px solid var(--ink);
+    border-radius: 6px;
+    background: var(--ink);
+    color: var(--steel);
+    padding: .35rem .7rem;
+    font: 700 11px/1.3 ui-monospace, monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .pb .pb-btn:hover { opacity: .88; }
+  .pb .pb-btn[disabled] { opacity: .5; cursor: progress; }
+  /* Every control gets a visible focus ring: these flats sit outside the app's
+     token system, so they inherit none of its focus styling. */
+  .pb :is(.pb-input, .pb-select, .pb-btn):focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+</style>
+
+<div class="pb">
+  <div class="pb-grid">
+
+    <!-- Left: the standing poster. Overdue is the one number worth shouting. -->
+    <section class="pb-card pb-clay" style="justify-content:space-between">
+      <div class="pb-between">
+        <span class="pb-eyebrow">01</span>
+        <span class="pb-eyebrow">Team<br>planner</span>
+      </div>
+      <div class="pb-row" style="align-items:flex-end;gap:1rem">
+        <div class="pb-vert">OVERDUE</div>
+        <div>
+          <div class="pb-num" id="overdue">—</div>
+          <div class="pb-mono" id="overdue-label">reading Planner.db…</div>
+        </div>
+      </div>
+      <div>
+        <hr class="pb-rule">
+        <div class="pb-mono" id="oldest">&nbsp;</div>
+      </div>
+    </section>
+
+    <div style="display:grid;gap:.75rem;min-width:0">
+
+      <!-- Amber: the headline block, ADSR meter carries the status split. -->
+      <section class="pb-card pb-amber">
+        <div class="pb-between">
+          <h1 class="pb-huge">PLANNER<span style="color:var(--clay)">.</span></h1>
+          <div class="pb-arrow">↗</div>
+        </div>
+        <hr class="pb-rule">
+        <div class="pb-row" style="align-items:flex-start;gap:1.25rem;flex-wrap:wrap">
+          <div>
+            <div class="pb-meter" id="meter">
+              <div class="pb-bar" style="height:8%"></div>
+              <div class="pb-bar" style="height:8%"></div>
+              <div class="pb-bar" style="height:8%"></div>
+              <div class="pb-bar" style="height:8%"></div>
+            </div>
+            <div class="pb-legend pb-eyebrow" style="margin-top:.3rem">
+              <span>T</span><span>N</span><span>B</span><span>D</span>
+            </div>
+          </div>
+          <div style="flex:1;min-width:170px;display:flex;flex-direction:column;gap:.4rem">
+            <div class="pb-between">
+              <span class="pb-eyebrow">Open</span>
+              <span class="pb-slot" id="open">—</span>
+            </div>
+            <div class="pb-between">
+              <span class="pb-eyebrow">Due this week</span>
+              <span class="pb-slot" id="week">—</span>
+            </div>
+            <div class="pb-between">
+              <span class="pb-eyebrow">Blocked</span>
+              <span class="pb-slot" id="blocked">—</span>
+            </div>
+          </div>
+        </div>
+        <hr class="pb-rule">
+        <div class="pb-between">
+          <span class="pb-tag" id="focus">#FOCUS</span>
+          <span class="pb-eyebrow">Local · no network</span>
+        </div>
+      </section>
+
+      <div class="pb-sub">
+        <!-- Moss: what to actually do next. -->
+        <section class="pb-card pb-moss">
+          <div class="pb-between">
+            <span class="pb-eyebrow">Next actions</span>
+            <span class="pb-eyebrow" id="next-count">—</span>
+          </div>
+          <ul class="pb-list pb-mono" id="next"><li>reading…</li></ul>
+          <hr class="pb-rule">
+          <div class="pb-huge" style="font-size:clamp(18px,3vw,26px)" id="next-project">—</div>
+        </section>
+
+        <!-- Steel: completion, with the number split like the reference. -->
+        <section class="pb-card pb-steel">
+          <div class="pb-eyebrow">Progress</div>
+          <div class="pb-between" style="align-items:flex-end">
+            <div class="pb-num" id="pct"><span style="opacity:.85">—</span></div>
+            <div class="pb-mono" style="text-align:right" id="done-of">&nbsp;</div>
+          </div>
+          <hr class="pb-rule">
+          <ul class="pb-list pb-mono" id="blockers"><li>reading…</li></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="pb-stack">
+
+    <!-- Board. Four columns from the status field's own options. -->
+    <section class="pb-card pb-steel">
+      <div class="pb-between">
+        <span class="pb-eyebrow">Board</span>
+        <span class="pb-eyebrow">Grouped by status · overdue in red</span>
+      </div>
+      <div class="pb-kan" id="kanban">
+        <div class="pb-col"><span class="pb-eyebrow">Todo</span></div>
+        <div class="pb-col"><span class="pb-eyebrow">In progress</span></div>
+        <div class="pb-col"><span class="pb-eyebrow">Blocked</span></div>
+        <div class="pb-col"><span class="pb-eyebrow">Done</span></div>
+      </div>
+    </section>
+
+    <div class="pb-half">
+      <!-- Workload: where the open work actually sits. -->
+      <section class="pb-card pb-amber">
+        <div class="pb-between">
+          <span class="pb-eyebrow">Workload by project</span>
+          <span class="pb-eyebrow">Complete / total</span>
+        </div>
+        <div id="workload" class="pb-mono">reading…</div>
+      </section>
+
+      <!-- Capture. The only part of this view that writes anything. -->
+      <section class="pb-card pb-moss">
+        <div class="pb-between">
+          <span class="pb-eyebrow">Quick capture</span>
+          <span class="pb-eyebrow">Writes Planner.db</span>
+        </div>
+        <form id="capture" style="display:flex;flex-direction:column;gap:.45rem">
+          <div class="pb-field">
+            <label class="pb-eyebrow" for="cap-title">Task</label>
+            <input class="pb-input" id="cap-title" name="title" required maxlength="200"
+                   autocomplete="off" placeholder="Something to do">
+          </div>
+          <div class="pb-row" style="gap:.45rem;align-items:flex-end">
+            <div class="pb-field" style="flex:1;min-width:0">
+              <label class="pb-eyebrow" for="cap-project">Project</label>
+              <select class="pb-select" id="cap-project" name="project"></select>
+            </div>
+            <div class="pb-field" style="width:6.5rem">
+              <label class="pb-eyebrow" for="cap-priority">Priority</label>
+              <select class="pb-select" id="cap-priority" name="priority">
+                <option value="high">High</option>
+                <option value="medium" selected>Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+          </div>
+          <div class="pb-between">
+            <button class="pb-btn" type="submit" id="cap-submit">Add task</button>
+            <span class="pb-mono" id="cap-status" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Why this view runs JavaScript at all: everything below is either a
+  // comparison against the clock at render time or an aggregation across rows.
+  // A server-rendered table can show the rows; it cannot say "overdue".
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const DB = 'Planner.db';
+  const STATUSES = [
+    { id: 'todo', label: 'Todo' },
+    { id: 'doing', label: 'In progress' },
+    { id: 'blocked', label: 'Blocked' },
+    { id: 'done', label: 'Done' },
+  ];
+
+  function render(tasks) {
+    const today = new Date().toISOString().slice(0, 10);
+    const weekOut = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+    const open = tasks.filter((t) => t.status !== 'done');
+    const overdue = open.filter((t) => t.due && t.due < today);
+    const blocked = open.filter((t) => t.status === 'blocked');
+    const week = open.filter((t) => t.due && t.due >= today && t.due <= weekOut);
+    const done = tasks.length - open.length;
+
+    $('overdue').textContent = overdue.length;
+    $('overdue-label').textContent = overdue.length === 1 ? 'task past due' : 'tasks past due';
+    $('open').textContent = open.length;
+    $('week').textContent = week.length;
+    $('blocked').textContent = blocked.length;
+    $('done-of').innerHTML = done + ' of ' + tasks.length + '<br>complete';
+
+    const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+    $('pct').innerHTML = '<span>' + pct + '</span><span style="color:var(--clay)">%</span>';
+
+    // Bars: Todo / Next(in progress) / Blocked / Done, scaled to the largest.
+    const split = [
+      tasks.filter((t) => t.status === 'todo').length,
+      tasks.filter((t) => t.status === 'doing').length,
+      blocked.length,
+      done,
+    ];
+    const peak = Math.max(1, ...split);
+    [...$('meter').children].forEach((bar, i) => {
+      bar.style.height = Math.max(8, Math.round((split[i] / peak) * 100)) + '%';
+    });
+
+    // Oldest open item by due date: the thing quietly rotting.
+    const dated = open.filter((t) => t.due).sort((a, b) => a.due.localeCompare(b.due));
+    $('oldest').textContent = dated.length ? 'Oldest open · ' + dated[0].due : 'Nothing scheduled';
+
+    const priority = { high: 0, medium: 1, low: 2 };
+    const byPriorityThenDue = (a, b) =>
+      (priority[a.priority] ?? 3) - (priority[b.priority] ?? 3)
+      || String(a.due || '9999').localeCompare(String(b.due || '9999'));
+
+    const next = open.filter((t) => t.status !== 'blocked').sort(byPriorityThenDue).slice(0, 4);
+    $('next-count').textContent = open.length + ' open';
+    $('next').innerHTML = next.length
+      ? next.map((t) => '<li><span class="pb-tick">[ ]</span><span>' + esc(t.title) + '</span></li>').join('')
+      : '<li>Nothing waiting.</li>';
+    $('next-project').textContent = next[0]?.project ?? '—';
+    $('focus').textContent = '#' + String(next[0]?.project ?? 'planner').toUpperCase().replace(/\s+/g, '');
+
+    $('blockers').innerHTML = blocked.length
+      ? blocked.slice(0, 3).map((t) => '<li><span class="pb-tick">!</span><span>' + esc(t.title) + '</span></li>').join('')
+      : '<li>Nothing blocked.</li>';
+
+    // Board. Every column renders even when empty, because a column that
+    // disappears when it empties makes the board change shape as you work.
+    $('kanban').innerHTML = STATUSES.map((status) => {
+      const items = tasks.filter((t) => t.status === status.id).sort(byPriorityThenDue);
+      const cards = items.map((t) => {
+        const late = t.due && t.due < today && status.id !== 'done';
+        const when = t.due
+          ? '<span class="' + (late ? 'pb-late' : '') + '">' + esc(t.due.slice(5)) + '</span>'
+          : '';
+        return '<div class="pb-chip"><span class="pb-dot ' + esc(t.priority) + '"></span>'
+          + '<span style="flex:1;min-width:0">' + esc(t.title) + '</span>' + when + '</div>';
+      }).join('');
+      return '<div class="pb-col"><div class="pb-between"><span class="pb-eyebrow">' + esc(status.label)
+        + '</span><span class="pb-eyebrow">' + items.length + '</span></div>'
+        + (cards || '<span class="pb-mono" style="opacity:.5">Empty</span>') + '</div>';
+    }).join('');
+
+    // Workload. Sorted by open count: the project needing attention is first.
+    const projects = [...new Set(tasks.map((t) => t.project).filter(Boolean))]
+      .map((name) => {
+        const mine = tasks.filter((t) => t.project === name);
+        return { name, total: mine.length, done: mine.filter((t) => t.status === 'done').length };
+      })
+      .sort((a, b) => (b.total - b.done) - (a.total - a.done));
+
+    $('workload').innerHTML = projects.length
+      ? projects.map((p) => {
+        const share = p.total ? Math.round((p.done / p.total) * 100) : 0;
+        return '<div style="margin-bottom:.5rem">'
+          + '<div class="pb-between"><span>' + esc(p.name) + '</span>'
+          + '<span>' + p.done + '/' + p.total + '</span></div>'
+          + '<div class="pb-track"><div class="pb-fill" style="width:' + share + '%"></div></div></div>';
+      }).join('')
+      : 'No projects yet.';
+
+    // Capture needs somewhere to put a task. Preserve the choice across the
+    // re-render that follows a save.
+    const select = $('cap-project');
+    const keep = select.value;
+    select.innerHTML = projects.map((p) => '<option>' + esc(p.name) + '</option>').join('')
+      || '<option value="">(none)</option>';
+    if (keep) select.value = keep;
+  }
+
+  async function load() {
+    // connect-src is 'self': this reaches Neuron's loopback API and has no
+    // route off the machine.
+    const res = await fetch('/api/v1/db?path=' + encodeURIComponent(DB) + '&table=tasks');
+    if (!res.ok) {
+      // Name the status. "unavailable" sent me looking at the file when the
+      // request had never reached the route in the first place.
+      const detail = await res.json().catch(() => null);
+      $('overdue-label').textContent = 'Planner.db: ' + (detail?.error?.code ?? res.status);
+      return;
+    }
+    const { rows } = await res.json();
+    render(rows.map((r) => r.values));
+  }
+
+  /**
+   * Capture writes the database back whole: read, append a row, PUT.
+   *
+   * `baseHash` is the hash the read returned. If the file moved underneath us —
+   * an edit in the app's own table view, a sync, a second dashboard — the write
+   * is refused with 409 rather than silently discarding that edit. Neuron also
+   * journals a pre-image before the overwrite, so a bad write here is
+   * recoverable from version history.
+   */
+  async function capture(values) {
+    const read = await fetch('/api/v1/files/content?path=' + encodeURIComponent(DB));
+    if (!read.ok) throw new Error('Could not read Planner.db.');
+    const { content, hash } = await read.json();
+
+    const doc = JSON.parse(content);
+    const table = doc.tables?.tasks;
+    if (!table || !Array.isArray(table.rows)) throw new Error('No tasks table in Planner.db.');
+    table.rows.push({
+      id: 't' + Date.now().toString(36),
+      values: { ...values, status: 'todo', due: '', done: false },
+    });
+
+    const put = await fetch('/api/v1/files/content', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: DB, content: JSON.stringify(doc, null, 2) + '\n', baseHash: hash }),
+    });
+    if (!put.ok) {
+      const body = await put.json().catch(() => ({}));
+      throw new Error(body.error?.code === 'conflict'
+        ? 'Planner.db changed elsewhere — reload and try again.'
+        : body.error?.message || ('Write failed (' + put.status + ').'));
+    }
+  }
+
+  $('capture').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const title = $('cap-title').value.trim();
+    if (!title) return;
+
+    const button = $('cap-submit');
+    const status = $('cap-status');
+    button.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      await capture({ title, project: $('cap-project').value, priority: $('cap-priority').value });
+      $('cap-title').value = '';
+      status.textContent = 'Added.';
+      await load();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+      $('cap-title').focus();
+    }
+  });
+
+  load();
+</script>

@@ -39,7 +39,7 @@ function preset(id: string, label: string, colorScheme: ColorScheme, values: str
 export const PRESETS: Record<string, ThemePreset> = {
   graphite: preset('graphite', 'Graphite', 'dark', [
     '#16181d', '#121419', '#1d2128', '#272c35', 'rgba(255,255,255,0.09)',
-    '#e6e8ec', '#b3b9c4', '#7c8493',
+    '#e6e8ec', '#b3b9c4', '#838b99',
     '#7fb1e3', '#a9cef0', '#7ed8a4', '#f08a8a', '#e6c07a', '#7fb1e3',
   ]),
   void: preset('void', 'Void', 'dark', [
@@ -49,13 +49,13 @@ export const PRESETS: Record<string, ThemePreset> = {
   ]),
   nord: preset('nord', 'Nord', 'dark', [
     '#2e3440', '#2b303b', '#3b4252', '#434c5e', 'rgba(216,222,233,0.12)',
-    '#eceff4', '#d8dee9', '#94a1b5',
-    '#88c0d0', '#a3d4e0', '#a3be8c', '#bf616a', '#ebcb8b', '#81a1c1',
+    '#eceff4', '#d8dee9', '#a6b1c2',
+    '#88c0d0', '#a3d4e0', '#a3be8c', '#d9a2a8', '#ebcb8b', '#99b3cd',
   ]),
   light: preset('light', 'Light', 'light', [
     '#ffffff', '#f6f7f9', '#f0f2f5', '#e6e9ee', 'rgba(0,0,0,0.12)',
-    '#1f2328', '#4a5159', '#6b7280',
-    '#2f73d8', '#1b5fc4', '#2da66a', '#d23f3f', '#b7791f', '#2f73d8',
+    '#1f2328', '#4a5159', '#666d7a',
+    '#276ace', '#1b5fc4', '#227c4f', '#cd3030', '#946219', '#276ace',
   ]),
 };
 

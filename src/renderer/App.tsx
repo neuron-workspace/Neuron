@@ -7,6 +7,7 @@ import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import RightPanel from './components/RightPanel';
+import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import CreateModal from './components/CreateModal';
 import CommandPalette from './components/CommandPalette';
@@ -23,13 +24,14 @@ import { builtinPlugins } from './plugins/builtin';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
-import './surfaces/HtmxViewSurface'; // registers the .nhtml HTMX view surface
+import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
+import { registerTerminalOpener } from './lib/terminal-bus';
 import ActivityRail, { type SidebarMode } from './components/ActivityRail';
 import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
 
@@ -48,7 +50,7 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
 type EditorMode = 'live' | 'raw' | 'reading';
 
-// Default content for new .nhtml HTMX views. Plain HTML + htmx attributes;
+// Default content for new .html views. Plain HTML + htmx attributes;
 // Neuron serves it from the local view server with the neuron-view stylesheet.
 const HTMX_VIEW_TEMPLATE = `<h1>New HTMX view</h1>
 <p>This is ordinary HTML with <a href="https://htmx.org">htmx</a> attributes.
@@ -147,7 +149,16 @@ export default function App() {
   const bottomPanelOpen = layout.bottomPanel;
   const setSidebarOpen = (fn: (v: boolean) => boolean) => patchLayout({ sidebar: fn(layoutRef.current.sidebar) });
   const setRightPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ rightPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.rightPanel) });
+  const graphOverlayOpen = layout.graphOverlay;
+  const toggleGraphOverlay = () => patchLayout({ graphOverlay: !layoutRef.current.graphOverlay });
   const setBottomPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ bottomPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.bottomPanel) });
+
+  // A <Run /> button in a note reveals the terminal it is about to write to.
+  // Running a command into a panel the user cannot see would hide the one part
+  // of this that makes it reviewable.
+  useEffect(() => registerTerminalOpener(() => {
+    if (!layoutRef.current.bottomPanel) patchLayout({ bottomPanel: true });
+  }), [patchLayout]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createSection, setCreateSection] = useState('');
@@ -366,12 +377,12 @@ export default function App() {
     setCreateOpen(true);
   }, []);
 
-  // Create an .nhtml HTMX view in the current note's folder.
+  // Create an .html view in the current note's folder.
   const createSurfaceFile = useCallback(async () => {
     const folder = selectedNote && selectedNote.includes('/') ? selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1) : '';
-    let name = 'View.nhtml';
+    let name = 'View.html';
     let i = 2;
-    while (notes.includes(`${folder}${name}`)) name = `View ${i++}.nhtml`;
+    while (notes.includes(`${folder}${name}`)) name = `View ${i++}.html`;
     await createNote(`${folder}${name}`, HTMX_VIEW_TEMPLATE);
   }, [selectedNote, notes, createNote]);
 
@@ -523,6 +534,7 @@ export default function App() {
         case 'toggle-right': setRightPanelOpen((v) => !v); break;
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
+        case 'toggle-graph': toggleGraphOverlay(); break;
       }
     };
     window.addEventListener('keydown', handler);
@@ -627,7 +639,7 @@ export default function App() {
   } else if (view === 'gallery') {
     mainContent = <ComponentGallery />;
   } else if (shellConfig && !Surface && !browsing) {
-    // Shell handles plain notes in its editor slot; surface files (.nhtml, .db, .canvas) and
+    // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
     // browser tabs are full-page documents, so let them fall through to notesView.
     mainContent = (
       <div className="flex h-full w-full flex-col">
@@ -660,9 +672,11 @@ export default function App() {
             activeNote={view === 'notes' ? selectedNote : null}
             sidebarOpen={sidebarOpen}
             rightPanelOpen={rightPanelOpen}
+            graphOpen={graphOverlayOpen}
             bottomPanelOpen={bottomPanelOpen}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onToggleRightPanel={() => setRightPanelOpen((v) => !v)}
+            onToggleGraph={toggleGraphOverlay}
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
             onOpenMarketplace={() => setView('plugins')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
@@ -739,6 +753,24 @@ export default function App() {
                             </div>
                           )}
                           {mainContent}
+                          {/* Notes only. It is a map of the workspace, so it
+                              has nothing to say over Settings, Plugins or
+                              Repositories -- and it was covering their controls,
+                              which an E2E click timeout caught. Anchored to
+                              <main> rather than the notes view because a
+                              workspace with a shell config renders a layout
+                              instead of notesView, and the map is just as
+                              useful there. Not the window, so it never covers
+                              the sidebar or status bar. Zen mode exists to
+                              remove chrome, so it hides this too. */}
+                          {graphOverlayOpen && !layout.zen && view === 'notes' && (
+                            <FloatingGraph
+                              notesData={notesData}
+                              selectedNote={selectedNote}
+                              onSelectNote={handleSelectNote}
+                              onClose={toggleGraphOverlay}
+                            />
+                          )}
                         </main>
                       </Panel>
                       {rightPanelOpen && (
@@ -790,6 +822,8 @@ export default function App() {
           onOpenGallery={() => setView('gallery')}
           onToggleShell={toggleShell}
           shellActive={!!shellConfig}
+          onToggleGraph={toggleGraphOverlay}
+          graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
         />
       </TooltipProvider>

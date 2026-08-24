@@ -7,12 +7,14 @@ import automations from './automations';
 import aiOpenai from './ai-openai';
 import aiGemini from './ai-gemini';
 import aiOpenrouter from './ai-openrouter';
+import versionHistory from './version-history';
 
 /** Built-in plugin catalog surfaced in the marketplace. */
 export const builtinPlugins: PluginModule[] = [
   aiClaude,
   aiLocal,
   dailyCalendar,
+  versionHistory,
   terminal,
   automations,
   aiOpenai,

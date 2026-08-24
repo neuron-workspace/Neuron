@@ -9,6 +9,7 @@ import { SessionManager, sha256 } from './sessions';
 import { createViewServer, ViewServer } from './server';
 import { compilePolicy, resolveInWorkspace } from './pathPolicy';
 import { validateManifest, effectiveGrants, ViewManifest } from './manifest';
+import { isViewPath, appManifestPathFor, manifestPathFor, legacyManifestPathFor, defaultViewName } from './appPaths';
 
 interface Deps {
   getRepoRoot: () => string | null;
@@ -67,34 +68,32 @@ const SCAFFOLD: Record<string, string> = {
       projectStatus: { type: 'string', value: 'active', writable: true, description: 'A view-editable example variable.' },
     },
   }, null, 2) + '\n',
-  'fragments/hello.html': `<div class="neuron-card">
-  <div class="neuron-metric-label">{{ variables.dashboardTitle }}</div>
-  <p>This fragment lives in <code>.neuron/fragments/hello.html</code>.
-  Fragments interpolate <code>{{ variables.name }}</code> and <code>{{ params.name }}</code> — values are always HTML-escaped.</p>
+  'fragments/hello.html': `<span class="neuron-metric-label">{{ variables.dashboardTitle }}</span>
+<p>This fragment lives in <code>.neuron/fragments/hello.html</code>.
+Fragments interpolate <code>{{ variables.name }}</code> and <code>{{ params.name }}</code> — values are always HTML-escaped.</p>
+`,
+  'templates/dashboard.html': `<header><h1>{{ variables.dashboardTitle }}</h1></header>
+<div class="neuron-grid cols-3">
+  <section hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">Loading…</section>
+  <section hx-get="/api/v1/fragments/hello" hx-trigger="load" hx-swap="innerHTML">Loading…</section>
+  <section>
+    <span class="neuron-metric-label">Tags</span>
+    <div hx-get="/api/v1/tags" hx-trigger="load" hx-swap="innerHTML">Loading…</div>
+  </section>
 </div>
 `,
-  'templates/dashboard.nhtml': `<h1>{{ variables.dashboardTitle }}</h1>
-<section class="neuron-grid cols-3">
-  <div class="neuron-card" hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">Loading…</div>
-  <div class="neuron-card" hx-get="/api/v1/fragments/hello" hx-trigger="load" hx-swap="innerHTML">Loading…</div>
-  <div class="neuron-card">
-    <div class="neuron-metric-label">Tags</div>
-    <div hx-get="/api/v1/tags" hx-trigger="load" hx-swap="innerHTML">Loading…</div>
-  </div>
-</section>
-`,
-  'templates/note-browser.nhtml': `<h1>Note browser</h1>
-<section class="neuron-card">
+  'templates/note-browser.html': `<header><h1>Note browser</h1></header>
+<section>
   <form hx-get="/api/v1/search" hx-target="#results" hx-trigger="submit, input changed delay:300ms from:#q">
     <label for="q">Search notes</label>
-    <input id="q" class="neuron-input" name="query" type="search" autocomplete="off" />
+    <input id="q" name="query" type="search" autocomplete="off" />
   </form>
   <div id="results"></div>
 </section>
-<section class="neuron-card" hx-get="/api/v1/notes?limit=25" hx-trigger="load" hx-swap="innerHTML">Loading notes…</section>
+<section hx-get="/api/v1/notes?limit=25" hx-trigger="load" hx-swap="innerHTML">Loading notes…</section>
 `,
-  'templates/file-list.nhtml': `<h1>Workspace files</h1>
-<section class="neuron-card" hx-get="/api/v1/files?limit=50" hx-trigger="load" hx-swap="innerHTML">Loading files…</section>
+  'templates/file-list.html': `<header><h1>Workspace files</h1></header>
+<section hx-get="/api/v1/files?limit=50" hx-trigger="load" hx-swap="innerHTML">Loading files…</section>
 `,
 };
 
@@ -111,21 +110,25 @@ function ensureScaffold(root: string): void {
 
 // --- manifest + approvals -------------------------------------------------------
 
-function manifestPathFor(viewRel: string): string {
-  return viewRel.replace(/\.nhtml$/i, '.neuron.json');
-}
-
-function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[] } {
-  const resolved = resolveInWorkspace(root, manifestPathFor(viewRel));
-  if (!resolved || !fs.existsSync(resolved.full)) return { manifest: null, hash: 'none', errors: [] };
+function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[]; appEntry: boolean; manifestPath: string } {
+  const appMarker = appManifestPathFor(viewRel);
+  const resolvedMarker = appMarker ? resolveInWorkspace(root, appMarker) : null;
+  const appEntry = !!resolvedMarker && fs.existsSync(resolvedMarker.full);
+  const manifestPath = manifestPathFor(viewRel, appEntry);
+  const primary = resolveInWorkspace(root, manifestPath);
+  const legacy = resolveInWorkspace(root, legacyManifestPathFor(viewRel));
+  const resolved = primary && fs.existsSync(primary.full) ? primary
+    : legacy && fs.existsSync(legacy.full) ? legacy
+    : null;
+  if (!resolved) return { manifest: null, hash: 'none', errors: [], appEntry, manifestPath };
   let raw: string;
-  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'] }; }
+  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'], appEntry, manifestPath }; }
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'] }; }
+  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'], appEntry, manifestPath }; }
   const result = validateManifest(parsed);
-  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors };
+  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors, appEntry, manifestPath };
   // Approvals bind to the exact manifest content: any edit re-requests consent.
-  return { manifest: result.value!, hash: sha256(raw), errors: [] };
+  return { manifest: result.value!, hash: sha256(raw), errors: [], appEntry, manifestPath };
 }
 
 function viewKey(root: string, viewRel: string): string {
@@ -145,18 +148,28 @@ export function initHtmxViews(deps: Deps): void {
     const root = deps.getRepoRoot();
     if (!root) return { status: 'error', message: 'No workspace is open.' };
     const resolved = resolveInWorkspace(root, relativePath);
-    if (!resolved || !/\.nhtml$/i.test(resolved.rel)) return { status: 'error', message: 'Not a valid HTMX view path.' };
+    if (!resolved || !isViewPath(resolved.rel)) return { status: 'error', message: 'Not a valid HTMX view path.' };
     if (!fs.existsSync(resolved.full)) return { status: 'error', message: 'View file not found.' };
 
     try { ensureScaffold(root); } catch { /* read-only workspace: views still work */ }
 
-    const { manifest, hash, errors } = loadManifest(root, resolved.rel);
-    if (errors.length) return { status: 'error', message: `Invalid manifest (${manifestPathFor(resolved.rel)}): ${errors.join(' ')}` };
+    const { manifest, hash, errors, appEntry, manifestPath } = loadManifest(root, resolved.rel);
+    if (errors.length) return { status: 'error', message: `Invalid manifest (${manifestPath}): ${errors.join(' ')}` };
 
     const grants = effectiveGrants(manifest);
-    const name = manifest?.name ?? resolved.rel.split('/').pop()!.replace(/\.nhtml$/i, '');
+    const name = manifest?.name ?? defaultViewName(resolved.rel, appEntry);
     if (grants.needsApproval && !isApproved(viewKey(root, resolved.rel), hash)) {
-      return { status: 'needs-approval', name, description: manifest?.description, permissions: manifest!.permissions };
+      return {
+        status: 'needs-approval',
+        name,
+        description: manifest?.description,
+        permissions: manifest!.permissions,
+        // The prompt promised access was limited to the manifest's paths
+        // without ever showing them, which left the user approving a scope
+        // they could only see by opening a file they do not know exists.
+        readPaths: manifest?.allowedReadPaths ?? [],
+        writePaths: manifest?.allowedWritePaths ?? [],
+      };
     }
 
     const server = await ensureServer();

@@ -22,6 +22,7 @@ const aiLocal: PluginModule = {
       icon: Cpu,
       render: (runtime) => (
         <AssistantPanel
+          pluginId="ai-local"
           host={runtime}
           provider="local"
           defaultModel={runtime.config.model || 'llama3'}

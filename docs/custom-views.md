@@ -6,19 +6,50 @@ Preview/Source toggle):
 
 | File | Format | Renders as |
 | --- | --- | --- |
-| `.nhtml` | HTML + htmx attributes | An isolated HTMX view tab (see [htmx-views.md](htmx-views.md)) |
+| `.html` | HTML + optional htmx attributes, inline CSS, and JavaScript | An isolated, offline HTML view tab (see [htmx-views.md](htmx-views.md)) |
 | `.db` | JSON (schema + view state + rows) | Notion-style database (table / kanban board / card gallery) |
 | `.canvas` | [JSON Canvas](https://jsoncanvas.org) (Obsidian-compatible) | Infinite spatial board |
+| `index.html` (+ `neuron.app.json`) | HTML view + manifest inside a folder | A **folder mini-app** — the folder renders as one app instead of a file listing |
 | `.neuron/layout.json` | JSON layout tree | The workspace shell layout |
 
 HTMX views have their own architecture and threat model, documented in
 [htmx-views.md](htmx-views.md). This document covers the in-renderer surfaces
 (`.db`, `.canvas`, the shell layout).
 
+## Embedding a database in MDX (`<DbView>`)
+
+Notes render a `.db` inline with `<DbView path="@Planner.db" table="tasks" view="board" />`.
+`path` is workspace-root-relative, prefixed with `@`; `view` is `table`
+(default), `board`, or `card`. The component reads the file over the same
+`notes:read` bridge as the DbSurface editor and re-reads on `notes:changed`, so
+the embed tracks external edits live. It is **read-only** — the same URL
+allowlist and the invalid/missing states apply; editing happens in the `.db`
+tab. Code: `src/renderer/components/DbView.tsx`, wired into the MDX parser in
+`MDXPreview.tsx` alongside `<Badge>`/`<Callout>`.
+
 > **Removed:** the earlier `.vw` block-view dashboards were replaced by HTMX
 > views. Existing `.vw` files are left untouched on disk but are no longer
 > listed or rendered; see the migration notes in
 > `examples/demo-repo/building-htmx-views.mdx`.
+
+## Folder mini-apps (`index.html` + `neuron.app.json`)
+
+Any non-root folder that contains a `neuron.app.json` **becomes a mini-app**:
+the sidebar collapses the folder into a single app entry instead of listing its
+contents, and opening it renders the folder's `index.html` file. `index.html` is
+an HTML view and `neuron.app.json` is its
+manifest (the same schema as a view manifest — `name`, `permissions`,
+`allowedReadPaths`/`allowedWritePaths`, `networkPolicy`). A manifest with no
+`permissions` grants nothing, so a read-only app must list its read caps.
+
+Mechanically a folder app reuses the entire HTMX-view pipeline (loopback server,
+per-session token, sandboxed `<webview>`, capability-checked API) — it is just a
+view whose entry point and manifest live inside the folder rather than as a
+standalone `.html` + `.neuron/manifests/` pair. The workspace root itself is
+never treated as an app. See [htmx-views.md](htmx-views.md) for the view format,
+API, permissions, and threat model; wiring is `isViewPath`/`manifestPathFor` in
+`src/main/htmx/index.ts` and the sidebar's app-folder collapse in
+`src/renderer/components/Sidebar.tsx`.
 
 ## JSON Canvas (`.canvas`)
 

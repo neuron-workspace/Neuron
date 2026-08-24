@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderGit2, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppWindow, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderGit2, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
 import type { SidebarMode } from './ActivityRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
@@ -48,6 +48,11 @@ function buildTree(paths: string[]): TreeNode {
   return root;
 }
 
+// A folder is a mini-app when it holds a neuron.app.json marker: its contents
+// collapse into a single node that opens the folder's index.html entry.
+const isAppFolder = (node: TreeNode): boolean => node.files.some((f) => f.name === 'neuron.app.json');
+const isAppInternal = (name: string): boolean => name === 'neuron.app.json';
+
 function allFolderPaths(node: TreeNode, out: string[] = []): string[] {
   for (const child of node.folders.values()) {
     out.push(child.path);
@@ -79,6 +84,10 @@ export default function Sidebar(props: SidebarProps) {
   const { notes, selectedNote, onSelectNote, onDeleteNote, onRequestCreate, onRequestCreateFolder, onRefresh, view, mode, repositoryName, tags, onSelectTag, selectedTag } = props;
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Folders start collapsed by default — collapse them all when a workspace's
+  // explorer tree first populates (and again after switching workspaces). Search
+  // mode overrides this per-folder below so matches stay visible.
+  const collapsedForRepo = useRef<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deletingNote, setDeletingNote] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -87,6 +96,12 @@ export default function Sidebar(props: SidebarProps) {
   const query = mode === 'search' ? search.trim().toLowerCase() : '';
   const filtered = useMemo(() => notes.filter((n) => n.toLowerCase().includes(query)), [notes, query]);
   const tree = useMemo(() => buildTree(filtered), [filtered]);
+
+  useEffect(() => {
+    if (collapsedForRepo.current === repositoryName || tree.folders.size === 0) return;
+    collapsedForRepo.current = repositoryName;
+    setCollapsed(new Set(allFolderPaths(tree)));
+  }, [tree, repositoryName]);
 
   const toggleFolder = (path: string) =>
     setCollapsed((prev) => {
@@ -131,8 +146,26 @@ export default function Sidebar(props: SidebarProps) {
     );
   };
 
+  const renderApp = (node: TreeNode, depth: number): React.ReactNode => {
+    const appPath = `${node.path}/index.html`;
+    const isSelected = selectedNote === appPath && view === 'notes';
+    return (
+      <div key={node.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => onSelectNote(appPath)}>
+          <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--accent-strong)]' : 'text-[var(--ink-muted)]')} />
+          <span className="truncate text-[12px] font-medium">{node.name}</span>
+          <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
+        </button>
+      </div>
+    );
+  };
+
   const renderFolder = (node: TreeNode, depth: number): React.ReactNode => {
-    const isOpen = !collapsed.has(node.path);
+    if (isAppFolder(node)) return renderApp(node, depth);
+    // Search mode force-opens every folder so matches aren't hidden inside a
+    // collapsed folder; the explorer respects the collapsed set (default: all).
+    const isOpen = mode === 'search' ? true : !collapsed.has(node.path);
+    const files = node.files.filter((f) => !isAppInternal(f.name));
     return (
       <div key={node.path}>
         <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" style={{ paddingLeft: `${8 + depth * 14}px` }}>
@@ -148,7 +181,7 @@ export default function Sidebar(props: SidebarProps) {
         {isOpen && (
           <div>
             {[...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, depth + 1))}
-            {node.files.sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, depth + 1))}
+            {files.sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, depth + 1))}
           </div>
         )}
       </div>
@@ -158,7 +191,7 @@ export default function Sidebar(props: SidebarProps) {
   const noteTree = (
     <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
-      {tree.files.sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
+      {tree.files.filter((f) => !isAppInternal(f.name)).sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
       {filtered.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
     </div>
   );

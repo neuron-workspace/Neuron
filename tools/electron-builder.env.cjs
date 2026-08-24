@@ -1,97 +1,64 @@
 const packageJson = require('../package.json');
 
+/**
+ * Per-environment electron-builder config.
+ *
+ * `package.json`'s `build` block is the single source of truth. This file
+ * layers the test/prod differences on top of it and overrides nothing else.
+ *
+ * That matters because both are live: the release workflow runs
+ * `npx electron-builder` with no `--config`, which reads `package.json`, while
+ * `npm run dist:*` routes through this file. When the two were written out
+ * separately they drifted -- the Store identity was filled in on one side and
+ * left as REPLACE.WITH placeholders on the other, and the appx built happily
+ * with the placeholders in its manifest. Spreading the base makes that class of
+ * mistake impossible rather than merely unlikely.
+ */
+const base = packageJson.build;
+
 const env = process.env.NEURON_BUILD_ENV === 'test' ? 'test' : 'prod';
 const isTest = env === 'test';
 const productName = isTest ? 'Neuron Test' : 'Neuron';
-const appId = isTest ? 'io.github.neuron.notes.test' : 'io.github.neuron.notes';
+const appId = isTest ? `${base.appId}.test` : base.appId;
 const version = isTest ? `${packageJson.version}-beta.0` : packageJson.version;
 const output = isTest ? 'release/test' : 'release/prod';
 const artifactProduct = productName.replace(/\s+/g, '-');
 
 module.exports = {
+  ...base,
   appId,
   productName,
   artifactName: `${artifactProduct}-${version}-${'${os}'}-${'${arch}'}.${'${ext}'}`,
-  asar: true,
-  asarUnpack: [
-    '**/node_modules/node-pty/**',
-    '**/node_modules/sql.js/dist/sql-wasm.wasm',
-  ],
-  npmRebuild: false,
-  directories: {
-    output,
-  },
-  files: [
-    'dist/**/*',
-    'package.json',
-  ],
+  directories: { output },
   extraMetadata: {
     name: isTest ? 'neuron-test' : packageJson.name,
     version,
   },
-  extraResources: [
-    {
-      from: 'examples',
-      to: 'examples',
-      filter: [
-        '**/*',
-      ],
-    },
-    {
-      from: 'build/icon.png',
-      to: 'icon.png',
-    },
-  ],
   win: {
-    icon: 'build/icon.png',
+    ...base.win,
+    // A test build is never signed; signing it would only produce warnings
+    // about a certificate nobody should trust.
     signAndEditExecutable: !isTest,
-    target: [
-      'nsis',
-      'portable',
-      'appx',
-    ],
   },
   nsis: {
-    oneClick: false,
-    allowToChangeInstallationDirectory: true,
-    createDesktopShortcut: true,
-    createStartMenuShortcut: true,
+    ...base.nsis,
     differentialPackage: !isTest,
     shortcutName: productName,
     uninstallDisplayName: productName,
   },
   appx: {
-    applicationId: isTest ? 'NeuronTest' : 'Neuron',
+    ...base.appx,
+    // Identity comes from package.json. Only the pieces that must differ
+    // between a side-loaded test package and the Store one are touched, so a
+    // Partner Center value can never be present on one path and missing on the
+    // other.
+    applicationId: isTest ? 'NeuronTest' : base.appx.applicationId,
     displayName: productName,
-    identityName: isTest ? 'REPLACE.WITH.PartnerCenter.IdentityName.Test' : 'REPLACE.WITH.PartnerCenter.IdentityName',
-    publisher: 'CN=REPLACE-WITH-PARTNER-CENTER-PUBLISHER-ID',
-    publisherDisplayName: 'REPLACE_WITH_PUBLISHER_DISPLAY_NAME',
-    backgroundColor: '#1a1a1a',
-    languages: [
-      'en-US',
-    ],
+    identityName: isTest ? `${base.appx.identityName}.Test` : base.appx.identityName,
   },
   portable: {
+    ...base.portable,
     artifactName: `${artifactProduct}-${version}-${'${os}'}-${'${arch}'}-portable.${'${ext}'}`,
   },
-  mac: {
-    icon: 'build/icon.png',
-    category: 'public.app-category.productivity',
-    target: [
-      'dmg',
-      'zip',
-    ],
-  },
-  linux: {
-    icon: 'build/icon.png',
-    category: 'Office',
-    target: [
-      'AppImage',
-      'deb',
-    ],
-  },
-  publish: isTest ? null : {
-    provider: 'github',
-    releaseType: 'release',
-  },
+  publish: isTest ? null : base.publish,
 };

@@ -1,7 +1,7 @@
 # HTMX views
 
 HTMX views let users build custom local interfaces — dashboards, trackers,
-browsers, forms — as plain `.nhtml` files: ordinary HTML with
+browsers, forms — as plain `.html` files: ordinary HTML with
 [htmx](https://htmx.org) attributes, rendered in an isolated tab and talking to
 a token-authenticated loopback API. Every view is treated as **untrusted
 content**; every filesystem operation is **privileged and policy-checked**.
@@ -11,7 +11,7 @@ content**; every filesystem operation is **privileged and policy-checked**.
 ### Creating a view
 
 - Command palette → **New HTMX view in current folder** (default `Ctrl+G`),
-  or create any file ending in `.nhtml`.
+  or create any file ending in `.html`.
 - Opening the file renders the view tab. The **Source** toggle in the tab
   header edits the same file as text; saving reloads only that tab.
 - Starter templates are scaffolded into `.neuron/templates/` the first time a
@@ -20,21 +20,26 @@ content**; every filesystem operation is **privileged and policy-checked**.
 ### Writing a view
 
 A view file is HTML **body content** (no `<html>`/`<head>` needed). Neuron
-wraps it, injects the bundled htmx runtime and the `neuron.css` design-system
-stylesheet, and serves it. Use htmx attributes for interactivity:
+wraps it, injects the bundled htmx runtime, and **attaches the `neuron.css`
+stylesheet for you** — so you write plain semantic HTML and it comes out
+styled to match the app:
 
 ```html
-<section id="summary" class="neuron-grid cols-3"
-         hx-get="/api/v1/fragments/workspace-summary"
-         hx-trigger="load" hx-swap="innerHTML">
-  <div class="neuron-card">Loading…</div>
-</section>
+<header>
+  <h1>My dashboard</h1>
+</header>
 
-<section class="neuron-card">
+<div class="neuron-grid cols-3">
+  <section hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">
+    Loading…
+  </section>
+</div>
+
+<section>
   <form hx-get="/api/v1/search" hx-target="#search-results"
         hx-trigger="submit, input changed delay:300ms from:#query">
     <label for="query">Search notes</label>
-    <input id="query" class="neuron-input" name="query" type="search" autocomplete="off" />
+    <input id="query" name="query" type="search" autocomplete="off" />
   </form>
   <div id="search-results"></div>
 </section>
@@ -44,11 +49,32 @@ No token handling is required — authentication is injected by Neuron at
 runtime (an HttpOnly session cookie scoped to the view's isolated partition).
 Never paste tokens into view source; there is nothing to paste.
 
-Design-system classes: `neuron-card`, `neuron-button` (+ `.secondary`),
-`neuron-input`, `neuron-table`, `neuron-badge`, `neuron-stack`,
-`neuron-grid` (+ `cols-2/3/4`), `neuron-toolbar`, `neuron-alert`,
-`neuron-empty`, `neuron-metric`, `neuron-metric-label`, `neuron-list`.
-They follow the app's light/dark theme automatically.
+**Semantic HTML is styled directly.** A bare `<section>`/`<article>` is a
+card; `<button>` is a primary button; `<input>`, `<select>`, `<textarea>`,
+`<table>`, `<label>`, `<code>` all inherit the Neuron look. `<header>` and the
+layout classes below stay transparent so they can wrap cards. Everything
+follows the app's light/dark theme automatically.
+
+On top of the semantic defaults, `neuron.css` is a small **shadcn-style
+component library** (class-based, so you compose richer UI than bare elements
+give you):
+
+- **Card** — `card` with `card-header`, `card-title`, `card-description`,
+  `card-content`, `card-footer`. (A bare `<section>` is a pre-padded card if you
+  don't need the sub-parts.)
+- **Button** — `btn` with variants `btn-secondary`, `btn-outline`, `btn-ghost`,
+  `btn-destructive` and sizes `btn-sm`, `btn-lg`, `btn-icon`.
+- **Badge** — `badge` with `badge-primary`, `badge-outline`, `badge-destructive`.
+- **Form** — `input`, `label` (a bare `<input>`/`<select>`/`<textarea>` already
+  gets the field style).
+- **Layout & bits** — `grid` (+ `cols-2/3/4`), `stack`, `row`, `toolbar`,
+  `separator`, `metric` / `metric-label`, `muted`, and `kbd` (a bare `<kbd>` or
+  `class="kbd"`/`neuron-kbd` renders a keyboard-hint cap).
+
+The legacy `neuron-*` classes (`neuron-card`, `neuron-button`, `neuron-input`,
+`neuron-table`, `neuron-badge`, `neuron-grid`, `neuron-stack`, `neuron-toolbar`,
+`neuron-metric`, `neuron-list`, `neuron-alert`, `neuron-empty`) are kept as
+aliases, so existing views and the server-rendered fragments keep working.
 
 `{{ variables.name }}` in a view or fragment is replaced server-side with the
 variable's value, always HTML-escaped. It is a key lookup, not an expression
@@ -60,8 +86,9 @@ language — no code, no prototypes, unknown keys render as nothing.
 .neuron/
   config.json        # feature config (schema version)
   variables.json     # typed variables exposed to views
+  manifests/         # per-view permission manifests → "My view.html" ⇒ manifests/My view.json
   fragments/         # reusable HTML partials → GET /api/v1/fragments/<name>
-  styles/            # optional CSS; "My view.nhtml" auto-loads "My view.css"
+  styles/            # optional CSS; "My view.html" auto-loads "My view.css"
   templates/         # starter views to copy
   layout.json        # (pre-existing) workspace shell layout
 ```
@@ -83,9 +110,10 @@ Custom CSS is local-only: `@import` and remote `url()` references are blocked.
 
 ### Manifests and permissions
 
-Views are **read-only by default** (read files/notes/tags/variables, search,
-list). To write, add a manifest next to the view — `projects.nhtml` →
-`projects.neuron.json`:
+Views receive **no capabilities by default**. To read or write workspace data,
+add a manifest under `.neuron/manifests/`, mirroring the view's path —
+`projects.html` → `.neuron/manifests/projects.json` (a legacy
+`projects.neuron.json` sidecar next to the view is still read if present):
 
 ```json
 {
@@ -106,8 +134,10 @@ list). To write, add a manifest next to the view — `projects.nhtml` →
 - Unknown manifest fields and unknown permissions are **rejected**, not
   ignored. `networkPolicy` accepts only `"none"` — views cannot reach the
   network at all.
-- Write capabilities trigger an approval dialog (**Allow for this view** /
-  **Allow once**). Approvals are stored in Neuron's protected application
+- Every requested capability requires approval on first open. Approval is bound
+  to the exact manifest content, so an edit asks again.
+- The approval dialog offers **Allow for this view** / **Allow once**.
+  Approvals are stored in Neuron's protected application
   settings — never in the workspace — and are bound to the manifest's content
   hash: any manifest edit re-requests approval.
 - Reset a view's approval with `htmxViews.resetApproval` (exposed for the
@@ -128,7 +158,7 @@ list). To write, add a manifest next to the view — `projects.nhtml` →
 | `GET /search?query` | `workspace.search` | note matches (HTML fragment for htmx requests) |
 | `GET /notes?tag&folder&limit` | `notes.read` | note metadata (HTML table for htmx) |
 | `GET /tags` | `tags.read` | tag list (HTML badges for htmx) |
-| `GET /fragments/:name?params…` | — | rendered fragment from `.neuron/fragments` |
+| `GET /fragments/:name?params…` | — (`notes.read` + `tags.read` for `workspace-summary`) | rendered fragment from `.neuron/fragments` |
 
 Responses are HTML fragments when the request carries htmx's `HX-Request`
 header, JSON otherwise. Errors are structured
@@ -155,7 +185,7 @@ capability-checked, and rate-limited.
 
 Renderer: `src/renderer/surfaces/HtmxViewSurface.tsx` (the tab — loading /
 permission / error / crashed states, `<webview>` host). Registered for
-`nhtml` in the generic surface registry.
+`html` in the generic surface registry.
 
 ### Server and session lifecycle
 
@@ -232,11 +262,26 @@ connect to the port — is mitigated by the unguessable per-view tokens.
 | Request floods / accidental htmx loops | Per-session token bucket (burst 30, ~15 rps) → 429; body ≤ 1 MB; file reads ≤ 2 MB; listings ≤ 500; walk budget 20 000; search capped |
 | Hostile configuration files | `variables.json`/manifests validated with versioned schemas; invalid config fails closed with diagnostics |
 | DNS rebinding | Exact Host-header check against the loopback origin |
-| Manifest self-escalation | Manifests only *request*; write grants require user approval bound to the manifest hash; approvals live in app settings, not the workspace |
+| Manifest self-escalation | Manifests only *request*; every grant requires user approval bound to the manifest hash; approvals live in app settings, not the workspace |
 | View impersonation after edit | Manifest hash change invalidates prior approval; source/manifest changes reload the tab with a fresh session |
 
-Known limitations (deliberate, documented): no user-scripting capability (no
-trusted-script mode yet), no remote-content capability, no
+Known limitations (deliberate, documented): no remote-content capability, no
 `commands.execute`/actions bridge, search is a bounded workspace scan rather
 than an index, and the request inspector devtool is not built — the standard
 webview devtools plus server error codes cover debugging today.
+
+## Scripts and runtime assets
+
+Every `.html` view may include inline CSS and JavaScript. Neuron always injects
+the bundled htmx runtime and `neuron.css`; an author who does not use them needs
+no opt-out mode. Authored JavaScript can call the same `/api/v1` surface as
+htmx, gated by the same manifest and approval.
+
+The single CSP permits scripts with `script-src 'self' 'unsafe-inline'`, while
+`connect-src` stays `'self'`. That distinction is the safety boundary: a view
+can call Neuron's loopback API but cannot reach the internet. Remote images and
+other loads remain blocked, popups are denied, and navigation is pinned to the
+view origin. Every view also keeps its own sandboxed `<webview>` and per-session
+partition, with no preload and no Node.
+
+The bundled scripted example is `examples/demo-repo/Custom dashboard.html`.

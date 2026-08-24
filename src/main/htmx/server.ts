@@ -17,6 +17,7 @@ import {
   FileRow, SearchRow, NoteRow,
 } from './html';
 import { NEURON_VIEW_CSS } from './theme';
+import { capturePreImage } from '../journal';
 
 export const API_VERSION = 1;
 
@@ -31,9 +32,9 @@ const MAX_WALK_ENTRIES = 20000;            // filesystem walk budget
 const MAX_SEARCH_RESULTS = 50;
 const MAX_SEARCH_FILE_BYTES = 512 * 1024;
 
-const DOC_CSP = [
+const VIEW_CSP = [
   "default-src 'none'",
-  "script-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "connect-src 'self'",
@@ -188,6 +189,34 @@ function noteTags(content: string): string[] {
 
 // --- server ------------------------------------------------------------------
 
+/**
+ * A standalone error page for the document route.
+ *
+ * These are served before any session exists, so they cannot link the themed
+ * neuron.css and cannot know the workspace theme. A bare <p> inherits the
+ * platform default and renders near-black on the dark app shell -- technically
+ * present, practically invisible, which is how a plain error reads as a blank
+ * pane. So the page carries its own minimal styling and follows the OS scheme.
+ */
+function errorDocument(message: string): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Neuron view</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 2rem;
+    font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #ffffff; color: #1c1c1a;
+  }
+  p { max-width: 30rem; text-align: center; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #11181c; color: #e8ebed; }
+  }
+</style>
+</head><body><p>${esc(message)}</p></body></html>`;
+}
+
 export function createViewServer(sessions: SessionManager, htmxJsPath: string): Promise<ViewServer> {
   let origin = '';
 
@@ -212,7 +241,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const docMatch = url.pathname.match(/^\/views\/([\w-]+)\/document$/);
     if (docMatch && req.method === 'GET') {
       const session = sessions.consumeBoot(docMatch[1], url.searchParams.get('boot'));
-      if (!session) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, '<!doctype html><p>This view session is no longer valid. Reload the tab.</p>'); return; }
+      if (!session) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument('This view session is no longer valid. Reload the tab.')); return; }
       serveDocument({ req, res, url, session, requestId });
       return;
     }
@@ -236,6 +265,17 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (viewMatch) {
       // A view may only fetch its own session's assets.
       if (viewMatch[1] !== session.id) { fail(ctx, 403, 'forbidden', 'Rejected.'); return; }
+      // The document is served at /views/{sid}/document, so a relative
+      // "./api/v1/db" in a view resolves to /views/{sid}/api/v1/db. Authors
+      // write relative URLs by reflex, and falling through to the asset handler
+      // answered 404 -- which reads as "the API is broken", not "you addressed
+      // it from the wrong base". Same session, same checks, just the other
+      // spelling.
+      if (viewMatch[2].startsWith('api/v1/')) {
+        ctx.url.pathname = `/${viewMatch[2]}`;
+        await serveApi(ctx);
+        return;
+      }
       serveViewAsset(ctx, viewMatch[2]);
       return;
     }
@@ -268,12 +308,12 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     }
     // Workspace styles the document opts into: <link href="styles/x.css"> works
     // via relative resolution, but we also honor .neuron/styles/<view-name>.css.
-    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.nhtml$/i, '')}.css`;
+    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.html$/i, '')}.css`;
     const styles = fs.existsSync(path.join(session.root, '.neuron', 'styles', autoStyle)) ? [autoStyle] : [];
     const html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles });
     send(ctx.res, 200, {
       'Content-Type': 'text/html; charset=utf-8',
-      'Content-Security-Policy': DOC_CSP,
+      'Content-Security-Policy': VIEW_CSP,
       // HttpOnly + SameSite=Strict: the token is invisible to view scripts and
       // never sent by an outside browser page, killing CSRF against loopback.
       'Set-Cookie': `nv=${session.id}:${session.cookieToken}; Path=/; HttpOnly; SameSite=Strict`,
@@ -325,6 +365,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (route === 'search' && method === 'GET') return apiSearch(ctx);
     if (route === 'notes' && method === 'GET') return apiNotes(ctx);
     if (route === 'tags' && method === 'GET') return apiTags(ctx);
+    if (route === 'db' && method === 'GET') return apiDatabase(ctx);
     const fragMatch = route.match(/^fragments\/([A-Za-z0-9_-]{1,64})$/);
     if (fragMatch && method === 'GET') return apiFragment(ctx, fragMatch[1]);
 
@@ -403,7 +444,9 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
 
     doc.variables[key] = { ...(doc.variables[key] as Record<string, unknown>), value };
     atomicWrite(file, JSON.stringify(doc, null, 2));
-    sendJson(ctx.res, 200, { key, value });
+    // htmx callers get a small confirmation to swap into a live region; others get JSON.
+    if (isHx(ctx.req)) send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, `<p class="neuron-empty">Saved — now “${esc(String(value))}”.</p>`);
+    else sendJson(ctx.res, 200, { key, value });
   }
 
   function apiFilesList(ctx: Ctx): void {
@@ -451,6 +494,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const current = sha256(fs.readFileSync(resolved.full, 'utf-8'));
       if (current !== body.baseHash) { fail(ctx, 409, 'conflict', 'The file changed since it was read. Re-fetch and retry.'); return; }
     }
+    capturePreImage(ctx.session.root, resolved.full, 'overwrite');
     atomicWrite(resolved.full, body.content);
     sendJson(ctx.res, 200, { path: resolved.rel, hash: sha256(body.content) });
   }
@@ -474,6 +518,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const resolved = checkedPath(ctx, ctx.url.searchParams.get('path'), 'write');
     if (!resolved) return;
     if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'File not found.'); return; }
+    capturePreImage(ctx.session.root, resolved.full, 'delete');
     fs.unlinkSync(resolved.full);
     sendJson(ctx.res, 200, { path: resolved.rel, deleted: true });
   }
@@ -550,6 +595,101 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     }
   }
 
+  /**
+   * GET /api/v1/db?path=<rel>&table=<name>
+   *
+   * A rendered table for a view. Without it a view can fetch a .db and get
+   * JSON, which is only useful to a document willing to script; this lets an
+   * htmx-only view show a database at all.
+   *
+   * Gated on workspace.files.read and the path policy -- no new capability. A
+   * .db is a file the view could already fetch, so a second gate over the same
+   * access would only let a manifest look more restricted than it is.
+   *
+   * This is a READER, not the model. src/renderer/lib/db.ts owns the format:
+   * version detection, read-only v1 migration, unknown-field preservation.
+   * Those are all write concerns and main never writes a .db. Keep it that way
+   * -- the moment this function needs to serialize, it is the wrong function.
+   */
+  function apiDatabase(ctx: Ctx): void {
+    if (!requireCap(ctx, 'workspace.files.read')) return;
+    const resolved = checkedPath(ctx, ctx.url.searchParams.get('path'), 'read');
+    if (!resolved) return;
+    if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'Database not found.'); return; }
+    if (fs.statSync(resolved.full).size > MAX_READ_BYTES) { fail(ctx, 413, 'too_large', 'Database exceeds the 2 MB read limit.'); return; }
+
+    let doc: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(resolved.full, 'utf-8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+      doc = parsed as Record<string, unknown>;
+    } catch {
+      fail(ctx, 422, 'invalid_database', 'That file is not a readable database.');
+      return;
+    }
+
+    // v1 is a lone table at the root; v2 keys tables by id.
+    const wanted = ctx.url.searchParams.get('table');
+    const tables = (doc.tables && typeof doc.tables === 'object' && !Array.isArray(doc.tables))
+      ? doc.tables as Record<string, Record<string, unknown>>
+      : { [resolved.rel.split('/').pop()!.replace(/\.db$/i, '')]: doc };
+
+    const ids = Object.keys(tables);
+    const id = wanted && ids.includes(wanted) ? wanted : (!wanted && ids.length === 1 ? ids[0] : null);
+    if (!id) {
+      fail(ctx, wanted ? 404 : 400, wanted ? 'not_found' : 'table_required',
+        wanted ? 'No table by that name in this database.' : 'This database has several tables; add table=<name>.');
+      return;
+    }
+
+    const table = tables[id] ?? {};
+    const schema = (table.schema && typeof table.schema === 'object' ? table.schema : {}) as Record<string, unknown>;
+    const props = (schema.properties && typeof schema.properties === 'object' ? schema.properties : {}) as Record<string, { name?: string }>;
+    const order = Array.isArray(schema.order) ? (schema.order as unknown[]).filter((k): k is string => typeof k === 'string') : Object.keys(props);
+    // A row is { id, values: { key: value } } -- cells live under `values`, not
+    // at the row root. Reading row[key] produced a table with correct headers
+    // and entirely blank cells, and the first test I wrote for this route built
+    // its fixture from the same wrong assumption, so it confirmed the bug rather
+    // than catching it. A fixture for a format has to come from the format.
+    const rows: { id?: string; values: Record<string, unknown> }[] =
+      (Array.isArray(table.rows) ? (table.rows as Record<string, unknown>[]) : [])
+        .slice(0, MAX_LIST_ENTRIES)
+        .map((row) => ({
+          id: typeof row.id === 'string' ? row.id : undefined,
+          values: row.values && typeof row.values === 'object' && !Array.isArray(row.values)
+            ? row.values as Record<string, unknown>
+            : {},
+        }));
+
+    // Cells render as escaped text, always. This route reads one table from one
+    // approved path; it is not a query engine, and nothing the caller supplies
+    // reaches a filter, a sort, or a path.
+    const cell = (value: unknown): string => {
+      if (value === null || value === undefined) return '';
+      if (Array.isArray(value)) return value.map((v) => esc(typeof v === 'object' ? JSON.stringify(v) : v)).join(', ');
+      if (typeof value === 'object') return esc(JSON.stringify(value));
+      return esc(value);
+    };
+
+    if (isHx(ctx.req)) {
+      const head = order.map((key) => '<th>' + esc(props[key]?.name ?? key) + '</th>').join('');
+      const body = rows.length
+        ? rows.map((row) => '<tr>' + order.map((key) => '<td>' + cell(row.values[key]) + '</td>').join('') + '</tr>').join('\n')
+        : '<tr><td colspan="' + Math.max(1, order.length) + '"><p class="neuron-empty">No rows yet.</p></td></tr>';
+      send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' },
+        '<div class="neuron-scroll"><table class="neuron-table"><thead><tr>' + head + '</tr></thead><tbody>\n' + body + '\n</tbody></table></div>');
+      return;
+    }
+
+    sendJson(ctx.res, 200, {
+      path: resolved.rel,
+      table: id,
+      tables: ids,
+      columns: order.map((key) => ({ key, name: props[key]?.name ?? key })),
+      rows,
+    });
+  }
+
   function apiFragment(ctx: Ctx, name: string): void {
     // Fragments resolve by sanitized id inside .neuron/fragments only — the
     // name can never become a filesystem path.
@@ -558,11 +698,17 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (fs.existsSync(file) && fs.statSync(file).size <= MAX_FRAGMENT_BYTES) {
       template = fs.readFileSync(file, 'utf-8');
     } else if (name === 'workspace-summary') {
+      if (!requireCap(ctx, 'notes.read') || !requireCap(ctx, 'tags.read')) return;
       template = builtinWorkspaceSummary(ctx.session);
     }
     if (template === null) { fail(ctx, 404, 'not_found', `No fragment named "${name}".`); return; }
-    const { vars } = loadVariables(ctx.session.root);
-    const variables = Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v.value]));
+    // Variables are capability-gated here exactly as they are for the document
+    // and the variables API. Without variables.read a fragment still renders --
+    // {{ variables.x }} resolves to empty, same as an unknown key -- so denying
+    // the capability degrades the fragment instead of breaking the whole view.
+    const variables = ctx.session.caps.has('variables.read')
+      ? Object.fromEntries(Object.entries(loadVariables(ctx.session.root).vars).map(([k, v]) => [k, v.value]))
+      : {};
     const params: Record<string, string> = {};
     for (const [k, v] of ctx.url.searchParams.entries()) if (/^[A-Za-z][\w-]*$/.test(k)) params[k] = v.slice(0, 512);
     send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, interpolate(template, { variables, params }));

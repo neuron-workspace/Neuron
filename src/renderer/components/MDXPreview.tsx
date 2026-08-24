@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
+import { Run } from './RunButton';
+import DbView from './DbView';
+import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
@@ -115,6 +118,23 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
 
     while (i < lines.length) {
       const line = lines[i];
+
+      // MDX ESM: `import ... from '...'` / `export ...` are module syntax, not
+      // prose. Neuron's renderer is a line parser, not a real MDX compiler, so
+      // these fell through and rendered as literal text -- a note that declares
+      // its components showed the declaration to the reader. Skip the statement,
+      // including the multi-line brace form, and skip the blank line after it so
+      // the removal does not leave a hole in the document.
+      if (/^\s*(import|export)\s/.test(line)) {
+        let open = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+        i++;
+        while (i < lines.length && open > 0) {
+          open += (lines[i].match(/\{/g) ?? []).length - (lines[i].match(/\}/g) ?? []).length;
+          i++;
+        }
+        if (i < lines.length && lines[i].trim() === '') i++;
+        continue;
+      }
 
       // Code Block parser (markdown)
       if (line.trim().startsWith('```')) {
@@ -232,9 +252,17 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         if (!isSelfClosing && tagName && !line.includes(`</${tagName}>`)) {
           i++;
           let foundClosing = false;
+          // Track depth: stopping at the first `</Tag>` would truncate
+          // `<Grid>…<Grid>…</Grid>…</Grid>` at the inner close and leave the
+          // outer one stranded as literal text.
+          let depth = 1;
+          const openRe = new RegExp(`<${tagName}\\b(?![^>]*/>)`, 'g');
+          const closeRe = new RegExp(`</${tagName}>`, 'g');
           while (i < lines.length) {
             fullJSXLines.push(lines[i]);
-            if (lines[i].includes(`</${tagName}>`)) {
+            depth += (lines[i].match(openRe) ?? []).length;
+            depth -= (lines[i].match(closeRe) ?? []).length;
+            if (depth <= 0) {
               foundClosing = true;
               break;
             }
@@ -295,14 +323,65 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         const type = parseSemanticType(typeMatch?.[1]);
         const title = titleMatch ? titleMatch[1] : undefined;
 
-        // Extract children content
-        const childrenMatch = jsxStr.match(/>([\s\S]*?)<\/Callout>/);
+        // Children go back through parseMDX, exactly like the layout
+        // primitives below. Rendered as a raw string a callout could only hold
+        // one unformatted paragraph -- a list came out as literal dashes and
+        // `code` as literal backticks, which is what a callout is most often
+        // used for.
+        const childrenMatch = jsxStr.match(/>([\s\S]*)<\/Callout>/);
         const content = childrenMatch ? childrenMatch[1].trim() : '';
         return (
           <Callout key={`callout-${index}`} type={type} title={title}>
-            {content}
+            {content ? parseMDX(content) : null}
           </Callout>
         );
+      }
+
+      // 3. Layout primitives. Children are re-parsed through parseMDX so a Card
+      // can hold markdown, another Card, or a DbView -- without that they would
+      // arrive as raw text and the components would be decorative boxes.
+      //
+      // Attribute values are looked up in tables inside mdx-layout, never
+      // interpolated into a class string: a note is untrusted content and
+      // arbitrary CSS over the app chrome is UI spoofing.
+      const layout: Record<string, (props: Record<string, string>, kids: React.ReactNode) => React.ReactNode> = {
+        Row: (a, k) => <Row {...a}>{k}</Row>,
+        Col: (a, k) => <Col {...a}>{k}</Col>,
+        Grid: (a, k) => <Grid {...a}>{k}</Grid>,
+        Cell: (a, k) => <Cell {...a}>{k}</Cell>,
+        Card: (a, k) => <Card {...a}>{k}</Card>,
+        Stat: (a) => <Stat {...a} />,
+        Run: (a) => <Run {...a} />,
+        Divider: (a) => <Divider {...a} />,
+      };
+      const layoutMatch = jsxStr.match(/^<([A-Z][A-Za-z0-9]*)\b/);
+      if (layoutMatch && layout[layoutMatch[1]]) {
+        const tag = layoutMatch[1];
+        const openTag = jsxStr.slice(0, jsxStr.indexOf('>') + 1);
+        const attrs: Record<string, string> = {};
+        for (const m of openTag.matchAll(/([a-zA-Z][\w-]*)="([^"]*)"/g)) attrs[m[1]] = m[2];
+
+        // Children are everything between the open tag and the LAST matching
+        // close, so a nested tag of the same name does not truncate the block.
+        const close = `</${tag}>`;
+        const end = jsxStr.lastIndexOf(close);
+        const inner = end > -1 ? jsxStr.slice(jsxStr.indexOf('>') + 1, end) : '';
+        const kids = inner.trim() ? parseMDX(inner) : null;
+        return <div key={`${tag}-${index}`}>{layout[tag](attrs, kids)}</div>;
+      }
+
+      // 3. Match DbView — embeds a .db database (table/board/card) by @path.
+      if (jsxStr.startsWith('<DbView')) {
+        const path = jsxStr.match(/path="([^"]+)"/)?.[1];
+        const view = jsxStr.match(/view="([^"]+)"/)?.[1];
+        const table = jsxStr.match(/table="([^"]+)"/)?.[1];
+        if (!path) {
+          const err = new Error('<DbView /> needs a path, e.g. <DbView path="@Planner.db" />.') as MDXParseError;
+          err.block = jsxStr;
+          err.remediation = 'Add a path attribute pointing at a .db file relative to the workspace root, prefixed with @.';
+          throw err;
+        }
+        return <DbView key={`dbview-${index}`} path={path} view={view} table={table} />;
       }
 
       // If unrecognized component tag
@@ -319,7 +398,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
 
       const err = new Error(`Component "<${tagName} />" is not registered in Neuron.`) as MDXParseError;
       err.block = jsxStr;
-      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge /> and <Callout />.`;
+      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge />, <Callout />, <Run />, and <DbView />.`;
       throw err;
 
     } catch (caughtError: unknown) {

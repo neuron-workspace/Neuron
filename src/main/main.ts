@@ -1,7 +1,15 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { generateText } from 'ai';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
+import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
+import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -13,8 +21,9 @@ let mainWindow: BrowserWindow | null = null;
 let watcher: chokidar.FSWatcher | null = null;
 
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, the internal shell config, and .neuron configuration/assets.
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|nhtml|db|canvas)$)/;
+// canvases, folder mini-apps (neuron.app + neuron.app.json), the internal shell
+// config, and .neuron configuration/assets.
+const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas)$)/;
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent
@@ -192,7 +201,7 @@ function createWindow() {
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(DEV_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
@@ -207,6 +216,10 @@ function createWindow() {
     killAllPtys();
     mainWindow = null;
   });
+  // ...and again on the way out, because 'closed' is not on every exit path.
+  // A shell that outlives the app is not a test problem: it is a process the
+  // user never sees and cannot stop.
+  app.once('before-quit', killAllPtys);
 
   setupWatcher();
 }
@@ -229,16 +242,62 @@ ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 // IPC — settings (generic key/value; used for plugin config + state)
 // ==========================================================================
 
+// Secrets live under this one key and are readable ONLY by the main process.
+// Everything else in the settings file is renderer-readable through
+// settings:get, which is exactly how API keys leaked: plugin config -- apiKey
+// included -- was loaded into renderer state and then handed back to main on
+// every ai:complete call. Any renderer code could read every plugin's key, and
+// plugins are not sandboxed (risk R3), so one plugin could read another's.
+const SECRETS_KEY = '__secrets';
+
+function readSecret(scope: string, field: string): string | null {
+  const store = readSettings()[SECRETS_KEY];
+  if (!store || typeof store !== 'object') return null;
+  const scoped = (store as Record<string, unknown>)[scope];
+  if (!scoped || typeof scoped !== 'object') return null;
+  const value = (scoped as Record<string, unknown>)[field];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 ipcMain.handle('settings:get', (_event, key: string) => {
+  // The renderer may never read the secret namespace, by any key that resolves
+  // to it. Without this the store would be one settings.get('__secrets') away
+  // from being exactly as exposed as before.
+  if (key === SECRETS_KEY) return null;
   const settings = readSettings();
-  return key in settings ? settings[key] : null;
+  if (key in settings) {
+    const value = settings[key];
+    return key === SECRETS_KEY ? null : value;
+  }
+  return null;
 });
 ipcMain.handle('settings:set', (_event, key: string, value: unknown) => {
+  if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
   const settings = readSettings();
   settings[key] = value;
   writeSettings(settings);
   return { success: true };
 });
+
+// Write-only from the renderer's side: it can set a secret and ask whether one
+// exists, and it can never read the value back.
+ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, value: string) => {
+  if (typeof scope !== 'string' || typeof field !== 'string' || !scope || !field) {
+    return { success: false, error: 'Invalid secret reference.' };
+  }
+  const settings = readSettings();
+  const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object'
+    ? settings[SECRETS_KEY]
+    : {}) as Record<string, Record<string, string>>;
+  const scoped = { ...(store[scope] ?? {}) };
+  if (typeof value === 'string' && value.length > 0) scoped[field] = value;
+  else delete scoped[field];
+  settings[SECRETS_KEY] = { ...store, [scope]: scoped };
+  writeSettings(settings);
+  return { success: true };
+});
+
+ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => readSecret(scope, field) !== null);
 
 // ==========================================================================
 // IPC — repository
@@ -377,6 +436,7 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
   try {
     const dir = path.dirname(resolved.fullPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
     // Atomic write: a crash mid-write must never leave a half-written note or database.
     const tmp = `${resolved.fullPath}.tmp`;
     fs.writeFileSync(tmp, content, 'utf-8');
@@ -393,13 +453,34 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
-    if (fs.existsSync(resolved.fullPath)) fs.unlinkSync(resolved.fullPath);
+    if (fs.existsSync(resolved.fullPath)) {
+      capturePreImage(resolved.repo, resolved.fullPath, 'delete');
+      fs.unlinkSync(resolved.fullPath);
+    }
     return { success: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Failed to delete note ${relativePath}:`, err);
     return { success: false, error: message };
   }
+});
+
+// Version history. Reads the write journal captured on every overwrite/delete.
+// Main-process only and deliberately not reachable from a view: the journal holds
+// pre-images from across the whole workspace, so exposing it to a capability-scoped
+// view would hand it file contents outside its path policy (DECISIONS.md D20).
+ipcMain.handle('journal:list', (_event, relativePath?: string) => {
+  const repo = activeRepoPath();
+  if (!repo) return [];
+  const entries = listJournalEntries(repo);
+  return relativePath ? entries.filter((e) => e.relativePath === relativePath) : entries;
+});
+
+ipcMain.handle('journal:restore', (_event, entryId: string) => {
+  const repo = activeRepoPath();
+  if (!repo) return { success: false, error: 'No workspace is open.' };
+  const result = restoreJournalEntry(repo, entryId);
+  return result.success ? { success: true } : { success: false, error: result.error };
 });
 
 ipcMain.handle('notes:create-section', async (_event, relativePath: string) => {
@@ -521,135 +602,66 @@ ipcMain.handle(
   'ai:complete',
   async (
     _event,
-    request: { provider: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> },
+    request: { provider: string; pluginId?: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> },
   ) => {
+    // Non-secret settings only -- baseUrl, model. An apiKey arriving from the
+    // renderer is destructured off and dropped: trusting one is what let every
+    // plugin read every other plugin's key. The real key is read here, from a
+    // store the renderer cannot see.
+    const { apiKey: _rendererSuppliedKey, ...config } = request.config ?? {};
+    const apiKey = request.pluginId ? readSecret(request.pluginId, 'apiKey') : null;
+
+    const needsKey = (label: string) =>
+      ({ success: false, error: `Add ${label} API key in the plugin settings.` });
+
     try {
-      const config = request.config ?? {};
-      if (request.provider === 'anthropic') {
-        const apiKey = config.apiKey;
-        if (!apiKey) return { success: false, error: 'Add an Anthropic API key in the plugin settings.' };
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: request.model || 'claude-opus-4-8',
-            max_tokens: 2048,
-            system: request.system,
-            messages: request.messages,
-          }),
-        });
-        const data = (await res.json()) as {
-          content?: { type: string; text?: string }[];
-          stop_reason?: string;
-          error?: { message?: string };
-        };
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        if (data.stop_reason === 'refusal') {
-          return { success: false, error: 'The model declined to respond to this request.' };
+      let model;
+      switch (request.provider) {
+        case 'anthropic': {
+          if (!apiKey) return needsKey('an Anthropic');
+          model = createAnthropic({ apiKey })(request.model || 'claude-opus-4-8');
+          break;
         }
-        const text = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-        return { success: true, text };
-      }
-
-      if (request.provider === 'local') {
-        // Local model endpoint (e.g. Ollama). Expects an OpenAI-style chat response.
-        const endpoint = config.endpoint || 'http://localhost:11434/v1/chat/completions';
-        const messages = request.system
-          ? [{ role: 'system', content: request.system }, ...request.messages]
-          : request.messages;
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ model: request.model || config.model || 'llama3', messages, stream: false }),
-        });
-        const data = (await res.json()) as {
-          choices?: { message?: { content?: string } }[];
-          message?: { content?: string };
-          error?: { message?: string } | string;
-        };
-        if (!res.ok) {
-          const message = typeof data.error === 'string' ? data.error : data.error?.message;
-          return { success: false, error: message || `Local model request failed (${res.status}).` };
+        case 'openai': {
+          if (!apiKey) return needsKey('an OpenAI');
+          model = createOpenAI({ apiKey })(request.model || 'gpt-4o');
+          break;
         }
-        const text = data.choices?.[0]?.message?.content ?? data.message?.content ?? '';
-        return { success: true, text };
+        case 'google': {
+          if (!apiKey) return needsKey('a Google');
+          model = createGoogleGenerativeAI({ apiKey })(request.model || 'gemini-2.0-flash');
+          break;
+        }
+        case 'openrouter': {
+          if (!apiKey) return needsKey('an OpenRouter');
+          model = createOpenRouter({ apiKey })(request.model || 'openai/gpt-4o');
+          break;
+        }
+        case 'local': {
+          // A local endpoint is whatever the user is running -- Ollama, LM
+          // Studio, their own box -- so the base URL is theirs to set and a key
+          // is usually absent. Never hardcode a vendor here.
+          model = createOpenAICompatible({
+            name: 'local',
+            baseURL: config.baseUrl || 'http://localhost:11434/v1',
+            apiKey: apiKey ?? 'local',
+          })(request.model || config.model || 'llama3');
+          break;
+        }
+        default:
+          return { success: false, error: `Unknown AI provider "${request.provider}".` };
       }
 
-      if (request.provider === 'openai') {
-        const apiKey = config.apiKey;
-        if (!apiKey) return { success: false, error: 'Add an OpenAI API key in the plugin settings.' };
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: request.model || 'gpt-4o',
-            messages: request.system
-              ? [{ role: 'system', content: request.system }, ...request.messages]
-              : request.messages,
-          }),
-        });
-        const data = (await res.json()) as any;
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        const text = data.choices?.[0]?.message?.content ?? '';
-        return { success: true, text };
-      }
-
-      if (request.provider === 'google') {
-        const apiKey = config.apiKey;
-        if (!apiKey) return { success: false, error: 'Add a Gemini API key in the plugin settings.' };
-        const model = request.model || 'gemini-1.5-flash';
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            contents: request.messages.map((m) => ({
-              role: m.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: m.content }],
-            })),
-            systemInstruction: request.system ? {
-              parts: [{ text: request.system }]
-            } : undefined,
-          }),
-        });
-        const data = (await res.json()) as any;
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        return { success: true, text };
-      }
-
-      if (request.provider === 'openrouter') {
-        const apiKey = config.apiKey;
-        if (!apiKey) return { success: false, error: 'Add an OpenRouter API key in the plugin settings.' };
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'authorization': `Bearer ${apiKey}`,
-            'HTTP-Referer': 'https://github.com/GoogleDeepMind/neuron',
-            'X-Title': 'Neuron',
-          },
-          body: JSON.stringify({
-            model: request.model || 'google/gemini-2.5-flash',
-            messages: request.system
-              ? [{ role: 'system', content: request.system }, ...request.messages]
-              : request.messages,
-          }),
-        });
-        const data = (await res.json()) as any;
-        if (!res.ok) return { success: false, error: data.error?.message || `Request failed (${res.status}).` };
-        const text = data.choices?.[0]?.message?.content ?? '';
-        return { success: true, text };
-      }
-
-      return { success: false, error: `Unknown AI provider "${request.provider}".` };
+      const { text } = await generateText({
+        model,
+        system: request.system,
+        messages: request.messages,
+        maxOutputTokens: 2048,
+      });
+      return { success: true, text };
     } catch (err: unknown) {
+      // Provider errors carry request context and sometimes the key itself.
+      // Surface the message only, never the object.
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
     }
@@ -715,7 +727,7 @@ app.on('web-contents-created', (_event, contents) => {
   // Is this webContents an HTMX view (served from the loopback view server)?
   const isHtmxView = () => {
     const origin = getViewServerOrigin();
-    return !!origin && contents.getURL().startsWith(origin);
+    return isSameOrigin(contents.getURL(), origin);
   };
 
   // 2. Never let a page spawn a new Electron window. HTMX views may not open
@@ -732,11 +744,11 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-navigate', (event, url) => {
     if (isHtmxView()) {
       const origin = getViewServerOrigin();
-      if (!origin || !url.startsWith(origin)) event.preventDefault();
+      if (!isSameOrigin(url, origin)) event.preventDefault();
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = url.startsWith('http://localhost:5173') || url.startsWith('file://');
+    const allowed = isAppContent(url);
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
@@ -779,6 +791,7 @@ initHtmxViews({
 });
 
 app.on('ready', () => {
+  configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
   createWindow();
   // GitHub-backed auto-update for NSIS builds. Store builds

@@ -14,6 +14,8 @@ interface ChatMessage {
 
 interface AssistantPanelProps {
   host: HostRuntime;
+  /** Whose stored secret main should use. The key never reaches the renderer. */
+  pluginId: string;
   provider: 'anthropic' | 'openai' | 'google' | 'local' | 'openrouter';
   defaultModel: string;
   emptyHint: string;
@@ -35,7 +37,7 @@ function getKeywordScore(content: string, query: string): number {
   return score;
 }
 
-export default function AssistantPanel({ host, provider, defaultModel, emptyHint }: AssistantPanelProps) {
+export default function AssistantPanel({ host, pluginId, provider, defaultModel, emptyHint }: AssistantPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -92,6 +94,10 @@ export default function AssistantPanel({ host, provider, defaultModel, emptyHint
       model: host.config.model || defaultModel,
       system,
       messages: history.map((m) => ({ role: m.role, content: m.content })),
+      // host.config no longer carries the key -- main resolves it from its own
+      // store using pluginId. baseUrl and model still travel; they are settings,
+      // not secrets.
+      pluginId,
       config: host.config,
     });
 

@@ -3,15 +3,21 @@
   "variables": {
     "dashboardTitle": {
       "type": "string",
-      "value": "Team dashboard",
+      "value": "Workspace summary",
       "writable": false,
-      "description": "Heading used by Team dashboard.nhtml."
+      "description": "Heading used by the dashboard template and fragments."
     },
     "projectStatus": {
       "type": "string",
-      "value": "paused",
+      "value": "done",
       "writable": true,
-      "description": "Editable from the dashboard's status form."
+      "description": "Rendered by the project-note fragment; writable from a view."
+    },
+    "snakeHighScore": {
+      "type": "number",
+      "value": 0,
+      "writable": true,
+      "description": "Best Snake score. Written by the Snake mini-app, which has no file access at all."
     }
   }
 }

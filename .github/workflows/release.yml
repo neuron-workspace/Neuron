@@ -7,6 +7,11 @@ on:
 
 permissions:
   contents: write
+  # Build provenance is signed with a short-lived OIDC identity; the workflow
+  # cannot mint one without id-token, and cannot store the result without
+  # attestations. Neither grants access to anything else.
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -17,7 +22,9 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
-            args: --win --x64
+            # nsis + portable here; the Store package is built by its own step
+            # below so an appx failure cannot cost you the installers.
+            args: --win nsis portable --x64
           - name: Linux x64
             os: ubuntu-latest
             args: --linux --x64
@@ -35,12 +42,62 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      # Windows code signing is opt-in: with no certificate secret configured
+      # the build runs exactly as before and produces unsigned installers,
+      # rather than failing. Do not point this at a bought certificate without
+      # reading docs/distribution.md first -- the same wiring works, but the
+      # trust story is completely different.
+      - name: Stage the Windows signing certificate
+        id: cert
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+        run: |
+          # Decided in the script, not in an `if:` expression. Whether a
+          # step's own env is in scope for its own condition is exactly the
+          # kind of thing that quietly evaluates false and ships unsigned.
+          if [ -z "$WINDOWS_CERT_BASE64" ]; then
+            echo "No WINDOWS_CERT_BASE64 secret set; installers will be unsigned."
+            exit 0
+          fi
+          printf '%s' "$WINDOWS_CERT_BASE64" | base64 -d > "$RUNNER_TEMP/signing.pfx"
+          echo "path=$RUNNER_TEMP/signing.pfx" >> "$GITHUB_OUTPUT"
+          echo "Certificate staged; electron-builder will sign."
+
       - name: Build installers (no publish)
         run: |
           npm run build
           npx electron-builder ${{ matrix.args }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ${{ steps.cert.outputs.path }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+
+      # Built separately, and after the installers, for two reasons: a failure
+      # here must not lose the .exe artifacts, and the Store package is not a
+      # download -- electron-builder deliberately leaves it unsigned because
+      # Partner Center signs it on submission. It goes to a different place
+      # than the release, so it gets its own artifact.
+      - name: Build the Microsoft Store package
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win appx --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload the Store package
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuron-store-appx
+          retention-days: 14
+          if-no-files-found: error
+          path: release/*.appx
+
+      - name: Remove the certificate from the runner
+        if: always() && steps.cert.outputs.path != ''
+        shell: bash
+        run: rm -f "${{ steps.cert.outputs.path }}"
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -65,14 +122,55 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+      # What actually lets someone prove a download is the build CI produced.
+      #
+      # A self-signed Authenticode certificate cannot do this: it has no trust
+      # anchor, so anyone who tampers with an installer can re-sign it with
+      # their own certificate carrying the same subject and Windows shows the
+      # two identically. These two artifacts can't be forged that way --
+      # provenance is signed by GitHub's OIDC identity and names the exact
+      # workflow, commit and runner that produced each file.
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
+            -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+            -exec sha256sum {} + | sed 's|\./[^/]*/||' | sort -k2 > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Neuron ${{ github.ref_name }}
           generate_release_notes: true
+          # Any tag carrying a prerelease segment (v0.4.2-beta.1) publishes as a
+          # prerelease, so it is not offered as the latest download and
+          # electron-updater does not push it to stable users.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: false
-          files: artifacts/**/*
+          # Explicit extensions rather than artifacts/**/* so the Store package
+          # stays out. It is unsigned by design and only Partner Center can do
+          # anything with it; on a download page it is a support ticket.
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.blockmap
+            artifacts/**/latest*.yml
+            SHA256SUMS.txt
 
       # Policy: keep only the newest patch per major.minor. After publishing
       # vX.Y.Z, delete any released vX.Y.<lower> (release + its tag). Strictly

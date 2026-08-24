@@ -5,6 +5,18 @@ import type { HostRuntime, PanelView, PluginCommand, PluginHost, PluginManifest,
 interface RegisteredPanel { pluginId: string; view: PanelView }
 interface RegisteredCommand { pluginId: string; command: PluginCommand }
 
+// Plugins are opt-in, with one exception. Version history is a recovery
+// surface: a user who must discover and enable it first will do so *after*
+// losing the file, the one moment it cannot help. It stays switchable off like
+// any other plugin, and the journal keeps recording either way.
+const DEFAULT_ENABLED = new Set(['version-history']);
+
+/** Secret fields are the ones the manifest declares as passwords. */
+function secretFieldsOf(catalog: PluginModule[], id: string): string[] {
+  const manifest = catalog.find((p) => p.manifest.id === id)?.manifest;
+  return (manifest?.configSchema ?? []).filter((f) => f.type === 'password').map((f) => f.key);
+}
+
 interface PluginState {
   enabled: Record<string, boolean>;
   config: Record<string, Record<string, string>>;
@@ -55,7 +67,33 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
     (async () => {
       const saved = (await window.electronAPI?.settings.get<PluginState>(SETTINGS_KEY)) ?? null;
       if (cancelled) return;
-      setState({ enabled: saved?.enabled ?? {}, config: saved?.config ?? {} });
+      // Defaults are applied here, not in isEnabled(): activation and the
+      // reactivation key both read state.enabled directly, so a default that
+      // lives only in the accessor is invisible to them and the plugin never
+      // starts. One source of truth, seeded once.
+      const enabled = { ...saved?.enabled };
+      for (const id of DEFAULT_ENABLED) if (enabled[id] === undefined) enabled[id] = true;
+
+      // Migrate secrets already stored in the readable config. Blocking reads
+      // without moving these would leave every existing key exactly as exposed
+      // as before -- still sitting in a settings value any renderer code can
+      // fetch. Move first, then strip, then persist.
+      const config: Record<string, Record<string, string>> = {};
+      let moved = false;
+      for (const [id, values] of Object.entries(saved?.config ?? {})) {
+        const secretKeys = secretFieldsOf(catalog, id);
+        const safe: Record<string, string> = {};
+        for (const [key, value] of Object.entries(values ?? {})) {
+          if (secretKeys.includes(key) && value) {
+            await window.electronAPI?.settings.setSecret(id, key, value);
+            moved = true;
+          } else safe[key] = value;
+        }
+        config[id] = safe;
+      }
+      if (cancelled) return;
+      if (moved) void window.electronAPI?.settings.set(SETTINGS_KEY, { enabled, config });
+      setState({ enabled, config });
       setReady(true);
     })();
     return () => {
@@ -72,9 +110,21 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
     (id: string, on: boolean) => persist({ ...state, enabled: { ...state.enabled, [id]: on } }),
     [persist, state],
   );
+  // Secrets never enter the persisted config blob. settings.get is readable by
+  // any renderer code, so a key stored there is a key every plugin can read --
+  // and plugins are not sandboxed (risk R3). Password fields go to the
+  // main-process store instead, which has no getter.
   const setConfig = useCallback(
-    (id: string, config: Record<string, string>) => persist({ ...state, config: { ...state.config, [id]: config } }),
-    [persist, state],
+    (id: string, config: Record<string, string>) => {
+      const secretKeys = secretFieldsOf(catalog, id);
+      const safe: Record<string, string> = {};
+      for (const [key, value] of Object.entries(config)) {
+        if (secretKeys.includes(key)) void window.electronAPI?.settings.setSecret(id, key, value);
+        else safe[key] = value;
+      }
+      persist({ ...state, config: { ...state.config, [id]: safe } });
+    },
+    [persist, state, catalog],
   );
   const getConfig = useCallback((id: string) => state.config[id] ?? {}, [state.config]);
   const isEnabled = useCallback((id: string) => state.enabled[id] ?? false, [state.enabled]);

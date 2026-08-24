@@ -9,7 +9,7 @@ export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface ViewSession {
   id: string;
-  /** Workspace-relative posix path of the .nhtml file. */
+  /** Workspace-relative posix path of the HTML view file. */
   viewPath: string;
   /** Absolute workspace root this session is bound to. */
   root: string;

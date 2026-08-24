@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest a focused improvement to Neuron
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Describe the workflow and outcome you need rather than only a proposed implementation.
+
+        **Do not report security vulnerabilities here.** Use [GitHub private vulnerability reporting](https://github.com/shiv-khetan/Neuron/security/advisories/new) instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What are you trying to accomplish, and what makes it difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should Neuron let you do, and how would you know it works?
+    validations:
+      required: true
+  - type: dropdown
+    id: workspace-file-type
+    attributes:
+      label: Workspace file type involved
+      options:
+        - .md
+        - .mdx
+        - .canvas
+        - .db
+        - .html
+        - Multiple file types
+        - Not file-specific
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround or alternatives
+      description: How do you handle this workflow now?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add sanitized examples, sketches, or screenshots that clarify the request.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for similar requests.
+          required: true
+        - label: This request does not disclose a security vulnerability.
+          required: true

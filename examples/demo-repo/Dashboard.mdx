@@ -1,0 +1,158 @@
+---
+title: Dashboard
+type: dashboard
+tags:
+  - planner
+  - weekly-review
+---
+
+# Planner
+
+<Callout type="info" title="Snapshot, not a formula">
+The metric strip is checked against `Planner.db` as of today. The live tables
+below remain the source of truth when the plan changes.
+</Callout>
+
+<Grid cols="5" gap="sm">
+<Cell cols="1"><Stat label="Open" value="20" tone="plain" /></Cell>
+<Cell cols="1"><Stat label="Overdue" value="3" tone="danger" /></Cell>
+<Cell cols="1"><Stat label="Due this week" value="5" tone="accent" /></Cell>
+<Cell cols="1"><Stat label="Blocked" value="2" tone="surface" /></Cell>
+<Cell cols="1"><Stat label="Done" value="6" tone="positive" /></Cell>
+</Grid>
+
+<Divider label="Focus" />
+
+<Row gap="lg" align="stretch">
+<Col gap="md">
+<Card title="Move today" tone="accent">
+
+- [ ] Make the welcome email link to the guide
+- [ ] Draft the launch checklist
+- [ ] Profile the slow list screen
+- [ ] Test the checkout flow on a clean account
+
+Start with [[projects/Website refresh]], then hand the writing thread back to
+[[projects/Help centre]].
+
+</Card>
+<Card title="Waiting on" tone="danger">
+
+- **Sign the hosting contract** — legal is still reviewing the vendor terms
+- **Measure cold start on older phones** — waiting on loaner handsets from IT
+
+</Card>
+</Col>
+
+<Col gap="md">
+<Card title="Project pulse">
+
+| Project | State | Next move |
+| --- | --- | --- |
+| [[projects/Website refresh]] | active | unblock the contract |
+| [[projects/Help centre]] | active | finish getting-started |
+| [[projects/Mobile app]] | paused | keep measurements queued |
+| [[projects/Customer research]] | past target | settle retention |
+| [[projects/Onboarding revamp]] | active | fix the empty first run |
+
+</Card>
+</Col>
+</Row>
+
+<Divider label="Run" />
+
+<Row gap="sm" wrap="true">
+
+<Card title="Editor" pad="sm">
+
+<Run label="Open this workspace in VS Code" cmd="code ." tone="accent" />
+
+<Run label="Start a Claude session" cmd="claude" />
+
+</Card>
+
+<Card title="Shell" pad="sm">
+
+<Run label="List this folder" cmd="ls" />
+
+<Run label="Where am I" cmd="pwd" />
+
+</Card>
+
+</Row>
+
+<Callout type="warning" title="What a Run button is, and is not">
+Each button sends one command to the workspace terminal, opening it if it is
+closed. The command is printed on the button because that is the security
+design, not decoration: the label is what the note's author claims, the command
+is what actually happens, and a note can arrive by clone or by sync. Read the
+command, not the label. A command may only be one line — a second line could
+run something the button never showed you, so those are refused outright.
+</Callout>
+
+<Divider label="Weekly review" />
+
+<Card title="Review the shape of the work">
+<Grid cols="2" gap="md">
+<Cell cols="1">
+<Card title="What changed" tone="positive">
+
+- [x] Recruited five interview participants
+- [x] Documented the refund policy
+- [x] Audited the old pages for dead links
+
+</Card>
+</Cell>
+<Cell cols="1">
+<Card title="Questions for Friday" tone="surface">
+
+- Does [[projects/Customer research]] need a new target?
+- Is [[projects/Mobile app]] still intentionally paused?
+- Which office-move item should follow the launch?
+
+</Card>
+</Cell>
+</Grid>
+</Card>
+
+<Divider label="Live data" />
+
+<Card title="Tasks">
+<DbView path="@Planner.db" table="tasks" />
+</Card>
+
+<Card title="Projects">
+<DbView path="@Planner.db" table="projects" />
+</Card>
+
+<Divider label="About" />
+
+<Callout type="warning" title="Not built yet">
+
+These are the questions worth asking weekly, and none of them can be answered
+from a single file:
+
+- Notes with `- [ ]` TODOs but no task metadata
+- Tasks with no project, and projects with no active task
+- Anything untouched for a fortnight
+
+Each needs an index across every note's frontmatter and body. `DbView` reads one
+table from one database, and scanning the whole workspace on every render does
+not hold past a few hundred notes. The design is settled in
+`docs/architecture/metadata-index.md`; until it ships, this section is a
+placeholder and says so rather than showing three empty cards.
+
+</Callout>
+
+<Callout type="info" title="How this page is built">
+Everything above is ordinary Markdown plus layout components — `Grid`, `Row`,
+`Col`, `Cell`, `Card`, `Stat`, `Divider` — a live `DbView` reading `Planner.db`,
+and `Run` buttons wired to the terminal. The file stays plain MDX on disk, so it
+is readable and editable without Neuron.
+
+The counts at the top are typed by hand, like anything else in a note. For a
+dashboard that computes — overdue against today's date, a board grouped by
+status, the workload split across projects, and a capture box that appends to
+`Planner.db` — see `Custom dashboard.html`, which declares JavaScript and write
+access in its manifest and runs sandboxed.
+</Callout>

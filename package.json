@@ -1,9 +1,9 @@
 {
   "name": "neuron",
-  "version": "1.4.1",
+  "version": "0.4.3",
   "description": "Local-first Markdown and MDX knowledge workspace",
-  "author": "Neuron contributors <contributors@neuron.notes>",
-  "license": "MIT",
+  "author": "Shivam Khetan <shivkhetan18@gmail.com>",
+  "license": "Apache-2.0",
   "private": false,
   "main": "dist/main/main.js",
   "type": "commonjs",
@@ -12,6 +12,7 @@
     "dev:renderer": "vite",
     "dev:main": "tsc -w -p tsconfig.main.json",
     "dev": "concurrently -k -n \"renderer,main,electron\" -c \"blue,yellow,green\" \"npm run dev:renderer\" \"npm run dev:main\" \"node tools/dev/start-electron.js\"",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json && node tools/copy-htmx.mjs",
     "build": "npm run clean:build && npm run build:main && npm run build:renderer",
@@ -26,15 +27,29 @@
     "test:htmx": "node tools/htmx-views.test.mjs",
     "test:canvas": "node tools/canvas-model.test.mjs",
     "test:sanitize": "node tools/sanitize-html.test.mjs",
-    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize"
+    "test:navigation": "node tools/navigation.test.mjs",
+    "test:journal": "node tools/journal.test.mjs",
+    "test:db": "node tools/db.test.mjs",
+    "test:contrast": "node tools/contrast.test.mjs",
+    "test:terminal-bus": "node tools/terminal-bus.test.mjs",
+    "test:demo-data": "node tools/demo-data.test.mjs",
+    "test:e2e": "npm run build:main && playwright test",
+    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast && npm run test:terminal-bus && npm run test:demo-data && npm run test:procs",
+    "shoot": "node tools/shoot.mjs",
+    "test:procs": "node tools/procs.test.mjs"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.41",
+    "@ai-sdk/google": "^4.0.50",
+    "@ai-sdk/openai": "^4.0.46",
+    "@ai-sdk/openai-compatible": "^3.0.35",
     "@codemirror/lang-markdown": "^6.2.5",
     "@codemirror/language-data": "^6.3.1",
     "@codemirror/state": "^6.4.1",
     "@codemirror/view": "^6.26.0",
     "@mdx-js/mdx": "^3.0.1",
     "@mdx-js/react": "^3.0.1",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
     "@radix-ui/react-accordion": "^1.2.14",
     "@radix-ui/react-alert-dialog": "^1.1.17",
     "@radix-ui/react-aspect-ratio": "^1.1.10",
@@ -66,6 +81,7 @@
     "@uiw/react-codemirror": "^4.22.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "ai": "^7.0.77",
     "chokidar": "^3.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -90,6 +106,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^20.14.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
@@ -105,7 +122,8 @@
     "typescript": "^5.4.5"
   },
   "overrides": {
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "js-yaml": "^4.3.1"
   },
   "build": {
     "appId": "io.github.neuron.notes",
@@ -154,9 +172,9 @@
     "appx": {
       "applicationId": "Neuron",
       "displayName": "Neuron",
-      "identityName": "REPLACE.WITH.PartnerCenter.IdentityName",
-      "publisher": "CN=REPLACE-WITH-PARTNER-CENTER-PUBLISHER-ID",
-      "publisherDisplayName": "REPLACE_WITH_PUBLISHER_DISPLAY_NAME",
+      "identityName": "ShivamKhetan.NeuronDesktop",
+      "publisher": "CN=7632F1A5-D41D-4A68-802B-CBBC1A910C2A",
+      "publisherDisplayName": "Shivam Khetan",
       "backgroundColor": "#1a1a1a",
       "languages": [
         "en-US"

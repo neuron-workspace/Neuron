@@ -1,0 +1,524 @@
+{
+  "version": 2,
+  "tables": {
+    "tasks": {
+      "name": "Tasks",
+      "schema": {
+        "order": [
+          "title",
+          "status",
+          "priority",
+          "due",
+          "project",
+          "blocker",
+          "done"
+        ],
+        "properties": {
+          "title": {
+            "name": "Task",
+            "type": "text"
+          },
+          "status": {
+            "name": "Status",
+            "type": "select",
+            "options": [
+              {
+                "id": "todo",
+                "name": "Todo",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "doing",
+                "name": "In progress",
+                "color": "#528fd1"
+              },
+              {
+                "id": "blocked",
+                "name": "Blocked",
+                "color": "#c0705f"
+              },
+              {
+                "id": "done",
+                "name": "Done",
+                "color": "#5aa06c"
+              }
+            ]
+          },
+          "priority": {
+            "name": "Priority",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "name": "Low",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "medium",
+                "name": "Medium",
+                "color": "#528fd1"
+              },
+              {
+                "id": "high",
+                "name": "High",
+                "color": "#c0705f"
+              }
+            ]
+          },
+          "due": {
+            "name": "Due",
+            "type": "date"
+          },
+          "project": {
+            "name": "Project",
+            "type": "text"
+          },
+          "blocker": {
+            "name": "Blocked by",
+            "type": "text"
+          },
+          "done": {
+            "name": "Done",
+            "type": "checkbox"
+          }
+        }
+      },
+      "rows": [
+        {
+          "id": "t1",
+          "values": {
+            "title": "Draft the launch checklist",
+            "status": "doing",
+            "priority": "high",
+            "due": "2026-08-21",
+            "project": "Website refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t2",
+          "values": {
+            "title": "Sign the hosting contract",
+            "status": "blocked",
+            "priority": "high",
+            "due": "2026-08-26",
+            "project": "Website refresh",
+            "blocker": "Legal is still reviewing the vendor terms",
+            "done": false
+          }
+        },
+        {
+          "id": "t3",
+          "values": {
+            "title": "Write the announcement post",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-08-27",
+            "project": "Website refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t4",
+          "values": {
+            "title": "Freeze the content for review",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-04",
+            "project": "Website refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t5",
+          "values": {
+            "title": "Audit the old pages for dead links",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-18",
+            "project": "Website refresh",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t15",
+          "values": {
+            "title": "Test the checkout flow on a clean account",
+            "status": "todo",
+            "priority": "high",
+            "due": "2026-09-01",
+            "project": "Website refresh",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t6",
+          "values": {
+            "title": "Rewrite the getting-started article",
+            "status": "doing",
+            "priority": "medium",
+            "due": "2026-08-24",
+            "project": "Help centre",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t7",
+          "values": {
+            "title": "Screenshot the new dashboard",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-12",
+            "project": "Help centre",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t8",
+          "values": {
+            "title": "Document the refund policy",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-21",
+            "project": "Help centre",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t9",
+          "values": {
+            "title": "Trim the FAQ page",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-19",
+            "project": "Help centre",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t16",
+          "values": {
+            "title": "Record the setup walkthrough",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-08-31",
+            "project": "Help centre",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t10",
+          "values": {
+            "title": "Profile the slow list screen",
+            "status": "doing",
+            "priority": "high",
+            "due": "2026-08-22",
+            "project": "Mobile app",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t11",
+          "values": {
+            "title": "Split the onboarding bundle",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-08-28",
+            "project": "Mobile app",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t12",
+          "values": {
+            "title": "Measure cold start on older phones",
+            "status": "blocked",
+            "priority": "low",
+            "due": "2026-09-20",
+            "project": "Mobile app",
+            "blocker": "Waiting on loaner handsets from IT",
+            "done": false
+          }
+        },
+        {
+          "id": "t17",
+          "values": {
+            "title": "Budget the next phase of work",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-10-02",
+            "project": "Mobile app",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t13",
+          "values": {
+            "title": "Recruit five interview participants",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-23",
+            "project": "Customer research",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t14",
+          "values": {
+            "title": "Set a retention window for recordings",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-11",
+            "project": "Customer research",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t18",
+          "values": {
+            "title": "Run the pilot interview",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-13",
+            "project": "Customer research",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t19",
+          "values": {
+            "title": "Make the welcome email link to the guide",
+            "status": "todo",
+            "priority": "high",
+            "due": "2026-08-20",
+            "project": "Onboarding revamp",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t20",
+          "values": {
+            "title": "Cover the empty-account first run",
+            "status": "doing",
+            "priority": "medium",
+            "due": "2026-09-07",
+            "project": "Onboarding revamp",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t21",
+          "values": {
+            "title": "Restyle the progress checklist",
+            "status": "done",
+            "priority": "medium",
+            "due": "2026-08-08",
+            "project": "Onboarding revamp",
+            "blocker": "",
+            "done": true
+          }
+        },
+        {
+          "id": "t22",
+          "values": {
+            "title": "Keep the meeting rooms bookable during the move",
+            "status": "todo",
+            "priority": "high",
+            "due": "2026-09-02",
+            "project": "Office move",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t23",
+          "values": {
+            "title": "Align desk labels across floors",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-08",
+            "project": "Office move",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t24",
+          "values": {
+            "title": "Check long names on the door signs",
+            "status": "todo",
+            "priority": "low",
+            "due": "2026-09-16",
+            "project": "Office move",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t25",
+          "values": {
+            "title": "Write the spend-approval FAQ",
+            "status": "todo",
+            "priority": "medium",
+            "due": "2026-09-05",
+            "project": "Budget planning",
+            "blocker": "",
+            "done": false
+          }
+        },
+        {
+          "id": "t26",
+          "values": {
+            "title": "Reduce the expense form to one page",
+            "status": "done",
+            "priority": "high",
+            "due": "2026-08-04",
+            "project": "Budget planning",
+            "blocker": "",
+            "done": true
+          }
+        }
+      ]
+    },
+    "projects": {
+      "name": "Projects",
+      "schema": {
+        "order": [
+          "name",
+          "status",
+          "owner",
+          "target"
+        ],
+        "properties": {
+          "name": {
+            "name": "Project",
+            "type": "text"
+          },
+          "status": {
+            "name": "Status",
+            "type": "select",
+            "options": [
+              {
+                "id": "active",
+                "name": "Active",
+                "color": "#528fd1"
+              },
+              {
+                "id": "paused",
+                "name": "Paused",
+                "color": "#8b8b8b"
+              },
+              {
+                "id": "shipped",
+                "name": "Shipped",
+                "color": "#5aa06c"
+              }
+            ]
+          },
+          "owner": {
+            "name": "Owner",
+            "type": "text"
+          },
+          "target": {
+            "name": "Target",
+            "type": "date"
+          }
+        }
+      },
+      "rows": [
+        {
+          "id": "p1",
+          "values": {
+            "name": "Website refresh",
+            "status": "active",
+            "owner": "John Doe",
+            "target": "2026-09-15"
+          }
+        },
+        {
+          "id": "p2",
+          "values": {
+            "name": "Help centre",
+            "status": "active",
+            "owner": "Jane Roe",
+            "target": "2026-09-30"
+          }
+        },
+        {
+          "id": "p3",
+          "values": {
+            "name": "Mobile app",
+            "status": "paused",
+            "owner": "Alex Kim",
+            "target": "2026-10-14"
+          }
+        },
+        {
+          "id": "p4",
+          "values": {
+            "name": "Customer research",
+            "status": "active",
+            "owner": "Maria Santos",
+            "target": "2026-08-15"
+          }
+        },
+        {
+          "id": "p5",
+          "values": {
+            "name": "Onboarding revamp",
+            "status": "active",
+            "owner": "John Doe",
+            "target": "2026-09-18"
+          }
+        },
+        {
+          "id": "p6",
+          "values": {
+            "name": "Office move",
+            "status": "active",
+            "owner": "Jane Roe",
+            "target": "2026-09-22"
+          }
+        },
+        {
+          "id": "p7",
+          "values": {
+            "name": "Budget planning",
+            "status": "active",
+            "owner": "Alex Kim",
+            "target": "2026-09-25"
+          }
+        }
+      ]
+    }
+  },
+  "relations": [
+    {
+      "from": {
+        "table": "tasks",
+        "property": "project"
+      },
+      "to": {
+        "table": "projects"
+      }
+    }
+  ]
+}

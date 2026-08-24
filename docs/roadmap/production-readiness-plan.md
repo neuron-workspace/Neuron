@@ -325,3 +325,45 @@ renderer outranks a layout-prep refactor.
 
 **Exact next task:** M0 (make CI run typecheck + `npm test`), then the M1
 command/keybinding foundation as specified in §4 and §7.
+
+---
+
+## 12. Notion-like UI & design-system backlog
+
+Full research, comparison table, and phased plan:
+`docs/design/notion-like-ui-roadmap.md`. Decision: **add no new UI/editor
+dependency** — Neuron already owns a shadcn/Radix system and a Markdown-first
+CodeMirror editor with a block decoration layer. Work is cleanup + expansion.
+
+Phase 1 — design-system cleanup (dependency-free):
+- [~] Shared **spacing scale** (`--space-1..8`) + **type scale** (`--text-*`,
+      `--leading-*`) tokens added to `index.css`. Remaining: point
+      `.preview-prose`, `.vw-content`, `.cm-live-editor`, and the HTMX kit at
+      them (needs the app running to verify no visual regression).
+- [ ] Add a `Toolbar` component; move the editor Source/Preview `.mode-switch`,
+      canvas controls, and `.db` header onto it. (Needs visual verification.)
+- [ ] Extract `PropertyRow` (from `DocumentProperties`), a single `EmptyState`,
+      and `PermissionPrompt` (from `HtmxViewSurface`); replace bespoke copies.
+- [x] Resolve sidebar drift: **deleted** the unused shadcn `ui/sidebar.tsx`
+      (771 lines) + its `hooks/use-mobile.tsx`, the dead `--sidebar-*` tokens,
+      and the `sidebar` color mapping in `tailwind.config.js`. `Sidebar.tsx`
+      (custom) is the real sidebar and was untouched.
+- [ ] Standardize settings fields on shadcn `Field`/`Input`; group with `Card`.
+- [ ] Add an explicit `IconButton`; audit shell for one-off buttons.
+
+Phase 2 — Notion affordances (dependency-free, needs an editor mini-plan):
+- [ ] Slash menu (`/`) in CodeMirror inserting Markdown snippets at the caret.
+- [ ] Extend `.cm-lp-block` handle/toolbar to plain Markdown lines (move/dup/del).
+- [ ] "Turn into" block-type menu (Markdown prefix transform).
+- [ ] Command-palette shortcut hints via `Kbd`; friendly tab labels + per-type icons.
+
+Phase 3 — surfaces polish:
+- [ ] Canvas + `.db` headers on `Toolbar`; `DataTable` for read-only db embeds.
+- [ ] One empty/loading/error vocabulary across every surface (Skeleton over spinners).
+
+Phase 4 — gated: only if a true WYSIWYG surface is ever required, evaluate TipTap
+behind a Markdown serializer as an *alternate view*, never storage. Do **not**
+adopt BlockNote/Yoopta/Novel/Mina (JSON block model breaks Markdown-first + MDX).
+
+Shipped this pass: completed the HTMX kit (`.neuron-kbd`) + the research doc.
+Exact next task: Phase 1, step 1 (shared spacing + type-scale tokens, then `Toolbar`).
