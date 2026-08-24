@@ -27,6 +27,11 @@ function formatBytes(bytes: number): string {
 let DIAG_MOUNTS = 0;
 let DIAG_LOADS = 0;
 let DIAG_CLICKS = 0;
+let DIAG_PD = 0;
+let DIAG_PU = 0;
+let DIAG_MD = 0;
+let DIAG_MU = 0;
+let DIAG_TICK = 0;
 
 function VersionHistoryPanel({ host }: { host: HostRuntime }) {
   const [entries, setEntries] = useState<JournalEntry[] | null>(null);
@@ -41,6 +46,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
   }, [note]);
 
   useEffect(() => { DIAG_MOUNTS += 1; }, []);
+  useEffect(() => { const t = setInterval(() => { DIAG_TICK += 1; setStatus((v) => (v === '' ? null : '')); }, 400); return () => clearInterval(t); }, []);
   useEffect(() => { DIAG_LOADS += 1; setConfirming(null); setStatus(null); void load(); }, [load]);
 
   const restore = async (entry: JournalEntry) => {
@@ -103,7 +109,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
         <div className="p-1.5">
           {(entries ?? []).map((entry) => {
             const skipped = entry.state === 'skipped';
-            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} note=${String(note)} confirming=${String(confirming)} id=${entry.id} skipped=${String(skipped)}`;
+            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} pd=${DIAG_PD} pu=${DIAG_PU} md=${DIAG_MD} mu=${DIAG_MU} tick=${DIAG_TICK} confirming=${String(confirming)}`;
             const isConfirming = confirming === entry.id;
             const Icon = entry.operation === 'delete' ? Trash2 : Pencil;
             return (
@@ -160,6 +166,10 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                     <Button
                       size="sm"
                       variant="secondary"
+                      onPointerDown={() => { DIAG_PD += 1; setStatus(null); }}
+                      onPointerUp={() => { DIAG_PU += 1; setStatus(null); }}
+                      onMouseDown={() => { DIAG_MD += 1; setStatus(null); }}
+                      onMouseUp={() => { DIAG_MU += 1; setStatus(null); }}
                       onClick={() => { DIAG_CLICKS += 1; setStatus(null); setConfirming(entry.id); }}
                     >
                       <RotateCcw className="h-3 w-3" /> Restore
