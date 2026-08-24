@@ -59,3 +59,7 @@ notes/
 # Playwright E2E output
 test-results/
 playwright-report/
+
+# Code-signing private keys, never committed
+*.pfx
+*.p12

@@ -1,6 +1,6 @@
 {
   "name": "neuron",
-  "version": "0.4.2-beta.1",
+  "version": "0.4.3",
   "description": "Local-first Markdown and MDX knowledge workspace",
   "author": "Shivam Khetan <shivkhetan18@gmail.com>",
   "license": "Apache-2.0",

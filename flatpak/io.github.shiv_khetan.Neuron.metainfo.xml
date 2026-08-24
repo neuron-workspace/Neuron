@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metadata. Flathub will not accept a submission without this file,
+  and it is what fills in the listing: name, summary, screenshots, release
+  history, and the content rating.
+
+  The component id must equal the Flatpak app id and the .desktop filename.
+  Flathub requires an id whose domain you demonstrably control; for a project
+  hosted on GitHub that means io.github.<username>.<project>, with hyphens in
+  the username written as underscores. Hence shiv_khetan, not shiv-khetan.
+
+  Validate before submitting:
+    flatpak run org.freedesktop.appstream.cli validate \
+      flatpak/io.github.shiv_khetan.Neuron.metainfo.xml
+-->
+<component type="desktop-application">
+  <id>io.github.shiv_khetan.Neuron</id>
+
+  <name>Neuron</name>
+  <summary>Local-first Markdown workspace with databases and canvases</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+
+  <developer id="io.github.shiv_khetan">
+    <name>Shivam Khetan</name>
+  </developer>
+
+  <description>
+    <p>
+      Neuron is a local-first workspace for Markdown and MDX. Your notes are
+      plain files in a folder you choose — readable, editable and portable
+      without Neuron installed.
+    </p>
+    <p>Alongside ordinary notes it provides:</p>
+    <ul>
+      <li>Typed databases in plain-JSON .db files, with table and board views</li>
+      <li>Spatial boards in the open JSON Canvas format</li>
+      <li>Custom HTML views and folder mini-apps, each sandboxed and limited to the paths its manifest declares</li>
+      <li>A workspace graph, wiki-links and tags</li>
+      <li>Version history backed by a local write journal</li>
+      <li>An integrated terminal</li>
+    </ul>
+    <p>
+      Nothing is uploaded anywhere. There is no account, no telemetry and no
+      network access unless you enable an AI provider and supply your own key.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.shiv_khetan.Neuron.desktop</launchable>
+  <url type="homepage">https://github.com/shiv-khetan/Neuron</url>
+  <url type="bugtracker">https://github.com/shiv-khetan/Neuron/issues</url>
+  <url type="vcs-browser">https://github.com/shiv-khetan/Neuron</url>
+
+  <!--
+    Flathub requires at least one screenshot and renders the first as the
+    listing image. These URLs must resolve at review time; a 404 here is a
+    common reason for a submission to bounce.
+  -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/shiv-khetan/Neuron/main/docs/screenshots/workspace.png</image>
+      <caption>A note open beside the workspace graph</caption>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.4.3" date="2026-08-24">
+      <description>
+        <p>Beta release.</p>
+      </description>
+    </release>
+  </releases>
+
+  <categories>
+    <category>Office</category>
+    <category>TextEditor</category>
+  </categories>
+
+  <keywords>
+    <keyword>markdown</keyword>
+    <keyword>notes</keyword>
+    <keyword>mdx</keyword>
+    <keyword>canvas</keyword>
+    <keyword>local-first</keyword>
+  </keywords>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+</component>
