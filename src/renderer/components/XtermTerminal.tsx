@@ -66,11 +66,23 @@ export default function XtermTerminal() {
       if (ptyId != null) void window.electronAPI.terminal.write(ptyId, data);
     });
 
-    void window.electronAPI.terminal.spawn({ cols: term.cols, rows: term.rows }).then((id) => {
-      if (disposed) { void window.electronAPI.terminal.kill(id); return; }
+    void window.electronAPI.terminal.spawn({ cols: term.cols, rows: term.rows }).then(async (id) => {
+      if (disposed) return;
+      // Fetch and replay BEFORE claiming the id. `onData` ignores anything that
+      // is not for `ptyId`, so until it is set the live stream is dropped --
+      // which is what we want here: main has already folded those same bytes
+      // into the history we are about to write. Claiming the id first would
+      // write them live and then write them a second time as part of the
+      // replay.
+      const history = await window.electronAPI.terminal.history(id);
+      if (disposed) return;
+      if (history) term.write(history);
       ptyId = id;
+      // A shell with history behind it has already announced itself, so the
+      // queue can drain now. Only a genuinely fresh one waits for its prompt.
+      if (history) publishWriter();
+      else readyTimer = setTimeout(publishWriter, 5000);
       term.focus();
-      readyTimer = setTimeout(publishWriter, 5000);
     });
 
     const ro = new ResizeObserver(() => {
@@ -87,7 +99,6 @@ export default function XtermTerminal() {
       offData();
       offExit();
       inputDisp.dispose();
-      if (ptyId != null) void window.electronAPI.terminal.kill(ptyId);
       term.dispose();
     };
   }, []);

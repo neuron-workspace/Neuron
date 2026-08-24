@@ -106,6 +106,7 @@ export interface ElectronAPI {
     run: (cmd: string) => Promise<{ success: boolean; stdout: string; stderr: string; code: number }>;
     /** Spawn an interactive PTY in the active repo; returns its id. */
     spawn: (opts: { cols?: number; rows?: number }) => Promise<number>;
+    history: (id: number) => Promise<string>;
     write: (id: number, data: string) => Promise<void>;
     resize: (id: number, cols: number, rows: number) => Promise<void>;
     kill: (id: number) => Promise<void>;
