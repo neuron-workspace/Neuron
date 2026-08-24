@@ -10,6 +10,31 @@ All notable changes to Neuron are documented here. The format follows
 > release landing at 0.0.1. The dates and the contents are unchanged; only the
 > numbers moved. Nothing was removed, and no released tag was reused.
 
+## [0.4.4] - 2026-08-24
+
+### Fixed
+- **0.4.3 could not start at all.** Every install, on every platform, failed
+  with `Cannot find package 'zod'` before a window appeared. `zod` is a peer
+  dependency of the AI SDK packages; npm hoists peers to the root of
+  `node_modules`, so it resolved in development and in the whole test suite,
+  but electron-builder packages only what it can reach from `dependencies` and
+  so it was absent from the shipped application. Reported as
+  [#6](https://github.com/shiv-khetan/Neuron/issues/6).
+
+### Added
+- **Three layers of protection against shipping a build that cannot run.** The
+  reason a broken release passed 47 end-to-end tests is that all of them run
+  against the compiled source with the full `node_modules` tree present, and
+  nothing had ever launched the artifact people download.
+  - A static check that every main-process import and every required peer is
+    declared, running first in `npm test`.
+  - A smoke test that packages the application and launches the real
+    executable. The release workflow runs it before publishing, so a build that
+    cannot start can no longer reach a release.
+  - A Windows Sandbox configuration for clean-machine installer testing, which
+    catches what neither of the above can: missing OS runtimes and first run on
+    a profile that has never seen the app.
+
 ## [0.4.3] - 2026-08-24
 
 ### Added
