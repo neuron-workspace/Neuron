@@ -1,0 +1,40 @@
+<!--
+  Windows Sandbox: a disposable clean machine for testing an installer.
+
+  Open this file (double-click) on Windows 11 Pro or Enterprise with the
+  "Windows Sandbox" optional feature enabled. It boots a throwaway Windows with
+  no Node, no Electron, no build tools, and none of this repository's
+  node_modules -- which is the whole point. Everything is destroyed on close.
+
+  Why this layer exists, on top of the two cheaper ones:
+
+    npm test        catches an undeclared dependency statically, in milliseconds
+    npm run smoke   packages the app and launches it, catching what static
+                    analysis cannot -- native modules, asarUnpack, path
+                    assumptions
+    this            catches what only a machine without your toolchain can:
+                    a missing Visual C++ runtime, installer behaviour, SmartScreen,
+                    first-run on a profile that has never seen the app
+
+  Docker is the wrong tool here. Windows containers have no interactive desktop,
+  so a GUI installer cannot be driven or observed, and Linux containers cannot
+  run a Windows .exe at all. Sandbox is free, built in, and boots in seconds.
+
+  MappedFolders below exposes the release directory read-only. Change the
+  HostFolder if you build somewhere else -- a scanner on this machine holds
+  handles in ./release, so packaging often goes to a temp directory instead.
+-->
+<Configuration>
+  <VGpu>Enable</VGpu>
+  <Networking>Enable</Networking>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\Workspace\Projects\Neuron\app\release</HostFolder>
+      <SandboxFolder>C:\Neuron</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>cmd.exe /c start "" explorer.exe C:\Neuron</Command>
+  </LogonCommand>
+</Configuration>

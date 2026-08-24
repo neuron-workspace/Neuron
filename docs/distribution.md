@@ -176,6 +176,34 @@ Submission, once the manifest builds: fork `flathub/flathub`, add a branch named
 for the app id containing the manifest and metainfo, and open a pull request.
 Review is manual and typically takes days to weeks.
 
+## Testing that a build actually runs
+
+0.4.3 shipped an application that could not start, with all 47 end-to-end tests
+green. They run against `dist/main/main.js` with the full `node_modules` tree
+present; the packaged app loads from inside `app.asar`, which holds only what
+electron-builder can reach from `dependencies`. `zod` is a peer dependency of
+the AI SDK, npm hoists peers to the root, so it resolved everywhere except in
+the thing users download.
+
+Three layers now, cheapest first. Each catches something the one above it
+cannot:
+
+| Layer | Command | Catches | Cost |
+| --- | --- | --- | --- |
+| Static | `npm test` (`test:deps`) | A main-process import or required peer that is not declared | milliseconds |
+| Packaged | `npm run smoke` | What only appears once packaged: native modules, `asarUnpack`, path assumptions | ~2 min |
+| Clean machine | `tools/clean-room.wsb` | Missing OS runtimes, installer behaviour, first run on a profile that has never seen the app | manual |
+
+The release workflow runs the packaged smoke test on Windows **before**
+publishing, so a build that cannot start never reaches a release.
+
+**On Docker:** not the right tool here. Windows containers have no interactive
+desktop, so a GUI installer cannot be driven or observed, and Linux containers
+cannot run a Windows `.exe`. Windows Sandbox is free, built into Windows 11 Pro
+and Enterprise, boots in seconds, and is destroyed on close. For Linux and
+macOS, every CI run is already a clean machine -- which is what a VM would have
+provided.
+
 ## Release checklist
 
 - Run `npm ci`, `npm audit`, `npm run build`, and `npm run dist:dir`.
