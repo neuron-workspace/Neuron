@@ -430,8 +430,14 @@
   async function load() {
     // connect-src is 'self': this reaches Neuron's loopback API and has no
     // route off the machine.
-    const res = await fetch('./api/v1/db?path=' + encodeURIComponent(DB) + '&table=tasks');
-    if (!res.ok) { $('overdue-label').textContent = 'Planner.db unavailable'; return; }
+    const res = await fetch('/api/v1/db?path=' + encodeURIComponent(DB) + '&table=tasks');
+    if (!res.ok) {
+      // Name the status. "unavailable" sent me looking at the file when the
+      // request had never reached the route in the first place.
+      const detail = await res.json().catch(() => null);
+      $('overdue-label').textContent = 'Planner.db: ' + (detail?.error?.code ?? res.status);
+      return;
+    }
     const { rows } = await res.json();
     render(rows.map((r) => r.values));
   }
@@ -446,7 +452,7 @@
    * recoverable from version history.
    */
   async function capture(values) {
-    const read = await fetch('./api/v1/files/content?path=' + encodeURIComponent(DB));
+    const read = await fetch('/api/v1/files/content?path=' + encodeURIComponent(DB));
     if (!read.ok) throw new Error('Could not read Planner.db.');
     const { content, hash } = await read.json();
 
@@ -458,7 +464,7 @@
       values: { ...values, status: 'todo', due: '', done: false },
     });
 
-    const put = await fetch('./api/v1/files/content', {
+    const put = await fetch('/api/v1/files/content', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: DB, content: JSON.stringify(doc, null, 2) + '\n', baseHash: hash }),
