@@ -4,10 +4,27 @@ import { test, expect } from './fixtures';
 // These assert the surface actually mounts -- a registry regression shows up
 // here as a note editor rendering raw JSON instead of a board.
 
-test('canvas opens as a board, not raw JSON', async ({ page }) => {
+test('canvas opens as a board, fitted to its content', async ({ page }) => {
   await page.locator('.note-row', { hasText: 'Idea board' }).first().click();
   await expect(page.locator('svg').first()).toBeVisible();
   await expect(page.locator('.cm-content')).toHaveCount(0);
+
+  // It used to open at pan (80,80) zoom 1 -- the top-left of an infinite plane,
+  // so a board whose content sits elsewhere showed empty space with cards
+  // sliced off at the edges. Every node must be inside the viewport on open,
+  // without anyone pressing "Zoom to fit".
+  const view = (await page.locator('[data-canvas-surface]').boundingBox())!;
+  const cards = page.locator('[data-canvas-node]');
+  const count = await cards.count();
+  expect(count).toBeGreaterThan(0);
+
+  for (let i = 0; i < count; i++) {
+    const b = await cards.nth(i).boundingBox();
+    if (!b) continue;
+    expect(b.x).toBeGreaterThanOrEqual(view.x - 2);
+    expect(b.y).toBeGreaterThanOrEqual(view.y - 2);
+    expect(b.x + b.width).toBeLessThanOrEqual(view.x + view.width + 2);
+  }
 });
 
 test('a multi-table database opens its schema overview, then drills into a table', async ({ page }) => {

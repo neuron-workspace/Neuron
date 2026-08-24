@@ -135,7 +135,11 @@ export const test = base.extend<AppFixture>({
 
   page: async ({ app }, use) => {
     const page = await app.firstWindow();
-    await page.waitForLoadState('domcontentloaded');
+    // Generous, because this is Electron cold-starting against a Vite dev server
+    // that compiles on first request. On a loaded CI runner individual tests were
+    // taking 15-20s just to reach this point, and the 30s default tipped two of
+    // them over -- a slow machine, not a broken app.
+    await page.waitForLoadState('domcontentloaded', { timeout: 90_000 });
     await use(page);
   },
 });
