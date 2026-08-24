@@ -7,17 +7,31 @@
 
 <div class="neuron-grid cols-2">
   <section>
-    <h2>Tasks</h2>
-    <p class="neuron-metric-label">Everything on the board</p>
-    <div hx-get="/api/v1/db?path=Planner.db&amp;table=tasks"
+    <div class="neuron-toolbar" style="justify-content:space-between;align-items:flex-end">
+      <div>
+        <h2>Tasks</h2>
+        <p class="neuron-metric-label">Everything on the board</p>
+      </div>
+      <button class="btn" hx-get="/api/v1/db?path=Planner.db&amp;table=tasks"
+              hx-target="#tasks" hx-swap="innerHTML">Refresh</button>
+    </div>
+    <div id="tasks"
+         hx-get="/api/v1/db?path=Planner.db&amp;table=tasks"
          hx-trigger="load"
          hx-swap="innerHTML">Loading tasks…</div>
   </section>
 
   <section>
-    <h2>Projects</h2>
-    <p class="neuron-metric-label">Who owns what, and by when</p>
-    <div hx-get="/api/v1/db?path=Planner.db&amp;table=projects"
+    <div class="neuron-toolbar" style="justify-content:space-between;align-items:flex-end">
+      <div>
+        <h2>Projects</h2>
+        <p class="neuron-metric-label">Who owns what, and by when</p>
+      </div>
+      <button class="btn" hx-get="/api/v1/db?path=Planner.db&amp;table=projects"
+              hx-target="#projects" hx-swap="innerHTML">Refresh</button>
+    </div>
+    <div id="projects"
+         hx-get="/api/v1/db?path=Planner.db&amp;table=projects"
          hx-trigger="load"
          hx-swap="innerHTML">Loading projects…</div>
   </section>
@@ -32,11 +46,11 @@
 
 <section>
   <p class="neuron-empty">
-    Reload either table with the buttons below. No script runs in this document;
-    htmx swaps in HTML the app rendered.
+    No script runs in this document. Each button is an htmx request; the app
+    renders the HTML and htmx swaps it in. That is also the limit of this view:
+    the API serves a table whole, so anything that needs a comparison against
+    today's date — overdue, due this week, the board — has to be computed.
+    <code>Custom dashboard.html</code> does that, and declares the JavaScript
+    and the write access to pay for it.
   </p>
-  <button class="btn"
-          hx-get="/api/v1/db?path=Planner.db&amp;table=tasks"
-          hx-target="previous div"
-          hx-swap="innerHTML">Refresh tasks</button>
 </section>

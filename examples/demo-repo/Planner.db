@@ -85,7 +85,7 @@
             "title": "Draft the release checklist",
             "status": "doing",
             "priority": "high",
-            "due": "2026-09-02",
+            "due": "2026-08-21",
             "project": "Release 0.5",
             "done": false
           }
@@ -96,7 +96,7 @@
             "title": "Sign the Windows installer",
             "status": "blocked",
             "priority": "high",
-            "due": "2026-09-05",
+            "due": "2026-08-26",
             "project": "Release 0.5",
             "done": false
           }
@@ -107,7 +107,7 @@
             "title": "Write the upgrade notes",
             "status": "todo",
             "priority": "medium",
-            "due": "2026-09-08",
+            "due": "2026-08-27",
             "project": "Release 0.5",
             "done": false
           }
@@ -118,7 +118,7 @@
             "title": "Cut the release branch",
             "status": "todo",
             "priority": "medium",
-            "due": "2026-09-10",
+            "due": "2026-09-04",
             "project": "Release 0.5",
             "done": false
           }
@@ -140,7 +140,7 @@
             "title": "Rewrite the onboarding note",
             "status": "doing",
             "priority": "medium",
-            "due": "2026-09-04",
+            "due": "2026-08-24",
             "project": "Docs refresh",
             "done": false
           }
@@ -184,7 +184,7 @@
             "title": "Profile the search index",
             "status": "doing",
             "priority": "high",
-            "due": "2026-09-03",
+            "due": "2026-08-22",
             "project": "Performance",
             "done": false
           }
@@ -195,7 +195,7 @@
             "title": "Split the CodeMirror chunk",
             "status": "todo",
             "priority": "medium",
-            "due": "2026-09-16",
+            "due": "2026-08-28",
             "project": "Performance",
             "done": false
           }
