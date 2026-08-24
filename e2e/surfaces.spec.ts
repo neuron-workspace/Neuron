@@ -74,6 +74,50 @@ test('a view that writes has to say so in the prompt, not only in its manifest',
   await expect(page.getByText('HTML view', { exact: false })).toBeVisible();
 });
 
+test('the dashboard view actually loads its data, not just its markup', async ({ app, page }) => {
+  await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
+  await page.getByRole('button', { name: 'Allow for this view' }).click();
+  await expect(page.locator('webview')).toHaveCount(1);
+
+  // Asserting the webview mounted is what the other tests do, and it is not
+  // enough: this dashboard shipped with every fetch 404ing and still mounted a
+  // perfectly good empty poster. The document is served at
+  // /views/{sid}/document, so its relative "./api/v1/db" resolved under the
+  // view prefix and never reached the route. Nothing in the suite noticed.
+  const view = await app.evaluate(async ({ webContents }) => {
+    const wc = webContents.getAllWebContents().find((w) => w.getType() === 'webview');
+    if (!wc) return null;
+    const read = () => wc.executeJavaScript(`(() => {
+      const t = (id) => (document.getElementById(id)?.textContent ?? '').trim();
+      return {
+        open: t('open'),
+        overdue: t('overdue'),
+        label: t('overdue-label'),
+        columns: document.querySelectorAll('#kanban .pb-col').length,
+        cards: document.querySelectorAll('#kanban .pb-chip').length,
+        projects: document.querySelectorAll('#workload .pb-track').length,
+      };
+    })()`);
+    // The fetch resolves after load; poll rather than race it.
+    for (let i = 0; i < 40; i++) {
+      const snap = await read();
+      if (snap.open && snap.open !== '—') return snap;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return read();
+  });
+
+  expect(view, 'no webview attached').not.toBeNull();
+  // A real count, not the em-dash placeholder and not an error string.
+  expect(view!.label).not.toContain('Planner.db:');
+  expect(Number(view!.open)).toBeGreaterThan(0);
+  expect(Number(view!.overdue)).toBeGreaterThan(0);
+  // The board and workload panels render from the same rows.
+  expect(view!.columns).toBe(4);
+  expect(view!.cards).toBeGreaterThan(5);
+  expect(view!.projects).toBeGreaterThan(2);
+});
+
 test('a folder mini-app collapses to one explorer entry', async ({ page }) => {
   await expect(page.locator('.note-row', { hasText: 'Launch board' }).first()).toBeVisible();
   // The folder's internals (index.html, neuron.app.json) must not be listed as

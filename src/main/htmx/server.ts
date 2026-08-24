@@ -265,6 +265,17 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (viewMatch) {
       // A view may only fetch its own session's assets.
       if (viewMatch[1] !== session.id) { fail(ctx, 403, 'forbidden', 'Rejected.'); return; }
+      // The document is served at /views/{sid}/document, so a relative
+      // "./api/v1/db" in a view resolves to /views/{sid}/api/v1/db. Authors
+      // write relative URLs by reflex, and falling through to the asset handler
+      // answered 404 -- which reads as "the API is broken", not "you addressed
+      // it from the wrong base". Same session, same checks, just the other
+      // spelling.
+      if (viewMatch[2].startsWith('api/v1/')) {
+        ctx.url.pathname = `/${viewMatch[2]}`;
+        await serveApi(ctx);
+        return;
+      }
       serveViewAsset(ctx, viewMatch[2]);
       return;
     }

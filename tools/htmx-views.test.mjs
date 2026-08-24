@@ -377,6 +377,38 @@ assert.equal((await api(writer, '/api/v1/files?path=data/made.txt', { method: 'D
 }
 assert.equal((await api(writer, '/api/v1/files/content?path=data/made.txt')).status, 404);
 
+// The API answers under the view prefix as well as at the root.
+//
+// A view document is served at /views/{sid}/document, so a relative
+// "./api/v1/db" written inside it resolves to /views/{sid}/api/v1/db. That is
+// the natural thing for an author to write and it used to fall through to the
+// static asset handler and 404, which reads as a broken API rather than a
+// mis-addressed one. The demo dashboard shipped that way and its fetch had
+// never once succeeded in the app.
+{
+  const prefixed = await api(reader, `/views/${reader.id}/api/v1/context`);
+  assert.equal(prefixed.status, 200, 'the API answers under the view prefix');
+  const body = await prefixed.json();
+  assert.ok(body.apiVersion && body.view, 'and it is the same API, not a lookalike');
+
+  // The prefix must not become a way around anything. Same capability gate:
+  assert.equal(
+    (await api(reader, `/views/${reader.id}/api/v1/files/content`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'data/out.txt', content: 'x' }),
+    })).status,
+    403,
+    'prefixed writes are still capability-checked',
+  );
+  // ...and still another view's session id is refused before the route runs.
+  assert.equal(
+    (await api(reader, `/views/${writer.id}/api/v1/context`)).status,
+    403,
+    'a view cannot address the API through another session id',
+  );
+}
+
 // Rate limiting: hammering one session eventually 429s
 {
   const s = mkSession(READ_CAPS, ['**']);
