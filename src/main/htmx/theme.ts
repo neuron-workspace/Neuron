@@ -118,11 +118,17 @@ body.neuron-view.theme-dark {
 }
 
 /* --- Card ----------------------------------------------------------------- */
-/* Shared frame: explicit .card, legacy .neuron-card, and bare section/article. */
+/* Shared frame: explicit .card, legacy .neuron-card, and bare section/article.
+   "Bare" means literally that -- :not([class]). The previous form excluded four
+   known layout classes by name, which meant any OTHER class an author wrote
+   still got card styling imposed on it, at a specificity (0,5,1) that no
+   sensible author selector beats. A poster-styled dashboard lost every one of
+   its background colours to this and rendered as grey boxes. An element the
+   author has classed is an element they intend to style themselves. */
 .neuron-view .card,
 .neuron-card,
-.neuron-view section:not(.grid):not(.stack):not(.toolbar):not(.row),
-.neuron-view article {
+.neuron-view section:not([class]),
+.neuron-view article:not([class]) {
   background: var(--card); color: var(--card-foreground);
   border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
@@ -130,11 +136,11 @@ body.neuron-view.theme-dark {
 /* Convenience padding for bare sections and legacy .neuron-card. The structural
    .card leaves padding to .card-header / .card-content (shadcn style). */
 .neuron-card,
-.neuron-view section:not(.grid):not(.stack):not(.toolbar):not(.row),
-.neuron-view article { padding: 1.15rem 1.25rem; }
-.neuron-view section > :first-child, .neuron-view article > :first-child, .neuron-card > :first-child { margin-top: 0; }
-.neuron-view section > :last-child, .neuron-view article > :last-child, .neuron-card > :last-child { margin-bottom: 0; }
-.neuron-view section + section, .neuron-view article + article,
+.neuron-view section:not([class]),
+.neuron-view article:not([class]) { padding: 1.15rem 1.25rem; }
+.neuron-view section:not([class]) > :first-child, .neuron-view article:not([class]) > :first-child, .neuron-card > :first-child { margin-top: 0; }
+.neuron-view section:not([class]) > :last-child, .neuron-view article:not([class]) > :last-child, .neuron-card > :last-child { margin-bottom: 0; }
+.neuron-view section:not([class]) + section:not([class]), .neuron-view article:not([class]) + article:not([class]),
 .neuron-view .card + .card, .neuron-card + .neuron-card { margin-top: 1rem; }
 
 .neuron-view .card-header { padding: 1.2rem 1.25rem 0; display: flex; flex-direction: column; gap: 0.25rem; }

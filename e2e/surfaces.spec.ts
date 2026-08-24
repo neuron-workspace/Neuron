@@ -89,6 +89,7 @@ test('the dashboard view actually loads its data, not just its markup', async ({
     if (!wc) return null;
     const read = () => wc.executeJavaScript(`(() => {
       const t = (id) => (document.getElementById(id)?.textContent ?? '').trim();
+      const clay = document.querySelector('.pb-clay');
       return {
         open: t('open'),
         overdue: t('overdue'),
@@ -96,6 +97,7 @@ test('the dashboard view actually loads its data, not just its markup', async ({
         columns: document.querySelectorAll('#kanban .pb-col').length,
         cards: document.querySelectorAll('#kanban .pb-chip').length,
         projects: document.querySelectorAll('#workload .pb-track').length,
+        clayBg: clay ? getComputedStyle(clay).backgroundColor : null,
       };
     })()`);
     // The fetch resolves after load; poll rather than race it.
@@ -116,6 +118,13 @@ test('the dashboard view actually loads its data, not just its markup', async ({
   expect(view!.columns).toBe(4);
   expect(view!.cards).toBeGreaterThan(5);
   expect(view!.projects).toBeGreaterThan(2);
+
+  // The view's own styling has to survive the served kit. The kit styles bare
+  // <section> as a card at a specificity no author class beats, so this poster
+  // rendered as grey boxes with every one of its flat colours overridden. #b8503c
+  // is its clay; the kit's card is white or near-black depending on scheme, so
+  // this fails loudly either way if the defaults start winning again.
+  expect(view!.clayBg).toBe('rgb(184, 80, 60)');
 });
 
 test('a folder mini-app collapses to one explorer entry', async ({ page }) => {
