@@ -15,6 +15,14 @@ test('the graph is visible without touching a shortcut', async ({ page }) => {
   expect(box).not.toBeNull();
   expect(Math.abs(box!.width - box!.height)).toBeLessThan(2);
   expect(box!.width).toBeLessThan(320);
+
+  // It must clear the tab strip rather than sit on top of it.
+  const tabs = await page.locator('nav[aria-label="Open notes"]').boundingBox();
+  if (tabs) expect(box!.y).toBeGreaterThanOrEqual(tabs.y + tabs.height - 1);
+
+  // No title bar: the square is all graph, with only the close control on it.
+  await expect(graph).not.toContainText('Graph');
+  await expect(graph.getByRole('button', { name: 'Hide graph' })).toBeVisible();
 });
 
 test('the graph draws every note, not only the active one', async ({ page }) => {
