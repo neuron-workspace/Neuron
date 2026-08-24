@@ -6,9 +6,9 @@ All notable changes to Neuron are documented here. The format follows
 
 > **A note on version numbers.** Releases up to July 2026 were numbered 1.x.
 > That overstated how finished the app was, so every version has been
-> renumbered down one major -- 1.4.1 became 0.4.1, and so on. The dates and the
-> contents are unchanged; only the numbers moved. Nothing was removed, and no
-> released tag was reused.
+> renumbered down one major -- 1.4.1 became 0.4.1, and so on, with the first
+> release landing at 0.0.1. The dates and the contents are unchanged; only the
+> numbers moved. Nothing was removed, and no released tag was reused.
 
 ## [0.4.3] - 2026-08-24
 
@@ -198,7 +198,7 @@ All notable changes to Neuron are documented here. The format follows
   IPC handlers. See [docs/custom-views.md](docs/custom-views.md) for the threat
   model.
 
-## [0.0.0] - 2026-06-20
+## [0.0.1] - 2026-06-20
 
 - Initial release: local-first Markdown/MDX workspace with live editing,
   split preview, tabs, wiki-links, tags, a wiki-link graph, resizable docks,
