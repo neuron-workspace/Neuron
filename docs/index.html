@@ -345,8 +345,11 @@
         letter-spacing: 0.08em;
       }
 
-      .solution-head { max-width: 30ch; }
-      .solution-head .lede { max-width: none; }
+      /* No max-width on this wrapper. `ch` resolves against the element's own
+         font size, and the wrapper inherits the 15px body size -- so 30ch was
+         about 225px and the 44px heading inside it wrapped to five cramped
+         lines against an empty right half of the page. The measure belongs on
+         the heading, where a ch is a heading character. */
 
       .feat {
         margin-top: clamp(2.5rem, 6vw, 4rem);
