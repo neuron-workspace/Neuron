@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search, Blocks, Minus, Square, Copy, X,
-  FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw,
-} from 'lucide-react';
+  FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Share2 } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
 import {
@@ -18,9 +17,11 @@ interface TitleBarProps {
   activeNote: string | null;
   sidebarOpen: boolean;
   rightPanelOpen: boolean;
+  graphOpen: boolean;
   bottomPanelOpen: boolean;
   onToggleSidebar: () => void;
   onToggleRightPanel: () => void;
+  onToggleGraph: () => void;
   onToggleBottomPanel: () => void;
   onOpenMarketplace: () => void;
   onOpenCommandPalette: () => void;
@@ -144,6 +145,13 @@ export default function TitleBar(props: TitleBarProps) {
           </button>
           <IconButton label="Plugins & integrations" onClick={props.onOpenMarketplace}>
             <Blocks className="h-4 w-4" />
+          </IconButton>
+          {/* A persistent control, because the other two ways in are unreliable:
+              the palette and Ctrl+Shift+G both go through a global keydown with
+              no focus scopes, so neither fires while the terminal or a webview
+              holds focus. Closing the graph must not be one-way. */}
+          <IconButton label={props.graphOpen ? 'Hide graph' : 'Show graph'} active={props.graphOpen} onClick={props.onToggleGraph}>
+            <Share2 className="h-4 w-4" />
           </IconButton>
           <IconButton label={props.rightPanelOpen ? 'Hide panel' : 'Show panel'} active={props.rightPanelOpen} onClick={props.onToggleRightPanel}>
             <PanelRight className="h-4 w-4" />

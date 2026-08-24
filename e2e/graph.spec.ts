@@ -76,16 +76,21 @@ test('the graph recentres on the open note, zooms, and pans', async ({ page }) =
     await expect(dialog).toBeHidden();
   };
 
-  // Recentres: two different notes cannot share a viewport origin, because the
-  // camera follows the node. Comparing against the *fitted* box would be
-  // comparing against a moving baseline -- the extent grows as notes load.
+  // The open note sits at the centre of the panel. Under the BFS layout it is
+  // always placed at the spiral origin and the camera centres there, so
+  // comparing viewBox origins between two notes proves nothing -- they are
+  // identical by construction. What matters is that the note you opened is the
+  // one in the middle.
   await open('markdown-basics');
-  const [ax, ay] = await box();
-  await open('getting-started');
-  await expect.poll(async () => {
-    const [bx, by] = await box();
-    return Math.abs(bx - ax) + Math.abs(by - ay);
-  }, { timeout: 10_000 }).toBeGreaterThan(1);
+  const svgBox = (await svg.boundingBox())!;
+  const active = graph.locator('.graph-node[aria-label="Open markdown-basics"]');
+  await expect(active).toBeVisible();
+  const nodeBox = (await active.boundingBox())!;
+  const offCentre = Math.hypot(
+    (nodeBox.x + nodeBox.width / 2) - (svgBox.x + svgBox.width / 2),
+    (nodeBox.y + nodeBox.height / 2) - (svgBox.y + svgBox.height / 2),
+  );
+  expect(offCentre).toBeLessThan(24);
 
   // Wheel zooms in: a narrower viewport shows less of the graph, larger.
   const [, , beforeW] = await box();
@@ -105,4 +110,40 @@ test('the graph recentres on the open note, zooms, and pans', async ({ page }) =
   await page.mouse.up();
   const [px, py] = await box();
   expect(Math.abs(px - zx) + Math.abs(py - zy)).toBeGreaterThan(1);
+});
+
+test('the graph can be closed and reopened from the title bar', async ({ page }) => {
+  const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+  await expect(graph).toBeVisible();
+
+  await graph.getByRole('button', { name: 'Hide graph' }).click();
+  await expect(graph).toHaveCount(0);
+
+  // Closing must not be one-way. The palette entry and Ctrl+Shift+G both run
+  // through a global keydown with no focus scopes, so neither fires while the
+  // terminal or a webview holds focus -- a persistent control is the only way
+  // back that always works.
+  await page.getByRole('button', { name: 'Show graph' }).click();
+  await expect(graph).toBeVisible();
+});
+
+test('the graph panel can be dragged to a new position', async ({ page }) => {
+  const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+  const before = (await graph.boundingBox())!;
+
+  // The grip, not the canvas: dragging the canvas pans the graph, so moving the
+  // window needs its own affordance.
+  const grip = graph.getByRole('button', { name: 'Move graph' });
+  const g = (await grip.boundingBox())!;
+  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2 - 180, g.y + g.height / 2 + 120, { steps: 10 });
+  await page.mouse.up();
+
+  const after = (await graph.boundingBox())!;
+  expect(Math.abs(after.x - before.x) + Math.abs(after.y - before.y)).toBeGreaterThan(40);
+  // Still fully inside the editor region -- a panel dragged off-screen cannot
+  // be dragged back.
+  expect(after.x).toBeGreaterThan(0);
+  expect(after.y).toBeGreaterThan(0);
 });

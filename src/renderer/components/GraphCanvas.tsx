@@ -69,24 +69,25 @@ function radiusFor(degree: number): number {
  */
 export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emptyHint }: GraphCanvasProps) {
   const { nodes, links, extent } = useMemo(() => {
-    const cells = hexSpiral(notesData.length);
-    const placed: PlacedNode[] = notesData.map((note, i) => {
-      const { q, r } = cells[i];
-      const x = HEX * Math.sqrt(3) * (q + r / 2);
-      const y = HEX * 1.5 * r;
-      return { id: note.path, label: note.path.replace(/\.(md|mdx)$/, ''), x, y, degree: 0 };
-    });
-
+    // Links first, because placement depends on them. Previously nodes were
+    // laid out in array order and the links were derived afterwards, so two
+    // notes that link to each other could land on opposite sides of the
+    // lattice -- the reason connected notes did not fit in the window together.
     const byLabel = new Map<string, string>();
-    placed.forEach((n) => {
-      byLabel.set(n.label.toLowerCase(), n.id);
-      const base = n.label.split('/').pop()!.toLowerCase();
-      if (!byLabel.has(base)) byLabel.set(base, n.id);
+    notesData.forEach((note) => {
+      const label = note.path.replace(/\.(md|mdx)$/, '');
+      byLabel.set(label.toLowerCase(), note.path);
+      const base = label.split('/').pop()!.toLowerCase();
+      if (!byLabel.has(base)) byLabel.set(base, note.path);
     });
 
     const computedLinks: Link[] = [];
     const degree = new Map<string, number>();
-    const bump = (id: string) => degree.set(id, (degree.get(id) ?? 0) + 1);
+    const adjacency = new Map<string, Set<string>>();
+    const link = (a: string, b: string) => {
+      if (!adjacency.has(a)) adjacency.set(a, new Set());
+      adjacency.get(a)!.add(b);
+    };
     notesData.forEach((note) => {
       const re = /\[\[(.*?)\]\]/g;
       let match;
@@ -94,12 +95,53 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
         const target = byLabel.get(match[1].trim().toLowerCase());
         if (target && target !== note.path) {
           computedLinks.push({ source: note.path, target });
-          bump(note.path);
-          bump(target);
+          degree.set(note.path, (degree.get(note.path) ?? 0) + 1);
+          degree.set(target, (degree.get(target) ?? 0) + 1);
+          link(note.path, target);
+          link(target, note.path);
         }
       }
     });
-    placed.forEach((n) => { n.degree = degree.get(n.id) ?? 0; });
+
+    // Breadth-first from the open note, so cell 0 of the spiral is that note,
+    // its direct links take the first ring, theirs the next, and unconnected
+    // notes fill the outside. Everything is still drawn; what changes is that
+    // the notes you care about are adjacent instead of scattered.
+    const order: string[] = [];
+    const seen = new Set<string>();
+    const queue: string[] = [];
+    if (selectedNote && notesData.some((n) => n.path === selectedNote)) {
+      queue.push(selectedNote);
+      seen.add(selectedNote);
+    }
+    while (queue.length) {
+      const id = queue.shift()!;
+      order.push(id);
+      // Denser neighbours first, so hubs sit near the centre of their ring.
+      const next = [...(adjacency.get(id) ?? [])]
+        .filter((n) => !seen.has(n))
+        .sort((a, b) => (degree.get(b) ?? 0) - (degree.get(a) ?? 0));
+      for (const n of next) { seen.add(n); queue.push(n); }
+    }
+    for (const note of notesData) if (!seen.has(note.path)) order.push(note.path);
+
+    const cells = hexSpiral(order.length);
+    const position = new Map<string, { x: number; y: number }>();
+    order.forEach((id, i) => {
+      const { q, r } = cells[i];
+      position.set(id, { x: HEX * Math.sqrt(3) * (q + r / 2), y: HEX * 1.5 * r });
+    });
+
+    const placed: PlacedNode[] = notesData.map((note) => {
+      const at = position.get(note.path)!;
+      return {
+        id: note.path,
+        label: note.path.replace(/\.(md|mdx)$/, ''),
+        x: at.x,
+        y: at.y,
+        degree: degree.get(note.path) ?? 0,
+      };
+    });
 
     const pad = 80;
     const xs = placed.map((n) => n.x);
@@ -110,7 +152,7 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
     const h = Math.max(...ys, 0) - Math.min(...ys, 0) + pad * 2 || 200;
 
     return { nodes: placed, links: computedLinks, extent: { minX, minY, w, h } };
-  }, [notesData]);
+  }, [notesData, selectedNote]);
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -125,9 +167,10 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
   useEffect(() => {
     const node = selectedNote ? nodeById.get(selectedNote) : undefined;
     if (!node) { setCam(null); return; }
-    // 2.4x reads labels around the active note while keeping its neighbourhood
-    // in frame; the rest of the workspace is a drag away.
-    setCam({ cx: node.x, cy: node.y, scale: 2.4 });
+    // 1.6x: with the neighbourhood now laid out around the note rather than
+    // scattered, less magnification is needed to read it, and a gentler zoom
+    // keeps more of the surrounding shape in view.
+    setCam({ cx: node.x, cy: node.y, scale: 1.6 });
   }, [selectedNote, nodeById]);
 
   const viewBox = useMemo(() => {

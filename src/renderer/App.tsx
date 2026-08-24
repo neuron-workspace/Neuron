@@ -664,9 +664,11 @@ export default function App() {
             activeNote={view === 'notes' ? selectedNote : null}
             sidebarOpen={sidebarOpen}
             rightPanelOpen={rightPanelOpen}
+            graphOpen={graphOverlayOpen}
             bottomPanelOpen={bottomPanelOpen}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onToggleRightPanel={() => setRightPanelOpen((v) => !v)}
+            onToggleGraph={toggleGraphOverlay}
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
             onOpenMarketplace={() => setView('plugins')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
