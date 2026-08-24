@@ -3,15 +3,15 @@
   "variables": {
     "dashboardTitle": {
       "type": "string",
-      "value": "Team dashboard",
+      "value": "Workspace summary",
       "writable": false,
-      "description": "Heading used by Team dashboard.html."
+      "description": "Heading used by the dashboard template and fragments."
     },
     "projectStatus": {
       "type": "string",
       "value": "done",
       "writable": true,
-      "description": "Editable from the dashboard's status form."
+      "description": "Rendered by the project-note fragment; writable from a view."
     }
   }
 }

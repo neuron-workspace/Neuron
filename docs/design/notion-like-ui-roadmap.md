@@ -226,7 +226,7 @@ Goal: calmer, sharper, more consistent — **not flashier**.
 | **Command palette** | Good groups; no shortcut hints or in-editor slash. | Add `Kbd` shortcut hints; Phase E1 slash trigger. |
 | **Settings pages** | Mixed field styles (`.field` vs shadcn Input). | Standardize on shadcn `Field`/`Input`; group with `Card`. |
 | **Permission prompts** | Bespoke card in `HtmxViewSurface`. | Extract `PermissionPrompt`; reuse for plugin grants. |
-| **Examples (demo repo)** | Now consistent (Team dashboard, templates, folder app, `.ndash`). | Add a `kbd` example; keep one idiom per surface. |
+| **Examples (demo repo)** | Now consistent (Custom dashboard, templates, folder app). | Add a `kbd` example; keep one idiom per surface. |
 | **Loading states** | Mixed: "Loading…" text vs `–` skeleton. | Prefer `Skeleton` in React content; keep specific text ("Loading tags…") in HTMX. |
 | **Empty states** | `ui/empty.tsx` exists but bespoke empties remain. | One `EmptyState` everywhere: icon + one line + optional action. |
 | **Error states** | Good structured errors in views; renderer varies. | One `Alert`/error surface vocabulary; always name a recovery. |
@@ -286,7 +286,7 @@ Dependency-free, bounded, and it does **not** touch the editor:
 - **Documented** the kit's `kbd` in `docs/htmx-views.md` and this roadmap.
 - The broader "standardize cards/buttons/toolbar/empty states + HTMX example styles" slice was
   substantially completed earlier this cycle: the kit was rewritten to a shadcn-style,
-  token-driven system with semantic-element defaults; the Team dashboard, starter templates,
+  token-driven system with semantic-element defaults; the Launch board, starter templates,
   folder mini-app, and `.ndash` example were standardized onto it.
 
 **Explicitly deferred:** no editor replacement; no BlockNote/Yoopta/Novel/Mina; the slash menu

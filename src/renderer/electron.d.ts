@@ -45,7 +45,7 @@ export interface JournalEntry {
 
 export type HtmxViewOpenResult =
   | { status: 'ready'; sessionId: string; url: string; partition: string; name: string }
-  | { status: 'needs-approval'; name: string; permissions: string[]; description?: string }
+  | { status: 'needs-approval'; name: string; permissions: string[]; description?: string; readPaths: string[]; writePaths: string[] }
   | { status: 'error'; message: string };
 
 export interface ElectronAPI {

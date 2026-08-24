@@ -40,7 +40,7 @@ test('a multi-table database opens its schema overview, then drills into a table
 });
 
 test('an HTML view names the file and asks for its declared permissions before it renders', async ({ page }) => {
-  await page.locator('.note-row', { hasText: 'Team dashboard' }).first().click();
+  await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
 
   // A view does not run until its manifest permissions are granted -- the
   // prompt is the security boundary, so assert it appears BEFORE the webview.
@@ -50,7 +50,7 @@ test('an HTML view names the file and asks for its declared permissions before i
   // name is attacker-controlled, so identifying the view by path is the control.
   const prompt = page.getByText('requests workspace access');
   await expect(prompt).toBeVisible();
-  await expect(prompt).toContainText('Team dashboard.html');
+  await expect(prompt).toContainText('Custom dashboard.html');
   await expect(page.locator('webview')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Allow for this view' }).click();
@@ -58,12 +58,19 @@ test('an HTML view names the file and asks for its declared permissions before i
   await expect(page.locator('webview')).toHaveCount(1);
 });
 
-test('an inline-script HTML file uses the same isolated view surface', async ({ page }) => {
+test('a view that writes has to say so in the prompt, not only in its manifest', async ({ page }) => {
   await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
-  const prompt = page.getByText('requests workspace access', { exact: false });
-  if (await prompt.isVisible().catch(() => false)) {
-    await page.getByRole('button', { name: 'Allow for this view' }).click();
-  }
+
+  // This view appends captured tasks to Planner.db. Write access is the grant a
+  // user would most want to refuse, so it must be legible in the prompt rather
+  // than buried in a manifest they never open.
+  const card = page.locator('[data-view-approval]');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('Planner.db');
+  await expect(card).toContainText(/write/i);
+  await expect(card).toContainText('Can change');
+
+  await page.getByRole('button', { name: 'Allow for this view' }).click();
   await expect(page.getByText('HTML view', { exact: false })).toBeVisible();
 });
 
