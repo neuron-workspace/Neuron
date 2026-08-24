@@ -159,7 +159,17 @@ export function initHtmxViews(deps: Deps): void {
     const grants = effectiveGrants(manifest);
     const name = manifest?.name ?? defaultViewName(resolved.rel, appEntry);
     if (grants.needsApproval && !isApproved(viewKey(root, resolved.rel), hash)) {
-      return { status: 'needs-approval', name, description: manifest?.description, permissions: manifest!.permissions };
+      return {
+        status: 'needs-approval',
+        name,
+        description: manifest?.description,
+        permissions: manifest!.permissions,
+        // The prompt promised access was limited to the manifest's paths
+        // without ever showing them, which left the user approving a scope
+        // they could only see by opening a file they do not know exists.
+        readPaths: manifest?.allowedReadPaths ?? [],
+        writePaths: manifest?.allowedWritePaths ?? [],
+      };
     }
 
     const server = await ensureServer();

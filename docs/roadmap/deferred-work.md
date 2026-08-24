@@ -92,7 +92,7 @@ deferred, and each needs an editor mini-plan + app verification:
 
 ## 4. Dashboards & HTMX examples — leftovers
 
-Mostly polished (Team dashboard, templates, folder app, `.ndash`). Deferred:
+Mostly polished (Custom dashboard, templates, folder app). Deferred:
 
 - **[S] `.ndash` perf nit:** the Custom dashboard fetches `/notes?limit=500` and
   derives counts client-side; fine for demo scale, revisit if a real workspace is

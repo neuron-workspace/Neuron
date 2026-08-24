@@ -1,6 +1,6 @@
 Task,Status,Priority,Owner,Due
 Import Chrome cookies into browser,In progress,Medium,Shivam,2026-06-29
-Build Team dashboard example,In progress,Medium,Shivam,2026-06-29
+Build planner dashboard example,In progress,Medium,Shivam,2026-06-29
 Polish HTMX view stylesheet,Todo,Low,Shivam,2026-07-02
 Wire up HTML view server,Done,High,Shivam,2026-06-20
 Add CSV-backed database tables,Done,High,Shivam,2026-06-22

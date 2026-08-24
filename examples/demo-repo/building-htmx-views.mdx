@@ -1,7 +1,7 @@
 # Building HTMX views
 
 Neuron can render custom local interfaces from plain HTML files with
-[htmx](https://htmx.org) attributes. Open **Team dashboard.html** in this
+[htmx](https://htmx.org) attributes. Open **Launch board/** in this
 workspace to see one live.
 
 ## How it works
@@ -30,8 +30,8 @@ The first view you open scaffolds `.neuron/` at the workspace root:
 ## Permissions
 
 Views receive no capabilities by default. To read or write workspace data, add
-a manifest under `.neuron/manifests/` (`Team dashboard.html` →
-`.neuron/manifests/Team dashboard.json`) declaring `permissions`,
+a manifest under `.neuron/manifests/` (`Custom dashboard.html` →
+`.neuron/manifests/Custom dashboard.json`) declaring `permissions`,
 `allowedReadPaths`, and `allowedWritePaths`. Neuron shows an approval dialog
 before the first run and again whenever the manifest changes. Inline scripts
 may run, but views cannot reach the network, Node, or files outside their

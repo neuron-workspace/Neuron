@@ -13,7 +13,7 @@ import type { HtmxViewOpenResult } from '../electron.d';
 type Phase =
   | { kind: 'loading' }
   | { kind: 'ready'; sessionId: string; url: string; partition: string; name: string }
-  | { kind: 'needs-approval'; name: string; permissions: string[]; description?: string }
+  | { kind: 'needs-approval'; name: string; permissions: string[]; description?: string; readPaths: string[]; writePaths: string[] }
   | { kind: 'error'; message: string }
   | { kind: 'crashed' };
 
@@ -63,7 +63,14 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
       sessionRef.current = result.sessionId;
       setPhase({ kind: 'ready', ...result });
     } else if (result.status === 'needs-approval') {
-      setPhase({ kind: 'needs-approval', name: result.name, permissions: result.permissions, description: result.description });
+      setPhase({
+        kind: 'needs-approval',
+        name: result.name,
+        permissions: result.permissions,
+        description: result.description,
+        readPaths: result.readPaths,
+        writePaths: result.writePaths,
+      });
     } else {
       setPhase({ kind: 'error', message: result.message });
     }
@@ -126,7 +133,7 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   if (phase.kind === 'needs-approval') {
     const requestedCaps = phase.permissions.filter((p) => p in CAP_LABELS);
     return centered(
-      <div className="w-full max-w-md rounded-lg bg-[var(--surface)] p-5 text-left">
+      <div data-view-approval className="w-full max-w-md rounded-lg bg-[var(--surface)] p-5 text-left">
         <div className="flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
           <ShieldQuestion className="h-4 w-4 text-[var(--accent-strong)]" /> “{path}” requests workspace access
         </div>
@@ -139,7 +146,24 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-[11px] text-[var(--ink-muted)]">Only allow if you trust this file and where it came from. Access is limited to the paths in its manifest; editing that manifest re-requests approval. Close the tab to refuse.</p>
+        {(phase.writePaths.length > 0 || phase.readPaths.length > 0) && (
+          <dl className="mt-3 space-y-1 rounded-md bg-[var(--canvas)] p-2.5 text-[11px]">
+            {/* Write before read: it is the scope a user would refuse over. */}
+            {phase.writePaths.length > 0 && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-[var(--ink-muted)]">Can change</dt>
+                <dd className="text-[var(--ink-secondary)]">{phase.writePaths.join(', ')}</dd>
+              </div>
+            )}
+            {phase.readPaths.length > 0 && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-[var(--ink-muted)]">Can read</dt>
+                <dd className="text-[var(--ink-secondary)]">{phase.readPaths.join(', ')}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+        <p className="mt-3 text-[11px] text-[var(--ink-muted)]">Only allow if you trust this file and where it came from. Editing the manifest re-requests approval. Close the tab to refuse.</p>
         <div className="mt-4 flex gap-2">
           <Button onClick={() => void approve('always')}>Allow for this view</Button>
           <Button variant="secondary" onClick={() => void approve('once')}>Allow once</Button>

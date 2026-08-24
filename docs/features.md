@@ -233,7 +233,7 @@ always `none`: views cannot fetch remote content, navigate away, or open popups.
 
 Follow the full [HTMX view user guide](htmx-views.md#user-guide) for templates,
 manifests, routes, variables, limits, and examples. The demo workspace contains
-`Team dashboard.html`, `Custom dashboard.html`, and a `Launch board/`
+`Custom dashboard.html` and a `Launch board/`
 mini-app.
 
 ### Dashboard path: list your notes

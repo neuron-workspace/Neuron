@@ -29,14 +29,14 @@ Then start at **getting-started** in the sidebar and follow the links.
 | --- | --- |
 | .neuron/layout.json | The internal workspace shell layout |
 | .neuron/variables.json | Typed variables available to HTMX views |
-| Team dashboard.html | An HTML view: live summary, search, and an editable status variable |
-| .neuron/manifests/Team dashboard.json | The view's manifest — declared permissions and path scopes |
+| Custom dashboard.html | An HTML view: computed metrics, a status board, and quick capture |
+| .neuron/manifests/Custom dashboard.json | The view's manifest — declared permissions and path scopes |
 | Planner.db | A Notion-style database with table, board, and card layouts |
 | Idea board.canvas | A JSON Canvas spatial board with groups and labelled connections |
 
 ## Try these
 
-- Open **Team dashboard.html** — it renders in an isolated view tab; use the Source toggle to edit its HTML.
+- Open **Custom dashboard.html** — it renders in an isolated view tab; use the Source toggle to edit its HTML.
 - Open **Idea board.canvas** — Shift-drag to multi-select, right-click for align/z-order/arrows, Ctrl+Z to undo; cards render Markdown.
 - Press **Ctrl/Cmd + K** and run **New HTMX view in current folder** to create an `.html` view.
 - Read **building-htmx-views** for the API routes, `.neuron` folder layout, and permission model.
