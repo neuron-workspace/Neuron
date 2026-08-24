@@ -788,8 +788,22 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
 
       const dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>';
 
-      fetch(`https://api.github.com/repos/${owner}/${repository}/releases/latest`)
+      // Not /releases/latest -- that endpoint EXCLUDES prereleases and 404s
+      // when every release is one, which is exactly this project's situation.
+      // The download page silently showed "could not reach the GitHub API" from
+      // the day the site was rebuilt, because nothing here had ever been run
+      // against a repository whose only releases were betas.
+      //
+      // Take the newest published release, preferring a stable one when it
+      // exists so a future 1.0 is not hidden behind a later beta.
+      fetch(`https://api.github.com/repos/${owner}/${repository}/releases?per_page=20`)
         .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then((all) => {
+          const published = (Array.isArray(all) ? all : []).filter((r) => !r.draft);
+          const release = published.find((r) => !r.prerelease) ?? published[0];
+          if (!release) throw new Error('no published release');
+          return release;
+        })
         .then((release) => {
           const version = release.tag_name || release.name || '';
           const date = release.published_at
@@ -799,7 +813,9 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
 
           if (version) document.getElementById('strip-version').textContent = version.replace(/^v/, '');
           document.getElementById('dl-meta').innerHTML =
-            `<span class="chip">${esc(version)}</span>released ${esc(date)}` +
+            `<span class="chip">${esc(version)}</span>` +
+            (release.prerelease ? '<span class="chip">beta</span>' : '') +
+            `released ${esc(date)}` +
             (downloads ? ` · ${esc(downloads.toLocaleString())} downloads` : '');
 
           const byOS = { windows: [], mac: [], linux: [] };
