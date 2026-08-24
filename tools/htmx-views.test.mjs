@@ -328,6 +328,53 @@ const { hash } = await created.json();
 assert.equal((await api(writer, '/api/v1/files/content', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'v2', baseHash: 'stale' }) })).status, 409, 'stale baseHash -> 409');
 assert.equal((await api(writer, '/api/v1/files/content', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'v2', baseHash: hash }) })).status, 200);
 assert.equal((await api(writer, '/api/v1/files?path=data/made.txt', { method: 'DELETE' })).status, 200);
+
+// Quick capture, as the dashboard performs it: read a .db, append a row, PUT it
+// back under its own hash. The route is generic file I/O, so nothing else
+// proves that a database survives the round trip -- a capture that writes valid
+// JSON but the wrong row shape leaves a table with a blank line in it.
+{
+  const dbPath = 'data/Capture.db';
+  const seed = {
+    version: 2,
+    tables: {
+      tasks: {
+        name: 'Tasks',
+        schema: { order: ['title', 'status'], properties: { title: { name: 'Title' }, status: { name: 'Status' } } },
+        rows: [{ id: 't1', values: { title: 'Existing', status: 'todo' } }],
+      },
+    },
+  };
+  writeFileSync(join(ws, 'data', 'Capture.db'), JSON.stringify(seed, null, 2));
+
+  const read = await api(writer, `/api/v1/files/content?path=${dbPath}`);
+  assert.equal(read.status, 200, 'capture reads the database it is about to rewrite');
+  const { content, hash: baseHash } = await read.json();
+
+  const doc = JSON.parse(content);
+  doc.tables.tasks.rows.push({ id: 't2', values: { title: 'Captured', status: 'todo' } });
+  const put = await api(writer, '/api/v1/files/content', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: dbPath, content: JSON.stringify(doc, null, 2), baseHash }),
+  });
+  assert.equal(put.status, 200, 'capture writes the database back');
+
+  // The row has to come back through the database route, not just the file
+  // route: that is what proves the shape is right rather than merely valid JSON.
+  const table = await (await api(writer, `/api/v1/db?path=${dbPath}&table=tasks`)).json();
+  assert.equal(table.rows.length, 2, 'captured row is in the table');
+  assert.equal(table.rows[1].values.title, 'Captured');
+
+  // Second capture from the same stale hash is refused -- two dashboards open
+  // on one database must not silently drop one of the two writes.
+  const stale = await api(writer, '/api/v1/files/content', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: dbPath, content: '{}', baseHash }),
+  });
+  assert.equal(stale.status, 409, 'a capture against a stale hash is refused');
+}
 assert.equal((await api(writer, '/api/v1/files/content?path=data/made.txt')).status, 404);
 
 // Rate limiting: hammering one session eventually 429s

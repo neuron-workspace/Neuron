@@ -28,11 +28,20 @@ test('layout components render, nest, and re-parse their children', async ({ pag
   expect(await doc.locator('input[type="checkbox"]').count()).toBeGreaterThan(0);
   expect(await doc.locator('table').count()).toBeGreaterThan(0);
 
-  // No component tag survived as literal prose.
+  // A Callout re-parses its children too. It used to render them as one raw
+  // string, so a list came out as literal dashes and `code` as literal
+  // backticks -- which is most of what a callout is used for.
+  const callout = doc.locator('div', { hasText: 'Not built yet' }).last();
+  expect(await callout.locator('li').count()).toBeGreaterThan(0);
+
+  // No component tag survived as literal prose, and no backtick did either:
+  // every one in this note marks inline code, so a surviving backtick means
+  // something was rendered as text that should have been parsed.
   const text = await doc.first().innerText() + await doc.last().innerText();
   expect(text).not.toContain('<Grid');
   expect(text).not.toContain('<Card');
   expect(text).not.toContain('<Stat');
+  expect(text).not.toContain('`');
 });
 
 test('an unknown attribute value falls back instead of reaching the DOM', async ({ page, workspace }) => {

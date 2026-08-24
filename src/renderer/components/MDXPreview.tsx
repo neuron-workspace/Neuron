@@ -322,12 +322,16 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         const type = parseSemanticType(typeMatch?.[1]);
         const title = titleMatch ? titleMatch[1] : undefined;
 
-        // Extract children content
-        const childrenMatch = jsxStr.match(/>([\s\S]*?)<\/Callout>/);
+        // Children go back through parseMDX, exactly like the layout
+        // primitives below. Rendered as a raw string a callout could only hold
+        // one unformatted paragraph -- a list came out as literal dashes and
+        // `code` as literal backticks, which is what a callout is most often
+        // used for.
+        const childrenMatch = jsxStr.match(/>([\s\S]*)<\/Callout>/);
         const content = childrenMatch ? childrenMatch[1].trim() : '';
         return (
           <Callout key={`callout-${index}`} type={type} title={title}>
-            {content}
+            {content ? parseMDX(content) : null}
           </Callout>
         );
       }

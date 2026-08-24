@@ -1,13 +1,16 @@
 {
   "name": "Workload",
-  "version": "1.0.0",
-  "description": "Derives overdue counts and the open-work split from Planner.db. Runs JavaScript.",
+  "version": "1.1.0",
+  "description": "Derives overdue counts, the board and the per-project split from Planner.db, and appends captured tasks back to it. Runs JavaScript.",
   "permissions": [
-    "workspace.files.read"
+    "workspace.files.read",
+    "workspace.files.write"
   ],
   "allowedReadPaths": [
     "Planner.db"
   ],
-  "allowedWritePaths": [],
+  "allowedWritePaths": [
+    "Planner.db"
+  ],
   "networkPolicy": "none"
 }

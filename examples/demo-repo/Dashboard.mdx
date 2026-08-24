@@ -9,9 +9,9 @@ tags:
 
 <Grid cols="4" gap="sm">
 <Stat label="Priority" value="3" tone="accent" />
-<Stat label="Overdue" value="1" tone="danger" />
+<Stat label="Overdue" value="2" tone="danger" />
 <Stat label="Blocked" value="2" />
-<Stat label="Done this week" value="4" tone="positive" />
+<Stat label="Done this week" value="3" tone="positive" />
 </Grid>
 
 <Divider label="Focus" />
@@ -20,9 +20,10 @@ tags:
 
 <Card title="Today" tone="accent">
 
-- [ ] Verify the MDX sanitizer fixtures
-- [ ] Finish the command registry scopes
-- [x] Fit the canvas to its content on open
+- [ ] Draft the release checklist — past due
+- [ ] Profile the search index — past due
+- [ ] Rewrite the onboarding note
+- [x] Add restore coverage
 
 </Card>
 
@@ -51,18 +52,31 @@ tags:
 
 <Divider label="Review" />
 
-<Row gap="sm" wrap="true">
-<Card pad="sm">Notes with TODOs but no task metadata</Card>
-<Card pad="sm">Tasks with no project</Card>
-<Card pad="sm">Projects with no active task</Card>
-</Row>
+<Callout type="warning" title="Not built yet">
+
+These are the questions worth asking weekly, and none of them can be answered
+from a single file:
+
+- Notes with `- [ ]` TODOs but no task metadata
+- Tasks with no project, and projects with no active task
+- Anything untouched for a fortnight
+
+Each needs an index across every note's frontmatter and body. `DbView` reads one
+table from one database, and scanning the whole workspace on every render does
+not hold past a few hundred notes. The design is settled in
+`docs/architecture/metadata-index.md`; until it ships, this section is a
+placeholder and says so rather than showing three empty cards.
+
+</Callout>
 
 <Callout type="info" title="How this page is built">
 Everything above is ordinary Markdown plus layout components — `Grid`, `Row`,
 `Col`, `Card`, `Stat`, `Divider` — and a live `DbView` reading `Planner.db`.
 The file stays plain MDX on disk, so it is readable and editable without Neuron.
 
-For a dashboard that computes things — overdue counts against today's date,
-workload split across projects — see `Custom dashboard.html`, which runs
-JavaScript in a sandboxed view.
+The counts at the top are typed by hand, like anything else in a note. For a
+dashboard that computes — overdue against today's date, a board grouped by
+status, the workload split across projects, and a capture box that appends to
+`Planner.db` — see `Custom dashboard.html`, which declares JavaScript and write
+access in its manifest and runs sandboxed.
 </Callout>
