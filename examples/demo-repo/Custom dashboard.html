@@ -1,87 +1,259 @@
-<header>
-  <h1>Workload</h1>
-  <p>The same <code>Planner.db</code>, but this view runs JavaScript. It derives
-  figures that no server-rendered table can: overdue counts against today's
-  date, and how the open work splits across projects.</p>
-</header>
+<style>
+  /* Scoped to this document. Palette is defined once, with a light variant, so
+     the poster look survives a theme switch instead of going unreadable — the
+     served kit is token-driven and these bold flats are deliberately not. */
+  .pb {
+    --ink: #0d0d0d;
+    --paper: #12100e;
+    --amber: #e8a54b;
+    --clay: #b8503c;
+    --moss: #7f9a6d;
+    --steel: #b9b9b4;
+    --rule: rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    .pb { --paper: #e9e7e1; --rule: rgba(0, 0, 0, .28); }
+  }
 
-<div class="neuron-grid cols-3">
-  <section>
-    <span class="neuron-metric-label">Open</span>
-    <div class="neuron-metric" id="open">–</div>
-  </section>
-  <section>
-    <span class="neuron-metric-label">Overdue</span>
-    <div class="neuron-metric" id="overdue">–</div>
-  </section>
-  <section>
-    <span class="neuron-metric-label">Blocked</span>
-    <div class="neuron-metric" id="blocked">–</div>
-  </section>
+  .pb { background: var(--paper); padding: 1rem; min-height: 100vh; }
+  .pb * { box-sizing: border-box; }
+
+  .pb-grid {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) 2.2fr;
+    gap: .75rem;
+  }
+  .pb-sub { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  @media (max-width: 720px) {
+    .pb-grid, .pb-sub { grid-template-columns: 1fr; }
+  }
+
+  .pb-card {
+    border-radius: 14px;
+    padding: 1rem;
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+    min-height: 0;
+  }
+  .pb-amber { background: var(--amber); }
+  .pb-clay  { background: var(--clay); }
+  .pb-moss  { background: var(--moss); }
+  .pb-steel { background: var(--steel); }
+
+  .pb-eyebrow {
+    font: 600 10px/1 ui-monospace, "JetBrains Mono", monospace;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    opacity: .72;
+  }
+  .pb-huge {
+    font: 800 clamp(30px, 6vw, 56px)/0.86 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -.045em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .pb-num { font: 800 clamp(34px, 7vw, 68px)/0.82 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.05em; }
+  .pb-mono { font: 500 11px/1.45 ui-monospace, "JetBrains Mono", monospace; }
+
+  .pb-rule { height: 1px; background: var(--rule); border: 0; margin: .2rem 0; }
+  .pb-row { display: flex; align-items: center; gap: .5rem; }
+  .pb-between { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+
+  .pb-slot {
+    border: 1.5px solid var(--rule);
+    border-radius: 6px;
+    padding: .18rem .5rem;
+    font: 600 12px/1.3 ui-monospace, monospace;
+    min-width: 3.4rem;
+    text-align: right;
+  }
+
+  /* ADSR-style meter: four bars whose heights carry the status split. */
+  .pb-meter { display: flex; align-items: flex-end; gap: .35rem; height: 54px; }
+  .pb-bar { width: 14px; background: var(--ink); border-radius: 2px 2px 0 0; opacity: .82; }
+  .pb-legend { display: flex; gap: .35rem; }
+  .pb-legend span { width: 14px; text-align: center; }
+
+  .pb-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .3rem; }
+  .pb-list li { display: flex; gap: .5rem; align-items: baseline; }
+  .pb-tick { font: 700 11px/1.4 ui-monospace, monospace; opacity: .6; }
+
+  .pb-arrow { font-size: 42px; line-height: 1; font-weight: 700; }
+  .pb-tag {
+    display: inline-block;
+    border: 1.5px solid var(--ink);
+    border-radius: 999px;
+    padding: 0 .45rem;
+    font: 700 10px/1.6 ui-monospace, monospace;
+  }
+  .pb-vert {
+    writing-mode: vertical-rl;
+    font: 800 clamp(20px, 3vw, 30px)/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -.02em;
+    opacity: .9;
+  }
+</style>
+
+<div class="pb">
+  <div class="pb-grid">
+
+    <!-- Left: the standing poster. Overdue is the one number worth shouting. -->
+    <section class="pb-card pb-clay" style="justify-content:space-between">
+      <div class="pb-between">
+        <span class="pb-eyebrow">01</span>
+        <span class="pb-eyebrow">Planner<br>0.4.2</span>
+      </div>
+      <div class="pb-row" style="align-items:flex-end;gap:1rem">
+        <div class="pb-vert">OVERDUE</div>
+        <div>
+          <div class="pb-num" id="overdue">—</div>
+          <div class="pb-mono" id="overdue-label">reading Planner.db…</div>
+        </div>
+      </div>
+      <div>
+        <hr class="pb-rule">
+        <div class="pb-mono" id="oldest">&nbsp;</div>
+      </div>
+    </section>
+
+    <div style="display:grid;gap:.75rem;min-width:0">
+
+      <!-- Amber: the headline block, ADSR meter carries the status split. -->
+      <section class="pb-card pb-amber">
+        <div class="pb-between">
+          <h1 class="pb-huge">PLANNER<span style="color:var(--clay)">.</span></h1>
+          <div class="pb-arrow">↗</div>
+        </div>
+        <hr class="pb-rule">
+        <div class="pb-row" style="align-items:flex-start;gap:1.25rem;flex-wrap:wrap">
+          <div>
+            <div class="pb-meter" id="meter">
+              <div class="pb-bar" style="height:8%"></div>
+              <div class="pb-bar" style="height:8%"></div>
+              <div class="pb-bar" style="height:8%"></div>
+              <div class="pb-bar" style="height:8%"></div>
+            </div>
+            <div class="pb-legend pb-eyebrow" style="margin-top:.3rem">
+              <span>T</span><span>N</span><span>B</span><span>D</span>
+            </div>
+          </div>
+          <div style="flex:1;min-width:170px;display:flex;flex-direction:column;gap:.4rem">
+            <div class="pb-between">
+              <span class="pb-eyebrow">Open</span>
+              <span class="pb-slot" id="open">—</span>
+            </div>
+            <div class="pb-between">
+              <span class="pb-eyebrow">Due this week</span>
+              <span class="pb-slot" id="week">—</span>
+            </div>
+            <div class="pb-between">
+              <span class="pb-eyebrow">Blocked</span>
+              <span class="pb-slot" id="blocked">—</span>
+            </div>
+          </div>
+        </div>
+        <hr class="pb-rule">
+        <div class="pb-between">
+          <span class="pb-tag" id="focus">#FOCUS</span>
+          <span class="pb-eyebrow">Local · no network</span>
+        </div>
+      </section>
+
+      <div class="pb-sub">
+        <!-- Moss: what to actually do next. -->
+        <section class="pb-card pb-moss">
+          <div class="pb-between">
+            <span class="pb-eyebrow">Next actions</span>
+            <span class="pb-eyebrow" id="next-count">—</span>
+          </div>
+          <ul class="pb-list pb-mono" id="next"><li>reading…</li></ul>
+          <hr class="pb-rule">
+          <div class="pb-huge" style="font-size:clamp(18px,3vw,26px)" id="next-project">—</div>
+        </section>
+
+        <!-- Steel: completion, with the number split like the reference. -->
+        <section class="pb-card pb-steel">
+          <div class="pb-eyebrow">Progress</div>
+          <div class="pb-between" style="align-items:flex-end">
+            <div class="pb-num" id="pct"><span style="opacity:.85">—</span></div>
+            <div class="pb-mono" style="text-align:right" id="done-of">&nbsp;</div>
+          </div>
+          <hr class="pb-rule">
+          <ul class="pb-list pb-mono" id="blockers"><li>reading…</li></ul>
+        </section>
+      </div>
+    </div>
+  </div>
 </div>
 
-<section>
-  <h2>Open work by project</h2>
-  <div id="split"><p class="neuron-empty">Reading Planner.db…</p></div>
-</section>
-
-<section>
-  <h2>Due next</h2>
-  <div id="soon"><p class="neuron-empty">Reading Planner.db…</p></div>
-</section>
-
 <script>
-  // Everything below is why this view needs script at all. "Overdue" is a
-  // comparison against the clock at render time, and the split is an
-  // aggregation across rows -- neither is something a table of rows can state.
+  // Why this view runs JavaScript at all: everything below is either a
+  // comparison against the clock at render time or an aggregation across rows.
+  // A server-rendered table can show the rows; it cannot say "overdue".
+  const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const bar = (label, count, total) => {
-    const pct = total ? Math.round((count / total) * 100) : 0;
-    return '<div style="margin-bottom:.6rem">'
-      + '<div style="display:flex;justify-content:space-between;font-size:.8rem">'
-      + '<span>' + esc(label) + '</span><span>' + count + '</span></div>'
-      + '<div style="height:6px;border-radius:3px;background:var(--muted)">'
-      + '<div style="height:6px;border-radius:3px;width:' + pct + '%;background:var(--primary)"></div>'
-      + '</div></div>';
-  };
-
   (async () => {
-    // connect-src is 'self', so this can reach Neuron's loopback API and
-    // nothing else. There is no route off this machine.
+    // connect-src is 'self': this reaches Neuron's loopback API and has no
+    // route off the machine.
     const res = await fetch('./api/v1/db?path=Planner.db&table=tasks');
-    if (!res.ok) {
-      document.getElementById('split').innerHTML =
-        '<p class="neuron-empty">Could not read Planner.db.</p>';
-      return;
-    }
+    if (!res.ok) { $('overdue-label').textContent = 'Planner.db unavailable'; return; }
     const { rows } = await res.json();
     const tasks = rows.map((r) => r.values);
 
-    const open = tasks.filter((t) => t.status !== 'done');
     const today = new Date().toISOString().slice(0, 10);
+    const weekOut = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+    const open = tasks.filter((t) => t.status !== 'done');
     const overdue = open.filter((t) => t.due && t.due < today);
     const blocked = open.filter((t) => t.status === 'blocked');
+    const week = open.filter((t) => t.due && t.due >= today && t.due <= weekOut);
+    const done = tasks.length - open.length;
 
-    document.getElementById('open').textContent = open.length;
-    document.getElementById('overdue').textContent = overdue.length;
-    document.getElementById('blocked').textContent = blocked.length;
+    $('overdue').textContent = overdue.length;
+    $('overdue-label').textContent = overdue.length === 1 ? 'task past due' : 'tasks past due';
+    $('open').textContent = open.length;
+    $('week').textContent = week.length;
+    $('blocked').textContent = blocked.length;
+    $('done-of').innerHTML = done + ' of ' + tasks.length + '<br>complete';
 
-    const byProject = new Map();
-    for (const t of open) byProject.set(t.project, (byProject.get(t.project) ?? 0) + 1);
-    const ranked = [...byProject.entries()].sort((a, b) => b[1] - a[1]);
-    document.getElementById('split').innerHTML =
-      ranked.length ? ranked.map(([p, n]) => bar(p, n, open.length)).join('')
-                    : '<p class="neuron-empty">Nothing open.</p>';
+    const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+    $('pct').innerHTML = '<span>' + pct + '</span><span style="color:var(--clay)">%</span>';
 
-    const soon = open.filter((t) => t.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 5);
-    document.getElementById('soon').innerHTML = soon.length
-      ? '<div class="neuron-scroll"><table class="neuron-table"><thead><tr><th>Task</th><th>Due</th><th>Project</th></tr></thead><tbody>'
-        + soon.map((t) => '<tr><td>' + esc(t.title) + '</td><td>' + esc(t.due)
-          + (t.due < today ? ' <span class="neuron-badge">overdue</span>' : '')
-          + '</td><td>' + esc(t.project) + '</td></tr>').join('')
-        + '</tbody></table></div>'
-      : '<p class="neuron-empty">Nothing scheduled.</p>';
+    // Bars: Todo / Next(in progress) / Blocked / Done, scaled to the largest.
+    const split = [
+      tasks.filter((t) => t.status === 'todo').length,
+      tasks.filter((t) => t.status === 'doing').length,
+      blocked.length,
+      done,
+    ];
+    const peak = Math.max(1, ...split);
+    [...$('meter').children].forEach((bar, i) => {
+      bar.style.height = Math.max(8, Math.round((split[i] / peak) * 100)) + '%';
+    });
+
+    // Oldest open item by due date: the thing quietly rotting.
+    const dated = open.filter((t) => t.due).sort((a, b) => a.due.localeCompare(b.due));
+    $('oldest').textContent = dated.length ? 'Oldest open · ' + dated[0].due : 'Nothing scheduled';
+
+    const priority = { high: 0, medium: 1, low: 2 };
+    const next = open
+      .filter((t) => t.status !== 'blocked')
+      .sort((a, b) => (priority[a.priority] ?? 3) - (priority[b.priority] ?? 3)
+        || String(a.due ?? '9999').localeCompare(String(b.due ?? '9999')))
+      .slice(0, 4);
+    $('next-count').textContent = open.length + ' open';
+    $('next').innerHTML = next.length
+      ? next.map((t) => '<li><span class="pb-tick">[ ]</span><span>' + esc(t.title) + '</span></li>').join('')
+      : '<li>Nothing waiting.</li>';
+    $('next-project').textContent = next[0]?.project ?? '—';
+    $('focus').textContent = '#' + String(next[0]?.project ?? 'planner').toUpperCase().replace(/\s+/g, '');
+
+    $('blockers').innerHTML = blocked.length
+      ? blocked.slice(0, 3).map((t) => '<li><span class="pb-tick">!</span><span>' + esc(t.title) + '</span></li>').join('')
+      : '<li>Nothing blocked.</li>';
   })();
 </script>

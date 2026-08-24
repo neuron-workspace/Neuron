@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
 import DbView from './DbView';
+import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
@@ -250,9 +251,17 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         if (!isSelfClosing && tagName && !line.includes(`</${tagName}>`)) {
           i++;
           let foundClosing = false;
+          // Track depth: stopping at the first `</Tag>` would truncate
+          // `<Grid>…<Grid>…</Grid>…</Grid>` at the inner close and leave the
+          // outer one stranded as literal text.
+          let depth = 1;
+          const openRe = new RegExp(`<${tagName}\\b(?![^>]*/>)`, 'g');
+          const closeRe = new RegExp(`</${tagName}>`, 'g');
           while (i < lines.length) {
             fullJSXLines.push(lines[i]);
-            if (lines[i].includes(`</${tagName}>`)) {
+            depth += (lines[i].match(openRe) ?? []).length;
+            depth -= (lines[i].match(closeRe) ?? []).length;
+            if (depth <= 0) {
               foundClosing = true;
               break;
             }
@@ -321,6 +330,38 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
             {content}
           </Callout>
         );
+      }
+
+      // 3. Layout primitives. Children are re-parsed through parseMDX so a Card
+      // can hold markdown, another Card, or a DbView -- without that they would
+      // arrive as raw text and the components would be decorative boxes.
+      //
+      // Attribute values are looked up in tables inside mdx-layout, never
+      // interpolated into a class string: a note is untrusted content and
+      // arbitrary CSS over the app chrome is UI spoofing.
+      const layout: Record<string, (props: Record<string, string>, kids: React.ReactNode) => React.ReactNode> = {
+        Row: (a, k) => <Row {...a}>{k}</Row>,
+        Col: (a, k) => <Col {...a}>{k}</Col>,
+        Grid: (a, k) => <Grid {...a}>{k}</Grid>,
+        Cell: (a, k) => <Cell {...a}>{k}</Cell>,
+        Card: (a, k) => <Card {...a}>{k}</Card>,
+        Stat: (a) => <Stat {...a} />,
+        Divider: (a) => <Divider {...a} />,
+      };
+      const layoutMatch = jsxStr.match(/^<([A-Z][A-Za-z0-9]*)\b/);
+      if (layoutMatch && layout[layoutMatch[1]]) {
+        const tag = layoutMatch[1];
+        const openTag = jsxStr.slice(0, jsxStr.indexOf('>') + 1);
+        const attrs: Record<string, string> = {};
+        for (const m of openTag.matchAll(/([a-zA-Z][\w-]*)="([^"]*)"/g)) attrs[m[1]] = m[2];
+
+        // Children are everything between the open tag and the LAST matching
+        // close, so a nested tag of the same name does not truncate the block.
+        const close = `</${tag}>`;
+        const end = jsxStr.lastIndexOf(close);
+        const inner = end > -1 ? jsxStr.slice(jsxStr.indexOf('>') + 1, end) : '';
+        const kids = inner.trim() ? parseMDX(inner) : null;
+        return <div key={`${tag}-${index}`}>{layout[tag](attrs, kids)}</div>;
       }
 
       // 3. Match DbView — embeds a .db database (table/board/card) by @path.

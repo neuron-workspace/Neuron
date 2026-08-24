@@ -1,0 +1,68 @@
+---
+title: Dashboard
+type: dashboard
+tags:
+  - planner
+---
+
+# Today
+
+<Grid cols="4" gap="sm">
+<Stat label="Priority" value="3" tone="accent" />
+<Stat label="Overdue" value="1" tone="danger" />
+<Stat label="Blocked" value="2" />
+<Stat label="Done this week" value="4" tone="positive" />
+</Grid>
+
+<Divider label="Focus" />
+
+<Row gap="md" align="stretch">
+
+<Card title="Today" tone="accent">
+
+- [ ] Verify the MDX sanitizer fixtures
+- [ ] Finish the command registry scopes
+- [x] Fit the canvas to its content on open
+
+</Card>
+
+<Card title="Blocked">
+
+- **Store submission** — Partner Center identity is still a placeholder
+- **Signing** — no Authenticode or Developer ID yet
+
+</Card>
+
+</Row>
+
+<Divider label="Work" />
+
+<Grid gap="md">
+
+<Card title="Tasks">
+<DbView path="@Planner.db" table="tasks" />
+</Card>
+
+<Card title="Projects">
+<DbView path="@Planner.db" table="projects" />
+</Card>
+
+</Grid>
+
+<Divider label="Review" />
+
+<Row gap="sm" wrap="true">
+<Card pad="sm">Notes with TODOs but no task metadata</Card>
+<Card pad="sm">Tasks with no project</Card>
+<Card pad="sm">Projects with no active task</Card>
+</Row>
+
+<Callout type="info" title="How this page is built">
+Everything above is ordinary Markdown plus layout components — `Grid`, `Row`,
+`Col`, `Card`, `Stat`, `Divider` — and a live `DbView` reading `Planner.db`.
+The file stays plain MDX on disk, so it is readable and editable without Neuron.
+
+For a dashboard that computes things — overdue counts against today's date,
+workload split across projects — see `Custom dashboard.html`, which runs
+JavaScript in a sandboxed view.
+</Callout>
