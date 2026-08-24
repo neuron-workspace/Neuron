@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   terminal: {
     run: (cmd: string) => ipcRenderer.invoke('terminal:run', cmd),
     spawn: (opts: { cols?: number; rows?: number }) => ipcRenderer.invoke('terminal:spawn', opts),
+    history: (id: number) => ipcRenderer.invoke('terminal:history', id),
     write: (id: number, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: number, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
     kill: (id: number) => ipcRenderer.invoke('terminal:kill', id),

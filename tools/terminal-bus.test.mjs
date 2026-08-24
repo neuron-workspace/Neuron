@@ -61,5 +61,18 @@ assert.equal(bus.isRunnableCommand('echo \u0007bell'), false, 'control character
   assert.deepEqual(written.at(-1), 'third\r', 'and it arrives when a terminal comes back');
 }
 
+// --- overlapping terminal mounts -------------------------------------------
+{
+  const written = [];
+  const offFirst = bus.registerTerminalWriter((d) => written.push(['first', d]));
+  const offSecond = bus.registerTerminalWriter((d) => written.push(['second', d]));
+
+  offFirst();
+  bus.runInTerminal('shared-shell');
+  assert.deepEqual(written, [['second', 'shared-shell\r']], 'an older mount cannot unregister the surviving writer');
+
+  offSecond();
+}
+
 rmSync(out, { recursive: true, force: true });
 console.log('terminal-bus: all checks passed');
