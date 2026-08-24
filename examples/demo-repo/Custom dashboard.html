@@ -19,17 +19,17 @@
   .pb { background: var(--paper); padding: 1rem; min-height: 100vh; }
   .pb * { box-sizing: border-box; }
 
-  .pb-grid {
+  .pb .pb-grid {
     display: grid;
     grid-template-columns: minmax(180px, 1fr) 2.2fr;
     gap: .75rem;
   }
-  .pb-sub { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  .pb .pb-sub { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
   @media (max-width: 720px) {
-    .pb-grid, .pb-sub { grid-template-columns: 1fr; }
+    .pb .pb-grid, .pb .pb-sub { grid-template-columns: 1fr; }
   }
 
-  .pb-card {
+  .pb .pb-card {
     border-radius: 14px;
     padding: 1rem;
     color: var(--ink);
@@ -38,31 +38,31 @@
     gap: .6rem;
     min-height: 0;
   }
-  .pb-amber { background: var(--amber); }
-  .pb-clay  { background: var(--clay); }
-  .pb-moss  { background: var(--moss); }
-  .pb-steel { background: var(--steel); }
+  .pb .pb-amber { background: var(--amber); }
+  .pb .pb-clay  { background: var(--clay); }
+  .pb .pb-moss  { background: var(--moss); }
+  .pb .pb-steel { background: var(--steel); }
 
-  .pb-eyebrow {
+  .pb .pb-eyebrow {
     font: 600 10px/1 ui-monospace, "JetBrains Mono", monospace;
     letter-spacing: .14em;
     text-transform: uppercase;
     opacity: .72;
   }
-  .pb-huge {
+  .pb .pb-huge {
     font: 800 clamp(30px, 6vw, 56px)/0.86 ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -.045em;
     text-transform: uppercase;
     margin: 0;
   }
-  .pb-num { font: 800 clamp(34px, 7vw, 68px)/0.82 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.05em; }
-  .pb-mono { font: 500 11px/1.45 ui-monospace, "JetBrains Mono", monospace; }
+  .pb .pb-num { font: 800 clamp(34px, 7vw, 68px)/0.82 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.05em; }
+  .pb .pb-mono { font: 500 11px/1.45 ui-monospace, "JetBrains Mono", monospace; }
 
-  .pb-rule { height: 1px; background: var(--rule); border: 0; margin: .2rem 0; }
-  .pb-row { display: flex; align-items: center; gap: .5rem; }
-  .pb-between { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+  .pb .pb-rule { height: 1px; background: var(--rule); border: 0; margin: .2rem 0; }
+  .pb .pb-row { display: flex; align-items: center; gap: .5rem; }
+  .pb .pb-between { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
 
-  .pb-slot {
+  .pb .pb-slot {
     border: 1.5px solid var(--rule);
     border-radius: 6px;
     padding: .18rem .5rem;
@@ -72,24 +72,24 @@
   }
 
   /* ADSR-style meter: four bars whose heights carry the status split. */
-  .pb-meter { display: flex; align-items: flex-end; gap: .35rem; height: 54px; }
-  .pb-bar { width: 14px; background: var(--ink); border-radius: 2px 2px 0 0; opacity: .82; }
-  .pb-legend { display: flex; gap: .35rem; }
-  .pb-legend span { width: 14px; text-align: center; }
+  .pb .pb-meter { display: flex; align-items: flex-end; gap: .35rem; height: 54px; }
+  .pb .pb-bar { width: 14px; background: var(--ink); border-radius: 2px 2px 0 0; opacity: .82; }
+  .pb .pb-legend { display: flex; gap: .35rem; }
+  .pb .pb-legend span { width: 14px; text-align: center; }
 
-  .pb-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .3rem; }
-  .pb-list li { display: flex; gap: .5rem; align-items: baseline; }
-  .pb-tick { font: 700 11px/1.4 ui-monospace, monospace; opacity: .6; }
+  .pb .pb-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .3rem; }
+  .pb .pb-list li { display: flex; gap: .5rem; align-items: baseline; }
+  .pb .pb-tick { font: 700 11px/1.4 ui-monospace, monospace; opacity: .6; }
 
-  .pb-arrow { font-size: 42px; line-height: 1; font-weight: 700; }
-  .pb-tag {
+  .pb .pb-arrow { font-size: 42px; line-height: 1; font-weight: 700; }
+  .pb .pb-tag {
     display: inline-block;
     border: 1.5px solid var(--ink);
     border-radius: 999px;
     padding: 0 .45rem;
     font: 700 10px/1.6 ui-monospace, monospace;
   }
-  .pb-vert {
+  .pb .pb-vert {
     writing-mode: vertical-rl;
     font: 800 clamp(20px, 3vw, 30px)/1 ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -.02em;
@@ -98,13 +98,13 @@
 
   /* --- board, workload and capture ------------------------------------- */
 
-  .pb-stack { display: grid; gap: .75rem; margin-top: .75rem; }
-  .pb-half { display: grid; grid-template-columns: 1.35fr 1fr; gap: .75rem; }
-  @media (max-width: 720px) { .pb-half { grid-template-columns: 1fr; } }
+  .pb .pb-stack { display: grid; gap: .75rem; margin-top: .75rem; }
+  .pb .pb-half { display: grid; grid-template-columns: 1.35fr 1fr; gap: .75rem; }
+  @media (max-width: 720px) { .pb .pb-half { grid-template-columns: 1fr; } }
 
-  .pb-kan { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; }
-  @media (max-width: 720px) { .pb-kan { grid-template-columns: 1fr 1fr; } }
-  .pb-col {
+  .pb .pb-kan { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; }
+  @media (max-width: 720px) { .pb .pb-kan { grid-template-columns: 1fr 1fr; } }
+  .pb .pb-col {
     background: rgba(0, 0, 0, .07);
     border-radius: 8px;
     padding: .45rem;
@@ -113,7 +113,7 @@
     gap: .3rem;
     min-height: 5rem;
   }
-  .pb-chip {
+  .pb .pb-chip {
     background: rgba(255, 255, 255, .55);
     border-radius: 5px;
     padding: .32rem .4rem;
@@ -122,17 +122,17 @@
     gap: .35rem;
     align-items: flex-start;
   }
-  .pb-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; margin-top: .3rem; background: var(--ink); }
-  .pb-dot.high { background: var(--clay); }
-  .pb-dot.medium { opacity: .55; }
-  .pb-dot.low { opacity: .25; }
-  .pb-late { font-weight: 700; color: var(--clay); }
+  .pb .pb-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; margin-top: .3rem; background: var(--ink); }
+  .pb .pb-dot.high { background: var(--clay); }
+  .pb .pb-dot.medium { opacity: .55; }
+  .pb .pb-dot.low { opacity: .25; }
+  .pb .pb-late { font-weight: 700; color: var(--clay); }
 
-  .pb-track { height: 7px; border-radius: 999px; background: rgba(0, 0, 0, .16); overflow: hidden; }
-  .pb-fill { height: 100%; background: var(--ink); opacity: .7; border-radius: 999px; }
+  .pb .pb-track { height: 7px; border-radius: 999px; background: rgba(0, 0, 0, .16); overflow: hidden; }
+  .pb .pb-fill { height: 100%; background: var(--ink); opacity: .7; border-radius: 999px; }
 
-  .pb-field { display: flex; flex-direction: column; gap: .2rem; }
-  .pb-input, .pb-select {
+  .pb .pb-field { display: flex; flex-direction: column; gap: .2rem; }
+  .pb .pb-input, .pb .pb-select {
     width: 100%;
     border: 1.5px solid var(--rule);
     border-radius: 6px;
@@ -141,7 +141,7 @@
     padding: .3rem .45rem;
     font: 500 12px/1.4 ui-monospace, "JetBrains Mono", monospace;
   }
-  .pb-btn {
+  .pb .pb-btn {
     border: 1.5px solid var(--ink);
     border-radius: 6px;
     background: var(--ink);
@@ -152,8 +152,8 @@
     text-transform: uppercase;
     cursor: pointer;
   }
-  .pb-btn:hover { opacity: .88; }
-  .pb-btn[disabled] { opacity: .5; cursor: progress; }
+  .pb .pb-btn:hover { opacity: .88; }
+  .pb .pb-btn[disabled] { opacity: .5; cursor: progress; }
   /* Every control gets a visible focus ring: these flats sit outside the app's
      token system, so they inherit none of its focus styling. */
   .pb :is(.pb-input, .pb-select, .pb-btn):focus-visible {
