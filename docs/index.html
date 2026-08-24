@@ -3,1472 +3,846 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Download Neuron, a local-first Markdown and MDX knowledge workspace." />
-    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Neuron is a local-first Markdown and MDX workspace. Your notes stay plain files on your own disk." />
+    <meta name="color-scheme" content="light" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
-    <title>Neuron — local notes, fully yours</title>
-    
-    <!-- Premium Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600&family=Geist:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>Neuron — a local-first Markdown workspace</title>
+
+    <meta property="og:title" content="Neuron — a local-first Markdown workspace" />
+    <meta property="og:description" content="Notes as plain files. Databases, canvases and sandboxed views on top. No account, no telemetry." />
+    <meta property="og:type" content="website" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet" />
 
     <style>
+      /* ===================================================================
+         Neuron download site
+
+         Two families on a contrast axis: a transitional serif carries every
+         display line, a grotesque carries everything you read at body size.
+         Filenames and hashes use the system mono stack -- they are literally
+         data, not decoration, and they do not justify a third webfont.
+
+         Colour is committed rather than restrained: near-black and paper,
+         with one electric blue that owns the hero panel, every primary
+         action, and nothing else.
+         =================================================================== */
       :root {
-        color-scheme: dark;
-        --bg-canvas: #070809;
-        --bg-surface: #0f1113;
-        --bg-surface-hover: #16191c;
-        --border-color: rgba(255, 255, 255, 0.08);
-        --border-color-muted: rgba(255, 255, 255, 0.04);
-        --text-primary: #f2f4f3;
-        --text-secondary: #b6bcb9;
-        --text-muted: #727976;
-        --accent: #91d59d;
-        --accent-rgb: 145, 213, 157;
-        --accent-ink: #0c180f;
-        --transition-duration: 600ms;
-        --transition-bezier: cubic-bezier(0.16, 1, 0.3, 1);
+        --paper: #ffffff;
+        --paper-2: #f6f6f7;
+        --paper-3: #eeeef0;
+        --ink: #0a0a0a;
+        --ink-2: #3d3d3d;   /* 10.4:1 on paper */
+        --ink-3: #6b6b6b;   /*  5.3:1 on paper */
+        --line: #e4e4e6;
+        --line-strong: #cfcfd3;
+
+        --blue: #2b5cf6;    /*  5.3:1 on paper, and white on it is the same */
+        --blue-deep: #1230a8;
+        --blue-lift: #4b78ff;
+
+        --on-dark: #f5f5f6;
+        --on-dark-2: #a8a8ad; /* 8.4:1 on ink */
+
+        --step: clamp(1rem, 0.6rem + 1.4vw, 1.5rem);
+        --gutter: clamp(1.25rem, 5vw, 4rem);
+        --measure: 68ch;
+
+        --radius: 4px;
+        --radius-lg: 10px;
+
+        /* Semantic depth. Never an arbitrary 9999. */
+        --z-base: 0;
+        --z-raised: 10;
+        --z-sticky: 100;
+        --z-nav: 200;
+
+        --ease: cubic-bezier(0.16, 1, 0.3, 1);
       }
 
-      * {
-        box-sizing: border-box;
-      }
+      *, *::before, *::after { box-sizing: border-box; }
 
-      html {
-        scroll-behavior: smooth;
-      }
+      html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+      @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
-      html, body {
+      body {
         margin: 0;
-        padding: 0;
-        background: var(--bg-canvas);
-        color: var(--text-primary);
-        font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-        overflow-x: hidden;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: Archivo, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
         -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
       }
 
-      /* Glow Mesh Backdrops */
-      .glow-container {
-        position: absolute;
-        top: 0;
-        left: 50%;
-        transform: translateX(-50%);
+      h1, h2, h3, .serif {
+        font-family: "Source Serif 4", ui-serif, Georgia, serif;
+        font-weight: 400;
+        letter-spacing: -0.022em;
+        text-wrap: balance;
+        margin: 0;
+      }
+
+      p { margin: 0; text-wrap: pretty; }
+      a { color: inherit; }
+
+      :focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+        border-radius: 2px;
+      }
+
+      .wrap {
         width: 100%;
-        max-width: 1400px;
-        height: 800px;
-        pointer-events: none;
-        z-index: 0;
-        overflow: hidden;
+        max-width: 1120px;
+        margin-inline: auto;
+        padding-inline: var(--gutter);
       }
 
-      .glow-orb-primary {
-        position: absolute;
-        top: -100px;
-        left: 10%;
-        width: 600px;
-        height: 500px;
-        background: radial-gradient(circle, rgba(var(--accent-rgb), 0.12) 0%, rgba(var(--accent-rgb), 0) 70%);
-        filter: blur(80px);
+      /* --- announcement strip ------------------------------------------- */
+      .strip {
+        background: var(--ink);
+        color: var(--on-dark);
+        font-size: 12px;
+        letter-spacing: 0.01em;
       }
-
-      .glow-orb-secondary {
-        position: absolute;
-        top: 150px;
-        right: 5%;
-        width: 500px;
-        height: 400px;
-        background: radial-gradient(circle, rgba(145, 185, 213, 0.08) 0%, rgba(145, 185, 213, 0) 75%);
-        filter: blur(60px);
+      .strip a {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        justify-content: center;
+        padding: 0.6rem 1rem;
+        text-decoration: none;
       }
+      .strip a:hover .strip-arrow { transform: translateX(3px); }
+      .strip-arrow { transition: transform 240ms var(--ease); }
+      .strip b { font-weight: 600; }
 
-      /* Base Layout Container */
-      .shell {
-        position: relative;
-        z-index: 1;
-        width: min(1200px, calc(100% - 48px));
-        margin: 0 auto;
+      /* --- nav ----------------------------------------------------------- */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: var(--z-nav);
+        background: color-mix(in srgb, var(--paper) 88%, transparent);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--line);
       }
-
-      /* Floating Header */
-      header {
+      .nav-in {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        margin: 24px auto 0;
-        padding: 10px 24px;
-        height: 64px;
-        background: rgba(15, 17, 19, 0.7);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid var(--border-color);
-        border-radius: 9999px;
-        box-shadow: 
-          0 4px 30px rgba(0, 0, 0, 0.2), 
-          inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        gap: 1.75rem;
+        height: 60px;
       }
-
       .brand {
         display: flex;
         align-items: center;
-        gap: 12px;
-        font-size: 15px;
+        gap: 0.6rem;
         font-weight: 600;
-        letter-spacing: -0.01em;
+        font-size: 16px;
+        letter-spacing: -0.02em;
         text-decoration: none;
-        color: var(--text-primary);
-        transition: opacity var(--transition-duration) var(--transition-bezier);
+        margin-right: 0.5rem;
       }
-
-      .brand:hover {
-        opacity: 0.85;
-      }
-
       .brand-mark {
+        width: 22px;
+        height: 22px;
         display: grid;
-        width: 32px;
-        height: 32px;
-        place-items: center;
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        background: var(--bg-surface);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+        gap: 2px;
       }
-
-      .brand-mark img {
-        width: 20px;
-        height: 20px;
+      .brand-mark i {
+        background: var(--ink);
+        border-radius: 1px;
       }
+      .brand-mark i:nth-child(2), .brand-mark i:nth-child(4),
+      .brand-mark i:nth-child(6), .brand-mark i:nth-child(8) { opacity: 0.35; }
 
-      nav {
-        display: flex;
-        gap: 20px;
-      }
+      .nav-links { display: flex; gap: 1.5rem; font-size: 14px; }
+      .nav-links a { text-decoration: none; color: var(--ink-2); }
+      .nav-links a:hover { color: var(--ink); }
+      .nav-right { margin-left: auto; display: flex; align-items: center; gap: 1rem; }
+      .nav-right .ghost { font-size: 14px; text-decoration: none; color: var(--ink-2); }
+      .nav-right .ghost:hover { color: var(--ink); }
+      @media (max-width: 720px) { .nav-links { display: none; } }
 
-      nav a {
+      /* --- buttons -------------------------------------------------------- */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.7rem 1.1rem;
+        border: 1px solid var(--ink);
+        border-radius: var(--radius);
+        background: var(--ink);
+        color: var(--paper);
+        font: inherit;
         font-size: 13px;
-        font-weight: 500;
-        text-decoration: none;
-        color: var(--text-secondary);
-        transition: color 200ms ease, transform 200ms ease;
-      }
-
-      nav a:hover {
-        color: var(--text-primary);
-        transform: translateY(-1px);
-      }
-
-      /* Hero Section */
-      .hero-grid {
-        display: grid;
-        grid-template-columns: 1.2fr 1fr;
-        gap: 48px;
-        align-items: center;
-        padding: 96px 0 80px;
-      }
-
-      .hero-content {
-        max-width: 620px;
-      }
-
-      .eyebrow {
-        display: inline-flex;
-        align-items: center;
-        margin-bottom: 24px;
-        padding: 4px 12px;
-        border: 1px solid rgba(var(--accent-rgb), 0.2);
-        border-radius: 9999px;
-        background: rgba(var(--accent-rgb), 0.05);
-        color: var(--accent);
-        font-family: 'Geist Mono', monospace;
-        font-size: 11px;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.15em;
-      }
-
-      h1 {
-        margin: 0 0 20px;
-        font-size: clamp(38px, 5vw, 56px);
-        font-weight: 800;
-        line-height: 1.08;
-        letter-spacing: -0.035em;
-        text-wrap: balance;
-      }
-
-      h1 span {
-        color: var(--accent);
-        font-style: italic;
-        font-weight: 700;
-      }
-
-      .lede {
-        margin: 0 0 36px;
-        color: var(--text-secondary);
-        font-size: 17px;
-        line-height: 1.6;
-        text-wrap: pretty;
-      }
-
-      /* Buttons & CTA */
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 24px;
-      }
-
-      .button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 48px;
-        padding: 0 24px;
-        border-radius: 9999px;
-        font-size: 14px;
         font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
         text-decoration: none;
-        transition: all 300ms var(--transition-bezier);
         cursor: pointer;
-        position: relative;
+        transition: background 180ms var(--ease), color 180ms var(--ease), border-color 180ms var(--ease);
       }
+      .btn:hover { background: var(--blue); border-color: var(--blue); }
+      .btn-line { background: transparent; color: var(--ink); }
+      .btn-line:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+      .btn-sm { padding: 0.5rem 0.85rem; font-size: 12px; }
+      .btn svg { width: 14px; height: 14px; flex: none; }
+      .btn .go { transition: transform 240ms var(--ease); }
+      .btn:hover .go { transform: translateX(3px); }
 
-      .button.primary {
-        background: var(--accent);
-        color: var(--accent-ink);
-        border: 1px solid var(--accent);
-        padding-right: 8px; /* Room for nested button icon */
-      }
+      /* --- section rhythm -------------------------------------------------- */
+      section { padding-block: clamp(3.5rem, 8vw, 7rem); }
+      .band-dark { background: var(--ink); color: var(--on-dark); }
+      .band-tint { background: var(--paper-2); }
 
-      .button.primary:hover {
-        background: #aef0ba;
-        border-color: #aef0ba;
-        box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.2);
-        transform: translateY(-2px);
-      }
-
-      .button.primary:active {
-        transform: translateY(0) scale(0.98);
-      }
-
-      .btn-icon-circle {
-        display: flex;
+      /* The kicker is a system here, not decoration sprinkled on every block:
+         one square glyph, one word, used only where a section changes stance. */
+      .kicker {
+        display: inline-flex;
         align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        margin-left: 14px;
-        border-radius: 50%;
-        background: rgba(0, 0, 0, 0.15);
-        color: var(--accent-ink);
-        transition: transform 300ms var(--transition-bezier);
+        gap: 0.5rem;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        margin-bottom: 1.1rem;
       }
-
-      .button.primary:hover .btn-icon-circle {
-        transform: translateY(2px);
-      }
-
-      .btn-icon-circle svg {
-        width: 14px;
-        height: 14px;
-      }
-
-      .button.secondary {
-        background: transparent;
-        color: var(--text-primary);
-        border: 1px solid var(--border-color);
-      }
-
-      .button.secondary:hover {
-        background: var(--bg-surface-hover);
-        border-color: rgba(255, 255, 255, 0.15);
-        transform: translateY(-2px);
-      }
-
-      .button.secondary:active {
-        transform: translateY(0) scale(0.98);
-      }
-
-      .note-card {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        max-width: 480px;
-        padding: 12px 16px;
-        border: 1px solid var(--border-color-muted);
-        border-radius: 12px;
-        background: rgba(15, 17, 19, 0.3);
-      }
-
-      .note-card svg {
-        width: 16px;
-        height: 16px;
-        color: var(--text-muted);
-        flex-shrink: 0;
-        margin-top: 2px;
-      }
-
-      .note-text {
-        margin: 0;
-        color: var(--text-muted);
-        font-size: 12px;
-        line-height: 1.5;
-      }
-
-      /* Mockup Window - Double Bezel Structure */
-      .mockup-wrapper {
-        position: relative;
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid var(--border-color);
-        border-radius: 20px;
-        padding: 8px;
-        box-shadow: 
-          0 30px 60px rgba(0, 0, 0, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      }
-
-      .mockup-container {
-        display: flex;
-        flex-direction: column;
-        height: 380px;
-        background: #090a0b;
-        border: 1px solid var(--border-color-muted);
-        border-radius: 14px;
-        overflow: hidden;
-        box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05);
-      }
-
-      .mockup-titlebar {
-        display: flex;
-        align-items: center;
-        height: 40px;
-        padding: 0 16px;
-        background: #0f1113;
-        border-bottom: 1px solid var(--border-color-muted);
-      }
-
-      .mockup-dots {
-        display: flex;
-        gap: 6px;
-      }
-
-      .mockup-dot {
+      .kicker::before {
+        content: "";
         width: 9px;
         height: 9px;
-        border-radius: 50%;
-        background: var(--border-color);
+        background: var(--blue);
+        border-radius: 1px;
       }
-
-      .mockup-dot:nth-child(1) { background: #ff5f56; }
-      .mockup-dot:nth-child(2) { background: #ffbd2e; }
-      .mockup-dot:nth-child(3) { background: #27c93f; }
-
-      .mockup-title {
-        margin: 0 auto;
-        font-family: 'Geist Mono', monospace;
-        font-size: 11px;
-        color: var(--text-muted);
-        transform: translateX(-15px); /* balance out dots offset */
-      }
-
-      .mockup-body {
-        display: flex;
-        flex: 1;
-        overflow: hidden;
-      }
-
-      .mockup-sidebar {
-        width: 140px;
-        background: #0c0e0f;
-        border-right: 1px solid var(--border-color-muted);
-        padding: 16px 12px;
-      }
-
-      .mockup-tree-title {
-        font-size: 9px;
-        font-weight: 600;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        letter-spacing: 0.1em;
-        margin-bottom: 12px;
-      }
-
-      .mockup-tree-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 11px;
-        color: var(--text-secondary);
-        margin-bottom: 8px;
-        font-family: 'Geist Mono', monospace;
-      }
-
-      .mockup-tree-item.active {
-        color: var(--accent);
-      }
-
-      .mockup-tree-icon {
-        width: 12px;
-        height: 12px;
-        opacity: 0.6;
-      }
-
-      .mockup-editor {
-        flex: 1;
-        padding: 20px;
-        font-family: 'Geist Mono', monospace;
-        font-size: 12px;
-        line-height: 1.6;
-        color: var(--text-secondary);
-        overflow-y: auto;
-      }
-
-      .editor-line-num {
-        color: var(--text-muted);
-        margin-right: 12px;
-        user-select: none;
-      }
-
-      .editor-keyword { color: #f28b82; }
-      .editor-string { color: #aef0ba; }
-      .editor-header { color: var(--accent); font-weight: 600; }
-      .editor-tag { color: #81c995; }
-
-      /* Bento Features Grid */
-      .bento-section {
-        padding: 80px 0 120px;
-      }
-
-      .section-header {
-        max-width: 600px;
-        margin-bottom: 56px;
-      }
-
-      .section-header h2 {
-        font-size: clamp(28px, 4vw, 38px);
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        margin: 0;
-      }
-
-      .bento-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 20px;
-      }
-
-      /* Bento Cells using Double Bezel */
-      .bento-cell {
-        position: relative;
-        background: rgba(255, 255, 255, 0.01);
-        border: 1px solid var(--border-color);
-        border-radius: 20px;
-        padding: 6px;
-        box-shadow: 
-          0 10px 30px rgba(0, 0, 0, 0.1),
-          inset 0 1px 0 rgba(255, 255, 255, 0.03);
-        display: flex;
-        flex-direction: column;
-        transition: transform 300ms var(--transition-bezier);
-      }
-
-      .bento-cell:hover {
-        transform: translateY(-2px);
-      }
-
-      .bento-inner {
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        height: 100%;
-        background: var(--bg-surface);
-        border: 1px solid var(--border-color-muted);
-        border-radius: 14px;
-        padding: 28px;
-        overflow: hidden;
-      }
-
-      .bento-cell.span-2 {
-        grid-column: span 2;
-      }
-
-      .bento-cell.span-3 {
-        grid-column: span 3;
-      }
-
-      .bento-inner h3 {
-        margin: 0 0 12px;
-        font-size: 18px;
-        font-weight: 600;
-        letter-spacing: -0.015em;
-      }
-
-      .bento-inner p {
-        margin: 0 0 24px;
-        color: var(--text-secondary);
-        font-size: 14px;
-        line-height: 1.6;
-      }
-
-      /* Bento Visual Content */
-      .bento-visual {
-        background: rgba(0, 0, 0, 0.2);
-        border: 1px solid var(--border-color-muted);
-        border-radius: 8px;
-        padding: 16px;
-        flex: 1;
-        min-height: 120px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      /* File tree visual */
-      .tree-visual {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        width: 100%;
-        max-width: 280px;
-        font-family: 'Geist Mono', monospace;
-        font-size: 11px;
-      }
-
-      .tree-visual-item {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 12px;
-        border: 1px solid var(--border-color-muted);
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.01);
-      }
-
-      .tree-visual-left {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .tree-visual-status {
-        font-size: 9px;
-        color: var(--accent);
-        background: rgba(var(--accent-rgb), 0.1);
-        padding: 2px 6px;
-        border-radius: 4px;
-      }
-
-      /* Features list visual */
-      .feature-list-visual {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        width: 100%;
-      }
-
-      .feature-badge {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--text-primary);
-      }
-
-      .feature-badge-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: var(--accent);
-        box-shadow: 0 0 8px var(--accent);
-      }
-
-      /* Terminal visual */
-      .bento-split-content {
-        display: grid;
-        grid-template-columns: 1fr 1.2fr;
-        gap: 36px;
-        align-items: center;
-        width: 100%;
-      }
-
-      .terminal-visual {
-        display: flex;
-        flex-direction: column;
-        height: 180px;
-        background: #050607;
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 10px 35px rgba(0,0,0,0.3);
-      }
-
-      .terminal-header {
-        display: flex;
-        align-items: center;
-        height: 28px;
-        padding: 0 12px;
-        background: #0b0c0d;
-        border-bottom: 1px solid var(--border-color-muted);
-      }
-
-      .terminal-title {
-        font-family: 'Geist Mono', monospace;
-        font-size: 9px;
-        color: var(--text-muted);
-      }
-
-      .terminal-body {
-        flex: 1;
-        padding: 12px;
-        font-family: 'Geist Mono', monospace;
-        font-size: 11px;
-        color: #aef0ba;
-        overflow-y: auto;
-        line-height: 1.5;
-      }
-
-      .terminal-line {
-        margin-bottom: 4px;
-        display: flex;
-        gap: 6px;
-      }
-
-      .terminal-prompt {
-        color: var(--text-muted);
-        user-select: none;
-      }
-
-      .terminal-output {
-        color: var(--text-secondary);
-      }
-
-      /* Mockup tabs */
-      .mockup-tabs {
-        display: flex;
-        gap: 4px;
-        margin: 0 auto;
-        transform: translateX(-15px);
-      }
-
-      .mockup-tab {
-        border: 1px solid transparent;
-        border-radius: 6px;
-        background: transparent;
-        color: var(--text-muted);
-        font-family: 'Geist Mono', monospace;
-        font-size: 10px;
-        padding: 4px 10px;
-        cursor: pointer;
-        transition: color 200ms ease, background 200ms ease;
-      }
-
-      .mockup-tab:hover { color: var(--text-secondary); }
-
-      .mockup-tab[aria-selected="true"] {
-        color: var(--accent);
-        background: rgba(var(--accent-rgb), 0.08);
-        border-color: rgba(var(--accent-rgb), 0.2);
-      }
-
-      .mockup-pane { display: none; flex: 1; overflow: hidden; }
-      .mockup-pane.active { display: flex; }
-
-      .type-caret {
-        display: inline-block;
-        width: 7px;
-        height: 12px;
-        margin-left: 2px;
-        background: var(--accent);
-        vertical-align: -2px;
-        animation: caret-blink 1s steps(1) infinite;
-      }
-
-      @keyframes caret-blink { 50% { opacity: 0; } }
-
-      /* Mini dashboard pane */
-      .mini-dash {
-        flex: 1;
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        grid-auto-rows: min-content;
-        gap: 10px;
-        padding: 18px;
-        align-content: start;
-      }
-
-      .dash-tile {
-        background: #0f1113;
-        border: 1px solid var(--border-color-muted);
-        border-radius: 8px;
-        padding: 12px;
-      }
-
-      .dash-tile-label {
-        font-family: 'Geist Mono', monospace;
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--text-muted);
-        margin-bottom: 6px;
-      }
-
-      .dash-tile-value {
-        font-size: 22px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        color: var(--text-primary);
-        font-variant-numeric: tabular-nums;
-      }
-
-      .dash-tile-value.accent { color: var(--accent); }
-
-      .dash-chart {
-        grid-column: span 3;
-        display: flex;
-        align-items: flex-end;
-        gap: 6px;
-        height: 90px;
-        background: #0f1113;
-        border: 1px solid var(--border-color-muted);
-        border-radius: 8px;
-        padding: 12px;
-      }
-
-      .dash-bar {
-        flex: 1;
-        background: rgba(var(--accent-rgb), 0.35);
-        border-radius: 3px 3px 0 0;
-        transform-origin: bottom;
-        animation: bar-grow 800ms var(--transition-bezier) both;
-      }
-
-      .mockup-pane.active .dash-bar { animation-play-state: running; }
-
-      @keyframes bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-
-      /* Mini canvas pane */
-      .mini-canvas {
-        flex: 1;
-        position: relative;
-        background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
-        background-size: 18px 18px;
-      }
-
-      .mini-canvas svg { width: 100%; height: 100%; }
-
-      .cnv-node { fill: #101315; stroke: rgba(255,255,255,0.12); rx: 8; }
-      .cnv-node.accent { stroke: rgba(var(--accent-rgb), 0.5); }
-      .cnv-label { fill: var(--text-secondary); font-family: 'Geist Mono', monospace; font-size: 9px; }
-      .cnv-label.accent { fill: var(--accent); }
-
-      .cnv-edge {
-        fill: none;
-        stroke: rgba(var(--accent-rgb), 0.55);
-        stroke-width: 1.5;
-        stroke-dasharray: 6 5;
-        animation: dash-move 1.4s linear infinite;
-      }
-
-      @keyframes dash-move { to { stroke-dashoffset: -22; } }
-
-      .cnv-float { animation: node-float 5s ease-in-out infinite alternate; }
-
-      @keyframes node-float { from { transform: translateY(0); } to { transform: translateY(-6px); } }
-
-      /* Database chips visual */
-      .chip-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        justify-content: center;
-      }
-
-      .db-chip {
-        font-family: 'Geist Mono', monospace;
-        font-size: 10px;
-        padding: 4px 10px;
-        border-radius: 9999px;
-        border: 1px solid transparent;
-        transition: transform 250ms var(--transition-bezier);
-      }
-
-      .db-chip:hover { transform: translateY(-3px) rotate(-2deg); }
-
-      .db-chip.gray { color: #b6bcb9; background: rgba(182,188,185,0.08); border-color: rgba(182,188,185,0.2); }
-      .db-chip.blue { color: #91b9d5; background: rgba(145,185,213,0.08); border-color: rgba(145,185,213,0.25); }
-      .db-chip.green { color: var(--accent); background: rgba(var(--accent-rgb),0.08); border-color: rgba(var(--accent-rgb),0.25); }
-      .db-chip.purple { color: #c5a8e8; background: rgba(197,168,232,0.08); border-color: rgba(197,168,232,0.25); }
-      .db-chip.red { color: #f28b82; background: rgba(242,139,130,0.08); border-color: rgba(242,139,130,0.25); }
-
-      /* Downloads section */
-      .downloads-section { padding: 0 0 100px; }
-
-      .dl-sub {
-        margin: 12px 0 0;
-        color: var(--text-secondary);
-        font-size: 15px;
-      }
-
-      .dl-sub .dl-version-chip {
+      .band-dark .kicker { color: var(--on-dark-2); }
+
+      /* --- hero ------------------------------------------------------------ */
+      .hero { padding-top: clamp(2.5rem, 6vw, 4.5rem); padding-bottom: 0; }
+      .badge {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        font-family: 'Geist Mono', monospace;
+        gap: 0.5rem;
         font-size: 12px;
-        color: var(--accent);
-        background: rgba(var(--accent-rgb), 0.07);
-        border: 1px solid rgba(var(--accent-rgb), 0.2);
-        border-radius: 9999px;
-        padding: 3px 10px;
-        margin-right: 8px;
+        color: var(--ink-2);
+        margin-bottom: 1.5rem;
       }
-
-      .dl-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 20px;
-      }
-
-      .dl-card {
-        background: rgba(255, 255, 255, 0.01);
-        border: 1px solid var(--border-color);
-        border-radius: 20px;
-        padding: 6px;
-        display: flex;
-        flex-direction: column;
-        transition: transform 300ms var(--transition-bezier), border-color 300ms ease;
-      }
-
-      .dl-card:hover { transform: translateY(-3px); }
-
-      .dl-card.your-os { border-color: rgba(var(--accent-rgb), 0.35); }
-
-      .dl-card-inner {
-        flex: 1;
-        background: var(--bg-surface);
-        border: 1px solid var(--border-color-muted);
-        border-radius: 14px;
-        padding: 24px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      .dl-card-head {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .dl-card-head svg {
-        width: 20px;
-        height: 20px;
-        color: var(--text-secondary);
-      }
-
-      .dl-card-head h3 {
-        margin: 0;
-        font-size: 16px;
-        font-weight: 600;
-      }
-
-      .dl-you {
-        margin-left: auto;
-        font-family: 'Geist Mono', monospace;
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        color: var(--accent);
-        background: rgba(var(--accent-rgb), 0.1);
-        border-radius: 4px;
-        padding: 3px 7px;
-      }
-
-      .dl-assets { display: flex; flex-direction: column; gap: 8px; }
-
-      .dl-asset {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 14px;
-        border: 1px solid var(--border-color-muted);
-        border-radius: 10px;
-        background: rgba(255, 255, 255, 0.015);
-        text-decoration: none;
-        transition: border-color 200ms ease, background 200ms ease, transform 200ms var(--transition-bezier);
-      }
-
-      .dl-asset:hover {
-        border-color: rgba(var(--accent-rgb), 0.4);
-        background: rgba(var(--accent-rgb), 0.04);
-        transform: translateX(3px);
-      }
-
-      .dl-asset-name {
-        color: var(--text-primary);
-        font-size: 13px;
-        font-weight: 500;
-        overflow-wrap: anywhere;
-      }
-
-      .dl-asset-meta {
-        margin-left: auto;
-        flex-shrink: 0;
-        font-family: 'Geist Mono', monospace;
+      .badge span.dot {
+        width: 16px; height: 16px;
+        display: grid; place-items: center;
+        background: var(--blue);
+        color: #fff;
+        border-radius: 2px;
         font-size: 10px;
-        color: var(--text-muted);
+        font-weight: 700;
+      }
+      h1 {
+        font-size: clamp(2.25rem, 1.2rem + 4.2vw, 4rem);
+        line-height: 1.06;
+      }
+      .hero-sub {
+        margin-top: 1.25rem;
+        max-width: 46ch;
+        color: var(--ink-2);
+        font-size: 15px;
+      }
+      .hero-actions { margin-top: 2rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
+      .hero-note { margin-top: 0.9rem; font-size: 12px; color: var(--ink-3); }
+
+      /* The blue panel. This is the one place the brand shouts. */
+      .panel {
+        margin-top: clamp(2.5rem, 6vw, 4rem);
+        border-radius: var(--radius-lg);
+        padding: clamp(2rem, 6vw, 4.5rem) clamp(1rem, 4vw, 3rem);
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(120% 90% at 18% 12%, #7aa2ff 0%, transparent 55%),
+          radial-gradient(90% 80% at 82% 78%, #1230a8 0%, transparent 60%),
+          linear-gradient(150deg, #4b78ff 0%, #2b5cf6 45%, #163ec9 100%);
+        position: relative;
+        overflow: hidden;
+      }
+      /* Faint square grid, the same motif as the wordmark. */
+      .panel::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255,255,255,0.10) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,0.10) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 72%);
+        pointer-events: none;
       }
 
-      .dl-asset svg {
-        width: 13px;
-        height: 13px;
-        flex-shrink: 0;
-        color: var(--accent);
+      /* --- app window mock -------------------------------------------------- */
+      .mock {
+        position: relative;
+        z-index: var(--z-raised);
+        width: min(100%, 620px);
+        background: #ffffff;
+        border-radius: 8px;
+        box-shadow: 0 30px 60px -20px rgba(6, 20, 70, 0.45), 0 2px 8px rgba(6, 20, 70, 0.18);
+        overflow: hidden;
+        text-align: left;
       }
-
-      .dl-empty {
-        margin: 0;
-        padding: 10px 2px;
-        color: var(--text-muted);
-        font-size: 12px;
-        line-height: 1.5;
-      }
-
-      .dl-note {
-        margin: 24px 0 0;
-        color: var(--text-muted);
-        font-size: 12px;
-      }
-
-      .dl-note a { color: var(--text-secondary); }
-
-      @media (max-width: 900px) {
-        .dl-grid { grid-template-columns: 1fr; }
-      }
-
-      /* Footer */
-      footer {
+      .mock-bar {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        gap: 20px;
-        padding: 40px 0 60px;
-        border-top: 1px solid var(--border-color);
-        color: var(--text-muted);
+        gap: 0.5rem;
+        padding: 0.55rem 0.8rem;
+        border-bottom: 1px solid var(--line);
+        font-size: 11px;
+        color: var(--ink-3);
+      }
+      .mock-bar .dots { display: flex; gap: 5px; }
+      .mock-bar .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+      .mock-body { display: grid; grid-template-columns: 132px 1fr; min-height: 220px; }
+      .mock-side { border-right: 1px solid var(--line); padding: 0.7rem 0.6rem; background: var(--paper-2); }
+      .mock-side .row {
+        font-size: 11px;
+        color: var(--ink-3);
+        padding: 0.3rem 0.45rem;
+        border-radius: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mock-side .row.on { background: #fff; color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+      .mock-main { padding: 1rem 1.1rem; }
+      .mock-h { font-family: "Source Serif 4", serif; font-size: 18px; letter-spacing: -0.02em; }
+      .mock-meta { font-size: 10.5px; color: var(--ink-3); margin-top: 0.15rem; }
+      .mock-lines { margin-top: 0.9rem; display: grid; gap: 0.42rem; }
+      .mock-lines i { display: block; height: 7px; border-radius: 2px; background: var(--paper-3); }
+      .mock-lines i:nth-child(2) { width: 92%; }
+      .mock-lines i:nth-child(3) { width: 74%; }
+      .mock-lines i.blue { background: color-mix(in srgb, var(--blue) 28%, var(--paper-3)); width: 38%; }
+      .mock-type {
+        margin-top: 0.9rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        color: var(--ink-2);
+        min-height: 1.2em;
+      }
+      .caret {
+        display: inline-block;
+        width: 6px;
+        height: 1em;
+        background: var(--blue);
+        vertical-align: -2px;
+        animation: blink 1.05s steps(2, start) infinite;
+      }
+      @keyframes blink { to { visibility: hidden; } }
+      @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+      @media (max-width: 560px) { .mock-body { grid-template-columns: 1fr; } .mock-side { display: none; } }
+
+      /* --- format strip (the honest analogue of a logo wall) ---------------- */
+      .formats {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1.25rem 2rem;
+        padding-block: clamp(2rem, 5vw, 3rem);
+        border-bottom: 1px solid var(--line);
+      }
+      .format {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+      .format code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      /* --- problem / solution ------------------------------------------------ */
+      .lede {
+        font-size: clamp(1.6rem, 1rem + 2.4vw, 2.75rem);
+        line-height: 1.16;
+        max-width: 22ch;
+      }
+      .lede .dim { color: var(--on-dark-2); }
+      .band-dark .lede { max-width: 24ch; }
+
+      .three {
+        margin-top: clamp(2.5rem, 6vw, 4rem);
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        border: 1px solid rgba(255,255,255,0.14);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+      }
+      .three > div {
+        padding: clamp(1.5rem, 3vw, 2.25rem);
+        border-right: 1px solid rgba(255,255,255,0.14);
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      .three > div:last-child { border-right: 0; }
+      .three h3 { font-size: 1.25rem; }
+      .three p { font-size: 13.5px; color: var(--on-dark-2); }
+      .three .num {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        color: var(--blue-lift);
+        letter-spacing: 0.08em;
+      }
+
+      .solution-head { max-width: 30ch; }
+      .solution-head .lede { max-width: none; }
+
+      .feat {
+        margin-top: clamp(2.5rem, 6vw, 4rem);
+        display: grid;
+        gap: clamp(1.5rem, 4vw, 2.5rem);
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+      .feat article { display: flex; flex-direction: column; gap: 0.5rem; }
+      .feat h3 { font-size: 1.2rem; }
+      .feat p { font-size: 13.5px; color: var(--ink-2); }
+      .feat .rule { width: 28px; height: 2px; background: var(--blue); margin-bottom: 0.35rem; }
+
+      /* --- downloads ---------------------------------------------------------- */
+      .dl-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem; }
+      .dl-meta { font-size: 13px; color: var(--ink-3); }
+      .chip {
+        display: inline-block;
+        font-family: ui-monospace, monospace;
         font-size: 12px;
+        font-weight: 600;
+        color: var(--blue);
+        background: color-mix(in srgb, var(--blue) 8%, transparent);
+        border: 1px solid color-mix(in srgb, var(--blue) 22%, transparent);
+        border-radius: 3px;
+        padding: 0.1rem 0.4rem;
+        margin-right: 0.35rem;
       }
 
-      footer a {
+      .platforms {
+        margin-top: 2.25rem;
+        display: grid;
+        gap: 1.25rem;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+      .platform {
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: var(--paper);
+        padding: 1.35rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+      }
+      .platform.yours { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 10%, transparent); }
+      .platform-top { display: flex; align-items: center; gap: 0.6rem; }
+      .platform-top h3 { font-size: 1.1rem; }
+      .platform-top svg { width: 18px; height: 18px; color: var(--ink-2); }
+      .yours-tag {
+        margin-left: auto;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--blue);
+      }
+      .assets { display: grid; gap: 0.4rem; }
+      .asset {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.6rem 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
         text-decoration: none;
-        color: var(--text-secondary);
-        transition: color 200ms ease;
+        transition: border-color 160ms var(--ease), background 160ms var(--ease);
       }
-
-      footer a:hover {
-        color: var(--text-primary);
+      .asset:hover { border-color: var(--ink); background: var(--paper-2); }
+      .asset-name {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
+      .asset-size { margin-left: auto; font-size: 11.5px; color: var(--ink-3); flex: none; }
+      .asset svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
+      .empty { font-size: 12.5px; color: var(--ink-3); }
 
-      /* Scroll Entry Animations classes */
-      .reveal {
-        opacity: 0;
-        transform: translateY(24px) scale(0.98);
-        transition: opacity var(--transition-duration) var(--transition-bezier), 
-                    transform var(--transition-duration) var(--transition-bezier);
-        will-change: opacity, transform;
+      /* --- verify -------------------------------------------------------------- */
+      .verify { display: grid; gap: 2rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: start; }
+      @media (max-width: 820px) { .verify { grid-template-columns: 1fr; } }
+      .verify p { color: var(--ink-2); font-size: 14px; max-width: var(--measure); }
+      pre {
+        margin: 0;
+        padding: 1.1rem 1.2rem;
+        background: var(--ink);
+        color: var(--on-dark);
+        border-radius: var(--radius-lg);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+        line-height: 1.75;
+        overflow-x: auto;
       }
+      pre .c { color: var(--on-dark-2); }
 
-      .reveal.visible {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
+      /* --- footer ---------------------------------------------------------------- */
+      footer { border-top: 1px solid var(--line); padding-block: 2.5rem; font-size: 13px; color: var(--ink-3); }
+      .foot-in { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: center; }
+      .foot-links { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-left: auto; }
+      footer a { text-decoration: none; }
+      footer a:hover { color: var(--ink); }
 
-      /* Responsive rules */
-      @media (max-width: 900px) {
-        .hero-grid {
-          grid-template-columns: 1fr;
-          gap: 40px;
-          padding: 60px 0;
-        }
-
-        .hero-content {
-          max-width: 100%;
-        }
-
-        .mockup-wrapper {
-          max-width: 500px;
-          margin: 0 auto;
-        }
-
-        .bento-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .bento-cell.span-2,
-        .bento-cell.span-3 {
-          grid-column: span 1;
-        }
-
-        .bento-split-content {
-          grid-template-columns: 1fr;
-          gap: 24px;
-        }
-      }
-
-      @media (max-width: 500px) {
-        header {
-          padding: 10px 16px;
-        }
-        
-        nav {
-          gap: 12px;
-        }
-
-        h1 {
-          font-size: 34px;
-        }
-
-        .actions {
-          flex-direction: column;
-        }
-
-        .button {
-          width: 100%;
-        }
-
-        footer {
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 12px;
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .reveal {
-          opacity: 1 !important;
-          transform: none !important;
-          transition: none !important;
-        }
-        .button {
-          transition: none !important;
-        }
-        .bento-cell {
-          transition: none !important;
-        }
+      /* --- entrance ------------------------------------------------------------- */
+      /* Default is visible. The animation only enhances it, so a headless
+         render or a background tab never ships a blank page. */
+      @media (prefers-reduced-motion: no-preference) {
+        .rise { animation: rise 700ms var(--ease) both; }
+        .rise-2 { animation-delay: 90ms; }
+        .rise-3 { animation-delay: 180ms; }
+        .rise-4 { animation-delay: 270ms; }
+        @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
       }
     </style>
   </head>
   <body>
-    <!-- Glow Orbs background -->
-    <div class="glow-container">
-      <div class="glow-orb-primary"></div>
-      <div class="glow-orb-secondary"></div>
+    <div class="strip">
+      <a data-latest href="#download">
+        <span>Neuron <b id="strip-version">0.4.3</b> is available — Windows, macOS and Linux</span>
+        <span class="strip-arrow" aria-hidden="true">→</span>
+      </a>
     </div>
 
-    <div class="shell">
-      <header class="reveal">
-        <a class="brand" data-repository href="#" aria-label="Neuron repository">
-          <span class="brand-mark" aria-hidden="true">
-            <img src="./icon.svg" alt="" />
-          </span>
+    <header class="nav">
+      <div class="wrap nav-in">
+        <a class="brand" href="#top">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
           Neuron
         </a>
-        <nav aria-label="Project links">
+        <nav class="nav-links" aria-label="Sections">
+          <a href="#why">Why</a>
+          <a href="#features">Features</a>
           <a href="#download">Download</a>
           <a href="./changelog.html">Changelog</a>
-          <a data-repository href="#">Source</a>
-          <a data-issues href="#">Issues</a>
         </nav>
-      </header>
+        <div class="nav-right">
+          <a class="ghost" data-repository href="https://github.com/shiv-khetan/Neuron">GitHub</a>
+          <a class="btn btn-sm" href="#download">Download</a>
+        </div>
+      </div>
+    </header>
 
-      <main>
-        <!-- Hero Section -->
-        <section class="hero-grid" aria-labelledby="hero-title">
-          <div class="hero-content reveal">
-            <div class="eyebrow">Local-first Workspace</div>
-            <h1 id="hero-title">Your notes stay files.<br>Your workspace gets <span>smarter</span>.</h1>
-            <p class="lede">Neuron is a local-first Markdown and MDX workspace with live preview, linked-note navigation, extensible plugin panels, and an integrated terminal.</p>
-            <div class="actions">
-              <a class="button primary" id="primary-download" data-latest href="#">
-                <span id="primary-download-label">Download latest release</span>
-                <span class="btn-icon-circle">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
-                </span>
-              </a>
-              <a class="button secondary" href="#download">All platforms</a>
-            </div>
-            
-            <div class="note-card">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              <p class="note-text">Open source under Apache 2.0. Current builds are unsigned and may trigger operating-system security warnings during installation.</p>
-            </div>
+    <main id="top">
+      <!-- ============================ hero ============================ -->
+      <section class="hero">
+        <div class="wrap">
+          <p class="badge rise">
+            <span class="dot" aria-hidden="true">A</span>
+            Apache-2.0 · open source · no account required
+          </p>
+          <h1 class="rise rise-2">Your notes stay files.<br />Your workspace gets smarter.</h1>
+          <p class="hero-sub rise rise-3">
+            Neuron is a local-first workspace for Markdown and MDX. Databases, canvases
+            and sandboxed views sit on top of a folder you already own — and everything
+            still opens in any other editor.
+          </p>
+          <div class="hero-actions rise rise-4">
+            <a class="btn" id="hero-dl" href="#download">
+              <span id="hero-dl-label">Download Neuron</span>
+              <span class="go" aria-hidden="true">→</span>
+            </a>
+            <a class="btn btn-line" data-repository href="https://github.com/shiv-khetan/Neuron">View source</a>
           </div>
+          <p class="hero-note rise rise-4">Free forever. No telemetry, no sign-in, no cloud round-trip.</p>
 
-          <!-- Mockup Window (Double Bezel) -->
-          <div class="mockup-wrapper reveal">
-            <div class="mockup-container">
-              <div class="mockup-titlebar">
-                <div class="mockup-dots">
-                  <div class="mockup-dot"></div>
-                  <div class="mockup-dot"></div>
-                  <div class="mockup-dot"></div>
-                </div>
-                <div class="mockup-tabs" role="tablist" aria-label="Preview a surface">
-                  <button class="mockup-tab" role="tab" aria-selected="true" data-pane="pane-note">features.mdx</button>
-                  <button class="mockup-tab" role="tab" aria-selected="false" data-pane="pane-dash">Dashboard.html</button>
-                  <button class="mockup-tab" role="tab" aria-selected="false" data-pane="pane-canvas">Ideas.canvas</button>
-                </div>
+          <div class="panel rise rise-4">
+            <div class="mock">
+              <div class="mock-bar">
+                <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span>research —  notes/architecture.mdx</span>
               </div>
-              <div class="mockup-body mockup-pane active" id="pane-note">
-                <div class="mockup-sidebar">
-                  <div class="mockup-tree-title">Workspace</div>
-                  <div class="mockup-tree-item active">
-                    <svg class="mockup-tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    features.mdx
-                  </div>
-                  <div class="mockup-tree-item">
-                    <svg class="mockup-tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    design.md
-                  </div>
-                  <div class="mockup-tree-item">
-                    <svg class="mockup-tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 10.07 4H14a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M3 9v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9H3z"/></svg>
-                    plugins/
-                  </div>
+              <div class="mock-body">
+                <div class="mock-side" aria-hidden="true">
+                  <div class="row">daily/</div>
+                  <div class="row">projects/</div>
+                  <div class="row on">architecture.mdx</div>
+                  <div class="row">Planner.db</div>
+                  <div class="row">Idea board.canvas</div>
+                  <div class="row">Dashboard.mdx</div>
                 </div>
-                <div class="mockup-editor">
-                  <div><span class="editor-line-num">1</span><span class="editor-header"># Core Philosophy</span></div>
-                  <div><span class="editor-line-num">2</span></div>
-                  <div><span class="editor-line-num">3</span>Neuron is designed around raw text.</div>
-                  <div><span class="editor-line-num">4</span>No proprietary database, no lock-in.</div>
-                  <div><span class="editor-line-num">5</span></div>
-                  <div><span class="editor-line-num">6</span><span class="editor-header">## Live MDX Preview</span></div>
-                  <div><span class="editor-line-num">7</span></div>
-                  <div><span class="editor-line-num">8</span><span class="editor-tag">&lt;InteractiveDashboard&gt;</span></div>
-                  <div><span class="editor-line-num">9</span>  <span class="editor-keyword">const</span> data = <span class="editor-string">"Realtime Preview"</span>;</div>
-                  <div><span class="editor-line-num">10</span><span class="editor-tag">&lt;/InteractiveDashboard&gt;</span></div>
-                  <div><span class="editor-line-num">11</span></div>
-                  <div><span class="editor-line-num">12</span><span id="typeline"></span><span class="type-caret" aria-hidden="true"></span></div>
-                </div>
-              </div>
-
-              <div class="mockup-pane" id="pane-dash" aria-label="Dashboard view preview">
-                <div class="mini-dash">
-                  <div class="dash-tile">
-                    <div class="dash-tile-label">Notes</div>
-                    <div class="dash-tile-value" data-count="128">0</div>
+                <div class="mock-main">
+                  <div class="mock-h">Architecture</div>
+                  <div class="mock-meta">Edited just now · saved locally</div>
+                  <div class="mock-lines" aria-hidden="true">
+                    <i></i><i></i><i class="blue"></i><i></i>
                   </div>
-                  <div class="dash-tile">
-                    <div class="dash-tile-label">Links</div>
-                    <div class="dash-tile-value" data-count="342">0</div>
-                  </div>
-                  <div class="dash-tile">
-                    <div class="dash-tile-label">Streak</div>
-                    <div class="dash-tile-value accent" data-count="18">0</div>
-                  </div>
-                  <div class="dash-chart" aria-hidden="true">
-                    <div class="dash-bar" style="height: 40%; animation-delay: 0ms;"></div>
-                    <div class="dash-bar" style="height: 65%; animation-delay: 60ms;"></div>
-                    <div class="dash-bar" style="height: 50%; animation-delay: 120ms;"></div>
-                    <div class="dash-bar" style="height: 85%; animation-delay: 180ms;"></div>
-                    <div class="dash-bar" style="height: 70%; animation-delay: 240ms;"></div>
-                    <div class="dash-bar" style="height: 95%; animation-delay: 300ms;"></div>
-                    <div class="dash-bar" style="height: 60%; animation-delay: 360ms;"></div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mockup-pane" id="pane-canvas" aria-label="Canvas view preview">
-                <div class="mini-canvas">
-                  <svg viewBox="0 0 420 300" aria-hidden="true">
-                    <path class="cnv-edge" d="M150 80 C 190 80, 200 140, 235 150" />
-                    <path class="cnv-edge" d="M120 105 C 120 160, 150 195, 195 205" />
-                    <g class="cnv-float">
-                      <rect class="cnv-node accent" x="40" y="45" width="110" height="60" rx="8" />
-                      <text class="cnv-label accent" x="56" y="70">Neuron 1.4</text>
-                      <text class="cnv-label" x="56" y="88">the big idea</text>
-                    </g>
-                    <g>
-                      <rect class="cnv-node" x="235" y="120" width="130" height="56" rx="8" />
-                      <text class="cnv-label" x="251" y="144">Dashboards.html</text>
-                      <text class="cnv-label" x="251" y="162">html + htmx</text>
-                    </g>
-                    <g>
-                      <rect class="cnv-node" x="195" y="200" width="120" height="52" rx="8" />
-                      <text class="cnv-label" x="211" y="222">Planner.db</text>
-                      <text class="cnv-label" x="211" y="240">kanban board</text>
-                    </g>
-                  </svg>
+                  <div class="mock-type"><span id="typeline"></span><span class="caret" aria-hidden="true"></span></div>
                 </div>
               </div>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <!-- Features Bento Grid -->
-        <section class="bento-section" aria-label="Highlights">
-          <div class="section-header reveal">
-            <h2>Engineered for local control, built for high performance.</h2>
-          </div>
-          
-          <div class="bento-grid">
-            <!-- Feature 1 (Local by construction) - span-2 -->
-            <div class="bento-cell span-2 reveal">
-              <div class="bento-inner">
-                <div>
-                  <h3>Local by construction</h3>
-                  <p>Workspaces are ordinary folders. Sync them with the service you already trust, move them freely, or keep them entirely offline.</p>
-                </div>
-                <div class="bento-visual">
-                  <div class="tree-visual">
-                    <div class="tree-visual-item">
-                      <div class="tree-visual-left">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 10.07 4H14a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M3 9v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9H3z"/></svg>
-                        <span>~/MyWorkspace</span>
-                      </div>
-                      <span class="tree-visual-status">Local File System</span>
-                    </div>
-                    <div style="margin-left: 20px;" class="tree-visual-item">
-                      <div class="tree-visual-left">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-                        <span>Sync via Git</span>
-                      </div>
-                      <span style="background: rgba(145,185,213,0.1); color: #91b9d5;" class="tree-visual-status">Remote Sync</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+      <!-- ======================= formats strip ======================== -->
+      <div class="wrap">
+        <div class="formats">
+          <span class="format"><code>.md</code> Markdown</span>
+          <span class="format"><code>.mdx</code> Components</span>
+          <span class="format"><code>.canvas</code> JSON Canvas</span>
+          <span class="format"><code>.db</code> Plain-JSON tables</span>
+          <span class="format"><code>.html</code> Sandboxed views</span>
+        </div>
+      </div>
 
-            <!-- Feature 2 (Built for long-form work) -->
-            <div class="bento-cell reveal">
-              <div class="bento-inner">
-                <div>
-                  <h3>Built for long-form work</h3>
-                  <p>Markdown editing, tab groups, backlinks, and graph navigation in a single workspace.</p>
-                </div>
-                <div class="bento-visual">
-                  <div class="feature-list-visual">
-                    <div class="feature-badge">
-                      <div class="feature-badge-dot"></div>
-                      Live MDX Preview
-                    </div>
-                    <div class="feature-badge">
-                      <div class="feature-badge-dot"></div>
-                      Backlinks & Graph Links
-                    </div>
-                    <div class="feature-badge">
-                      <div class="feature-badge-dot"></div>
-                      Workspace Tabs
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+      <!-- =========================== problem =========================== -->
+      <section class="band-dark" id="why">
+        <div class="wrap">
+          <p class="kicker">The problem</p>
+          <h2 class="lede">
+            Your notes outlive the app you wrote them in.
+            <span class="dim">Most tools bet the other way.</span>
+          </h2>
 
-            <!-- Feature 3 (Extensible where it matters) - span-3 -->
-            <div class="bento-cell span-3 reveal">
-              <div class="bento-inner">
-                <div class="bento-split-content">
-                  <div>
-                    <h3>Extensible where it matters</h3>
-                    <p>Plugins can contribute custom commands, interactive MDX components, right-side inspectors, and bottom panels such as terminal shells and code diagnostics.</p>
-                  </div>
-                  <div class="terminal-visual">
-                    <div class="terminal-header">
-                      <div class="terminal-title">neuron-terminal (zsh)</div>
-                    </div>
-                    <div class="terminal-body">
-                      <div class="terminal-line">
-                        <span class="terminal-prompt">$</span>
-                        <span class="terminal-output">neuron plugins list</span>
-                      </div>
-                      <div class="terminal-line">
-                        <span class="terminal-output" style="color: var(--accent);">✔ Found 3 active plugins</span>
-                      </div>
-                      <div class="terminal-line">
-                        <span class="terminal-output" style="color: var(--text-muted);">- math-renderer [loaded]</span>
-                      </div>
-                      <div class="terminal-line">
-                        <span class="terminal-output" style="color: var(--text-muted);">- git-integration [loaded]</span>
-                      </div>
-                      <div class="terminal-line">
-                        <span class="terminal-prompt">$</span>
-                        <span class="terminal-output">_</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+          <div class="three">
+            <div>
+              <span class="num">01</span>
+              <h3>Your data in their schema</h3>
+              <p>
+                Export gives you a zip of HTML and a folder of images with hashed
+                names. The links between notes do not survive the trip.
+              </p>
             </div>
-            <!-- New in 1.4: HTMX views -->
-            <div class="bento-cell reveal">
-              <div class="bento-inner">
-                <div>
-                  <h3>Dashboards from plain files</h3>
-                  <p><code style="color: var(--accent); font-family: 'Geist Mono', monospace; font-size: 13px;">.html</code> views turn plain HTML + htmx into live local dashboards, powered by a secure workspace API.</p>
-                </div>
-                <div class="bento-visual">
-                  <div class="feature-list-visual">
-                    <div class="feature-badge"><div class="feature-badge-dot"></div>12-column bento grids</div>
-                    <div class="feature-badge"><div class="feature-badge-dot"></div>Two-way CSV sync</div>
-                    <div class="feature-badge"><div class="feature-badge-dot"></div>Trusted action buttons</div>
-                  </div>
-                </div>
-              </div>
+            <div>
+              <span class="num">02</span>
+              <h3>A sync you cannot inspect</h3>
+              <p>
+                Work only exists once a server acknowledges it. When sync stalls
+                or conflicts, there is nothing on disk to fall back to.
+              </p>
             </div>
-
-            <!-- New in 1.1: databases -->
-            <div class="bento-cell reveal">
-              <div class="bento-inner">
-                <div>
-                  <h3>Notion-style databases</h3>
-                  <p><code style="color: var(--accent); font-family: 'Geist Mono', monospace; font-size: 13px;">.db</code> files hold typed properties and colored tags — switch between table, kanban board, and card gallery.</p>
-                </div>
-                <div class="bento-visual">
-                  <div class="chip-row">
-                    <span class="db-chip gray">Todo</span>
-                    <span class="db-chip blue">In progress</span>
-                    <span class="db-chip green">Shipped</span>
-                    <span class="db-chip purple">ui</span>
-                    <span class="db-chip red">blocked</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- New in 1.1: canvas -->
-            <div class="bento-cell reveal">
-              <div class="bento-inner">
-                <div>
-                  <h3>An infinite canvas</h3>
-                  <p><code style="color: var(--accent); font-family: 'Geist Mono', monospace; font-size: 13px;">.canvas</code> boards use the open JSON Canvas format — cards, groups, and labelled arrows, compatible with Obsidian.</p>
-                </div>
-                <div class="bento-visual" style="padding: 0; overflow: hidden;">
-                  <div class="mini-canvas" style="min-height: 120px; width: 100%;">
-                    <svg viewBox="0 0 300 130" aria-hidden="true">
-                      <path class="cnv-edge" d="M110 45 C 145 45, 150 80, 180 85" />
-                      <g class="cnv-float">
-                        <rect class="cnv-node accent" x="28" y="25" width="82" height="38" rx="7" />
-                        <text class="cnv-label accent" x="42" y="48">brainstorm</text>
-                      </g>
-                      <g>
-                        <rect class="cnv-node" x="180" y="66" width="88" height="38" rx="7" />
-                        <text class="cnv-label" x="194" y="89">ship it</text>
-                      </g>
-                    </svg>
-                  </div>
-                </div>
-              </div>
+            <div>
+              <span class="num">03</span>
+              <h3>Structure means a new product</h3>
+              <p>
+                The moment notes need a table, a board or a dashboard, you are
+                asked to move the content somewhere else entirely.
+              </p>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <!-- Downloads -->
-        <section class="downloads-section" id="download" aria-labelledby="dl-title">
-          <div class="section-header reveal">
-            <h2 id="dl-title">Grab a build</h2>
-            <p class="dl-sub" id="dl-meta">Checking the latest release…</p>
+      <!-- =========================== solution ========================== -->
+      <section id="features">
+        <div class="wrap">
+          <div class="solution-head">
+            <p class="kicker">The solution</p>
+            <h2 class="lede">A folder on your disk, with the tools built around it.</h2>
           </div>
-          <div class="dl-grid reveal">
-            <div class="dl-card" data-os="windows">
-              <div class="dl-card-inner">
-                <div class="dl-card-head">
-                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5L10.5 4.4V11.5H3V5.5ZM3 18.5L10.5 19.6V12.5H3V18.5ZM11.5 19.75L21 21V12.5H11.5V19.75ZM11.5 4.25V11.5H21V3L11.5 4.25Z"/></svg>
-                  <h3>Windows</h3>
-                  <span class="dl-you" hidden>Your OS</span>
-                </div>
-                <div class="dl-assets" id="dl-windows"><p class="dl-empty">Loading…</p></div>
-              </div>
+
+          <div class="feat">
+            <article>
+              <span class="rule" aria-hidden="true"></span>
+              <h3>Plain files, always</h3>
+              <p>
+                Every note is Markdown or MDX on your own filesystem. Point Neuron at
+                an existing folder and close it again whenever you like — nothing is
+                rewritten, converted or locked.
+              </p>
+            </article>
+            <article>
+              <span class="rule" aria-hidden="true"></span>
+              <h3>Databases without a database</h3>
+              <p>
+                A <code>.db</code> file is readable JSON with typed columns, select
+                options and multiple tables. Table and board views render from it, and
+                <code>git diff</code> still tells you what changed.
+              </p>
+            </article>
+            <article>
+              <span class="rule" aria-hidden="true"></span>
+              <h3>Canvases in an open format</h3>
+              <p>
+                Spatial boards use JSON Canvas, so the same file opens in Obsidian and
+                anything else that speaks the format.
+              </p>
+            </article>
+            <article>
+              <span class="rule" aria-hidden="true"></span>
+              <h3>Views that run, safely</h3>
+              <p>
+                Drop an <code>.html</code> file in and it renders as a live view in an
+                isolated process — no Node, its own partition, and access only to the
+                paths its manifest declares. You approve that list before it runs.
+              </p>
+            </article>
+            <article>
+              <span class="rule" aria-hidden="true"></span>
+              <h3>Recovery that predates the mistake</h3>
+              <p>
+                A write journal captures the previous contents before anything is
+                overwritten, so version history works even for files edited outside
+                the app.
+              </p>
+            </article>
+            <article>
+              <span class="rule" aria-hidden="true"></span>
+              <h3>Nothing leaves the machine</h3>
+              <p>
+                No account, no telemetry, no background sync. AI is optional, off by
+                default, and uses a key you supply and can revoke.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== downloads ========================= -->
+      <section class="band-tint" id="download">
+        <div class="wrap">
+          <div class="dl-head">
+            <div>
+              <p class="kicker">Download</p>
+              <h2 class="lede" style="max-width:18ch">Pick a build.</h2>
             </div>
-            <div class="dl-card" data-os="mac">
-              <div class="dl-card-inner">
-                <div class="dl-card-head">
-                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.7 12.8c0-2.5 2-3.7 2.1-3.7-1.2-1.7-3-1.9-3.6-1.9-1.5-.2-3 .9-3.7.9-.8 0-2-.9-3.3-.9-1.7 0-3.2 1-4.1 2.5-1.8 3-.4 7.5 1.3 9.9.8 1.2 1.8 2.5 3.1 2.5 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.3.8c1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.6-1-2.6-4.1zM16.2 5.6c.7-.8 1.1-1.9 1-3.1-1 0-2.2.7-2.9 1.5-.6.7-1.2 1.9-1 3 1.1.1 2.2-.6 2.9-1.4z"/></svg>
-                  <h3>macOS</h3>
-                  <span class="dl-you" hidden>Your OS</span>
-                </div>
-                <div class="dl-assets" id="dl-mac"><p class="dl-empty">Loading…</p></div>
+            <p class="dl-meta" id="dl-meta">Checking the latest release…</p>
+          </div>
+
+          <div class="platforms">
+            <div class="platform" data-os="windows">
+              <div class="platform-top">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.6 10.2 4.6v6.9H3zM11.3 4.4 21 3v8.5h-9.7zM3 12.5h7.2v6.9L3 18.4zM11.3 12.5H21V21l-9.7-1.4z"/></svg>
+                <h3>Windows</h3>
+                <span class="yours-tag" hidden>Your system</span>
               </div>
+              <div class="assets" id="dl-windows"><p class="empty">Loading…</p></div>
             </div>
-            <div class="dl-card" data-os="linux">
-              <div class="dl-card-inner">
-                <div class="dl-card-head">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h.01M15 9h.01M8 15c1 1 2.5 1.5 4 1.5s3-.5 4-1.5"/></svg>
-                  <h3>Linux</h3>
-                  <span class="dl-you" hidden>Your OS</span>
-                </div>
-                <div class="dl-assets" id="dl-linux"><p class="dl-empty">Loading…</p></div>
+
+            <div class="platform" data-os="mac">
+              <div class="platform-top">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.7c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.3 1.1 0 1.5-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.7-2.2.9-1.2 1.2-2.4 1.2-2.5 0 0-2.4-.9-2.4-3.7zM14.2 5.3c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.4-.6.7-1.1 1.7-.9 2.8 1 0 2-.5 2.6-1.3z"/></svg>
+                <h3>macOS</h3>
+                <span class="yours-tag" hidden>Your system</span>
               </div>
+              <div class="assets" id="dl-mac"><p class="empty">Loading…</p></div>
+            </div>
+
+            <div class="platform" data-os="linux">
+              <div class="platform-top">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c-2.2 0-3.4 1.8-3.4 4.1 0 1.6.3 2.3-.3 3.4C7.4 11 5.5 12.8 5.5 15c0 1 .4 1.7.2 2.4-.2.8-1 1.3-.9 2 .1.9 1.3 1 2.4 1.2 1.1.2 2 .8 3 .9 1.3.2 2.9.2 4.2 0 1-.1 1.9-.7 3-.9 1.1-.2 2.3-.3 2.4-1.2.1-.7-.7-1.2-.9-2-.2-.7.2-1.4.2-2.4 0-2.2-1.9-4-2.8-5.5-.6-1.1-.3-1.8-.3-3.4C15.4 3.8 14.2 2 12 2zm-1.4 3.2c.4 0 .7.4.7 1s-.3 1-.7 1-.7-.4-.7-1 .3-1 .7-1zm2.8 0c.4 0 .7.4.7 1s-.3 1-.7 1-.7-.4-.7-1 .3-1 .7-1z"/></svg>
+                <h3>Linux</h3>
+                <span class="yours-tag" hidden>Your system</span>
+              </div>
+              <div class="assets" id="dl-linux"><p class="empty">Loading…</p></div>
             </div>
           </div>
-          <p class="dl-note reveal">Every build is also published on the <a data-releases href="#">Releases page</a>. Builds are unsigned for now — Windows SmartScreen and macOS Gatekeeper may show a warning on first launch.</p>
-        </section>
-      </main>
+        </div>
+      </section>
 
-      <!-- Footer -->
-      <footer class="reveal">
-        <span>Neuron · Local-first knowledge workspace</span>
-        <span><a href="./changelog.html">Changelog</a> · <a data-repository href="#">Apache 2.0 licensed on GitHub</a></span>
-      </footer>
-    </div>
+      <!-- ============================ verify =========================== -->
+      <section>
+        <div class="wrap verify">
+          <div>
+            <p class="kicker">Verify</p>
+            <h2 class="lede" style="max-width:20ch">Check the download is the build CI made.</h2>
+            <p style="margin-top:1.25rem">
+              Every release carries SHA-256 checksums and a signed build provenance
+              attestation naming the exact workflow, commit and runner that produced
+              each file. Unlike a signature, provenance cannot be forged by re-signing
+              a tampered installer.
+            </p>
+            <p style="margin-top:0.9rem">
+              Windows and macOS builds are not signed with a paid certificate yet, so
+              both systems will warn you on first launch.
+              <a href="./installing.html" style="color:var(--blue)">Here is exactly what you will see, and how to proceed.</a>
+            </p>
+          </div>
+          <pre><span class="c"># Provenance: proves which workflow built it</span>
+gh attestation verify Neuron-0.4.3-win-x64.exe \
+  --repo shiv-khetan/Neuron
 
-    <!-- Scroll Reveal script -->
+<span class="c"># Checksums: proves the bytes are unchanged</span>
+sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap foot-in">
+        <span>Neuron · Apache-2.0</span>
+        <nav class="foot-links" aria-label="Footer">
+          <a data-repository href="https://github.com/shiv-khetan/Neuron">Source</a>
+          <a data-issues href="https://github.com/shiv-khetan/Neuron/issues">Issues</a>
+          <a data-releases href="https://github.com/shiv-khetan/Neuron/releases">Releases</a>
+          <a href="./changelog.html">Changelog</a>
+          <a href="./installing.html">Install help</a>
+        </nav>
+      </div>
+    </footer>
+
     <script>
-      const revealElements = document.querySelectorAll('.reveal');
-      
-      const revealObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('visible');
-            revealObserver.unobserve(entry.target); // Reveal only once
-          }
-        });
-      }, {
-        threshold: 0.15,
-        rootMargin: '0px 0px -50px 0px'
-      });
-
-      revealElements.forEach(el => revealObserver.observe(el));
-    </script>
-
-    <!-- Repository links + live release downloads -->
-    <script>
+      // --- repository links -----------------------------------------------
       const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : 'shiv-khetan';
       const repository = location.pathname.split('/').filter(Boolean)[0] || 'Neuron';
       const base = `https://github.com/${owner}/${repository}`;
-      document.querySelectorAll('[data-repository]').forEach((link) => { link.href = base; });
-      document.querySelectorAll('[data-issues]').forEach((link) => { link.href = `${base}/issues`; });
-      document.querySelectorAll('[data-latest]').forEach((link) => { link.href = `${base}/releases/latest`; });
-      document.querySelectorAll('[data-releases]').forEach((link) => { link.href = `${base}/releases`; });
-      document.querySelectorAll('[data-docs]').forEach((link) => { link.href = `${base}#readme`; });
+      document.querySelectorAll('[data-repository]').forEach((a) => { a.href = base; });
+      document.querySelectorAll('[data-issues]').forEach((a) => { a.href = `${base}/issues`; });
+      document.querySelectorAll('[data-latest]').forEach((a) => { a.href = `${base}/releases/latest`; });
+      document.querySelectorAll('[data-releases]').forEach((a) => { a.href = `${base}/releases`; });
 
-      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-      // --- Detect the visitor's platform ------------------------------------
+      // --- platform -----------------------------------------------------------
       const ua = navigator.userAgent;
       const visitorOS = /Windows/i.test(ua) ? 'windows' : /Mac/i.test(ua) ? 'mac' : /Linux|X11/i.test(ua) ? 'linux' : null;
       const OS_LABEL = { windows: 'Windows', mac: 'macOS', linux: 'Linux' };
 
       const fmtBytes = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.round(n / 1e3)} KB`;
       const assetOS = (name) => {
-        if (/\.(exe|msi)$/i.test(name)) return 'windows';
+        if (/\.(exe|msi|appx)$/i.test(name)) return 'windows';
         if (/\.dmg$/i.test(name) || (/\.zip$/i.test(name) && /mac|darwin/i.test(name))) return 'mac';
-        if (/\.(AppImage|deb|rpm|snap)$/i.test(name)) return 'linux';
+        if (/\.(AppImage|deb|rpm|snap|flatpak)$/i.test(name)) return 'linux';
         return null;
       };
 
-      // --- Fetch the latest release and attach direct download links --------
-      const dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>';
+      /**
+       * Every download goes through installing.html rather than straight at the
+       * asset. Both Windows and macOS warn on first launch because the builds
+       * are unsigned, and a user who meets that warning with no explanation
+       * reasonably concludes the app is malware. The interstitial starts the
+       * download itself, so it costs a redirect, not a click.
+       */
+      const installHref = (asset, os) => {
+        const q = new URLSearchParams({ os, name: asset.name, url: asset.browser_download_url });
+        return `./installing.html?${q}`;
+      };
+
+      const dlIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>';
+
       fetch(`https://api.github.com/repos/${owner}/${repository}/releases/latest`)
         .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
         .then((release) => {
           const version = release.tag_name || release.name || '';
-          const date = release.published_at ? new Date(release.published_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
-          const totalDownloads = (release.assets || []).reduce((sum, a) => sum + (a.download_count || 0), 0);
-          const meta = document.getElementById('dl-meta');
-          meta.innerHTML = `<span class="dl-version-chip">${version}</span> released ${date}` +
-            (totalDownloads ? ` · ${totalDownloads.toLocaleString()} downloads so far` : '');
+          const date = release.published_at
+            ? new Date(release.published_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+            : '';
+          const downloads = (release.assets || []).reduce((sum, a) => sum + (a.download_count || 0), 0);
+
+          if (version) document.getElementById('strip-version').textContent = version.replace(/^v/, '');
+          document.getElementById('dl-meta').innerHTML =
+            `<span class="chip">${version}</span>released ${date}` +
+            (downloads ? ` · ${downloads.toLocaleString()} downloads` : '');
 
           const byOS = { windows: [], mac: [], linux: [] };
           for (const asset of release.assets || []) {
@@ -1479,91 +853,56 @@
           for (const os of Object.keys(byOS)) {
             const box = document.getElementById(`dl-${os}`);
             if (!box) continue;
-            if (byOS[os].length === 0) {
-              box.innerHTML = `<p class="dl-empty">No ${OS_LABEL[os]} build in this release yet — check the <a data-releases-inline href="${base}/releases">Releases page</a>.</p>`;
+            if (!byOS[os].length) {
+              box.innerHTML = `<p class="empty">No ${OS_LABEL[os]} build in this release. <a href="${base}/releases" style="color:var(--blue)">All releases</a></p>`;
               continue;
             }
-            box.innerHTML = byOS[os].map((a) =>
-              `<a class="dl-asset" href="${a.browser_download_url}">
-                 <span class="dl-asset-name">${a.name}</span>
-                 <span class="dl-asset-meta">${fmtBytes(a.size)}${a.download_count ? ` · ${a.download_count}↓` : ''}</span>
-                 ${dlIcon}
-               </a>`).join('');
+            box.innerHTML = byOS[os].map((a) => `
+              <a class="asset" href="${installHref(a, os)}">
+                <span class="asset-name">${a.name}</span>
+                <span class="asset-size">${fmtBytes(a.size)}</span>
+                ${dlIcon}
+              </a>`).join('');
           }
 
-          // Point the hero button straight at the visitor's installer
-          // (prefer the real installer over portable builds).
-          if (visitorOS && byOS[visitorOS].length > 0) {
-            const best = byOS[visitorOS].find((a) => !/portable/i.test(a.name)) ?? byOS[visitorOS][0];
-            const btn = document.getElementById('primary-download');
-            btn.href = best.browser_download_url;
-            document.getElementById('primary-download-label').textContent =
+          if (visitorOS && byOS[visitorOS].length) {
+            const best = byOS[visitorOS].find((a) => !/portable|appx/i.test(a.name)) ?? byOS[visitorOS][0];
+            const btn = document.getElementById('hero-dl');
+            btn.href = installHref(best, visitorOS);
+            document.getElementById('hero-dl-label').textContent =
               `Download for ${OS_LABEL[visitorOS]} · ${fmtBytes(best.size)}`;
-          }
 
-          if (visitorOS) {
-            const card = document.querySelector(`.dl-card[data-os="${visitorOS}"]`);
-            if (card) { card.classList.add('your-os'); card.querySelector('.dl-you').hidden = false; }
+            const card = document.querySelector(`.platform[data-os="${visitorOS}"]`);
+            if (card) {
+              card.classList.add('yours');
+              card.querySelector('.yours-tag').hidden = false;
+            }
           }
         })
         .catch(() => {
           document.getElementById('dl-meta').textContent = 'Could not reach the GitHub API — downloads are on the Releases page.';
-          document.querySelectorAll('.dl-assets').forEach((box) => {
-            box.innerHTML = `<a class="dl-asset" href="${base}/releases"><span class="dl-asset-name">Open the Releases page</span>${dlIcon}</a>`;
+          document.querySelectorAll('.assets').forEach((box) => {
+            box.innerHTML = `<a class="asset" href="${base}/releases"><span class="asset-name">Open the Releases page</span>${dlIcon}</a>`;
           });
         });
 
-      // --- Mockup tabs -------------------------------------------------------
-      const tabs = document.querySelectorAll('.mockup-tab');
-      let counted = false;
-      const countUp = () => {
-        if (counted) return;
-        counted = true;
-        document.querySelectorAll('.dash-tile-value[data-count]').forEach((el) => {
-          const target = Number(el.dataset.count);
-          if (reducedMotion) { el.textContent = target; return; }
-          const start = performance.now();
-          const tick = (now) => {
-            const t = Math.min(1, (now - start) / 900);
-            el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3)));
-            if (t < 1) requestAnimationFrame(tick);
-          };
-          requestAnimationFrame(tick);
-        });
-      };
-      tabs.forEach((tab) => tab.addEventListener('click', () => {
-        tabs.forEach((t) => t.setAttribute('aria-selected', t === tab ? 'true' : 'false'));
-        document.querySelectorAll('.mockup-pane').forEach((p) => p.classList.toggle('active', p.id === tab.dataset.pane));
-        if (tab.dataset.pane === 'pane-dash') countUp();
-      }));
-
-      // --- Typewriter line in the editor pane ---------------------------------
+      // --- typewriter in the mock ------------------------------------------------
       const typeline = document.getElementById('typeline');
-      const PHRASES = ['Plain files. Zero lock-in.', 'Dashboards from .html views.', 'Boards from .canvas files.', 'Databases from .db files.'];
-      if (reducedMotion) {
+      const PHRASES = ['Plain files. Zero lock-in.', 'Boards from .canvas files.', 'Tables from .db files.', 'Dashboards from .html views.'];
+      if (reduced) {
         typeline.textContent = PHRASES[0];
       } else {
-        let phrase = 0, pos = 0, deleting = false;
+        let i = 0, pos = 0, deleting = false;
         const step = () => {
-          const text = PHRASES[phrase];
+          const text = PHRASES[i];
           pos += deleting ? -1 : 1;
           typeline.textContent = text.slice(0, pos);
-          let delay = deleting ? 30 : 55;
-          if (!deleting && pos === text.length) { delay = 2200; deleting = true; }
-          if (deleting && pos === 0) { deleting = false; phrase = (phrase + 1) % PHRASES.length; delay = 400; }
+          let delay = deleting ? 28 : 52;
+          if (!deleting && pos === text.length) { delay = 2100; deleting = true; }
+          if (deleting && pos === 0) { deleting = false; i = (i + 1) % PHRASES.length; delay = 350; }
           setTimeout(step, delay);
         };
-        setTimeout(step, 900);
-      }
-
-      // --- Subtle hero glow parallax ------------------------------------------
-      if (!reducedMotion) {
-        const orb = document.querySelector('.glow-orb-primary');
-        addEventListener('pointermove', (e) => {
-          const dx = (e.clientX / innerWidth - 0.5) * 40;
-          const dy = (e.clientY / innerHeight - 0.5) * 24;
-          orb.style.transform = `translate(${dx}px, ${dy}px)`;
-        }, { passive: true });
+        setTimeout(step, 800);
       }
     </script>
   </body>
