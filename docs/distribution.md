@@ -194,8 +194,18 @@ cannot:
 | Packaged | `npm run smoke` | What only appears once packaged: native modules, `asarUnpack`, path assumptions | ~2 min |
 | Clean machine | `tools/clean-room.wsb` | Missing OS runtimes, installer behaviour, first run on a profile that has never seen the app | manual |
 
-The release workflow runs the packaged smoke test on Windows **before**
+CI runs typecheck, the unit suites, the build, the Playwright end-to-end suite
+and the packaged smoke test on **Windows, macOS and Linux**. One platform is not
+cross-platform testing: node-pty, the filesystem watcher, spawned processes,
+keyboard chords and path handling all diverge between them.
+
+The release workflow runs the packaged smoke test on all three **before**
 publishing, so a build that cannot start never reaches a release.
+
+Electron needs a display server, which the Linux runner does not have, so both
+the end-to-end suite and the smoke test are wrapped in `xvfb-run` there. Left
+unwrapped they fail as an unexplained Electron crash rather than as a missing
+display.
 
 **On Docker:** not the right tool here. Windows containers have no interactive
 desktop, so a GUI installer cannot be driven or observed, and Linux containers

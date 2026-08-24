@@ -12,7 +12,7 @@
 //
 // Nothing in the suite ever launched the artifact users download. This does.
 import { _electron as electron } from '@playwright/test';
-import { existsSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -21,10 +21,48 @@ import { shutdown } from './procs.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * The packaged executable, wherever this platform puts it.
+ *
+ * electron-builder writes a different shape per platform: a bare .exe on
+ * Windows, an .app bundle on macOS whose real binary is buried in
+ * Contents/MacOS, and an extensionless ELF on Linux. Accepts either the
+ * unpacked directory or, on macOS, the .app itself.
+ */
 function findExecutable(dir) {
   if (!existsSync(dir)) return null;
-  const exe = readdirSync(dir).find((f) => /\.exe$/i.test(f) && !/unins|elevate|squirrel/i.test(f));
-  return exe ? join(dir, exe) : null;
+
+  if (process.platform === 'darwin') {
+    // Either we were handed the .app, or it sits inside the directory.
+    const bundle = dir.endsWith('.app')
+      ? dir
+      : (() => {
+          const hit = readdirSync(dir).find((f) => f.endsWith('.app'));
+          return hit ? join(dir, hit) : null;
+        })();
+    if (!bundle) return null;
+    const macos = join(bundle, 'Contents', 'MacOS');
+    if (!existsSync(macos)) return null;
+    const bin = readdirSync(macos)[0];
+    return bin ? join(macos, bin) : null;
+  }
+
+  if (process.platform === 'win32') {
+    const exe = readdirSync(dir).find((f) => /\.exe$/i.test(f) && !/unins|elevate|squirrel/i.test(f));
+    return exe ? join(dir, exe) : null;
+  }
+
+  // Linux: no extension, so identify it by the executable bit and by not being
+  // one of the shipped shared objects or resource blobs.
+  const candidate = readdirSync(dir).find((f) => {
+    if (/\.(so|so\.\d+|pak|dat|bin|json|html|txt|md|desktop|png)$/i.test(f)) return false;
+    const full = join(dir, f);
+    try {
+      const st = statSync(full);
+      return st.isFile() && (st.mode & 0o111) !== 0;
+    } catch { return false; }
+  });
+  return candidate ? join(dir, candidate) : null;
 }
 
 let unpacked = process.argv[2];
@@ -35,13 +73,18 @@ if (!unpacked) {
   // this machine when a scanner holds the freshly extracted binaries.
   temp = mkdtempSync(join(tmpdir(), 'neuron-smoke-'));
   console.log('packaging to', temp, '…');
+  const target = process.platform === 'win32' ? '--win'
+    : process.platform === 'darwin' ? '--mac'
+    : '--linux';
   execFileSync(process.execPath, [
     join(root, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js'),
     '--config', 'tools/electron-builder.env.cjs',
-    '--win', '--x64', '--dir', '--publish', 'never',
+    target, '--dir', '--publish', 'never',
     `-c.directories.output=${temp}`,
   ], { cwd: root, stdio: 'inherit', env: { ...process.env, NEURON_BUILD_ENV: 'test' } });
-  unpacked = join(temp, 'win-unpacked');
+  unpacked = process.platform === 'win32' ? join(temp, 'win-unpacked')
+    : process.platform === 'darwin' ? join(temp, 'mac')
+    : join(temp, 'linux-unpacked');
 }
 
 const executablePath = findExecutable(unpacked);
