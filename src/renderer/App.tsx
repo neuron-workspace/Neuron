@@ -551,14 +551,14 @@ export default function App() {
       </div>
       <div className="flex h-full min-w-0 flex-1 flex-col">
         <div className="pane-header flex items-center border-b px-4 text-[11px] font-medium text-[var(--ink-muted)]">Preview</div>
-        <div className="min-h-0 flex-1"><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} /></div>
+        <div className="min-h-0 flex-1"><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></div>
       </div>
     </div>
   ) : (
     <Tabs defaultValue="source" className="flex h-full w-full flex-col">
       <div className="border-b divider-color px-3 py-2"><TabsList><TabsTrigger value="source">Source</TabsTrigger><TabsTrigger value="preview">Preview</TabsTrigger></TabsList></div>
       <TabsContent value="source" className="min-h-0 flex-1"><Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></TabsContent>
-      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} /></TabsContent>
+      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></TabsContent>
     </Tabs>
   );
 
@@ -611,10 +611,10 @@ export default function App() {
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
-            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} onRequestRawMode={() => setEditorMode('raw')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
+            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('raw')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
             {editorMode === 'raw' && rawSplit}
             {editorMode === 'reading' && (
-              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
+              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
             )}
           </>
         )}

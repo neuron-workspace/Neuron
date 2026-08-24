@@ -13,6 +13,57 @@ import {
 import { DEFAULT_BINDINGS, KEY_ACTIONS, eventToChord, formatChord, type Bindings } from '../lib/keybindings';
 
 // The bundled CHANGELOG, rendered on demand so Settings stays light.
+/**
+ * Legal links, reachable from inside the app.
+ *
+ * The Microsoft Store agreement requires the privacy policy to be available
+ * from within the application, not only from the Store listing.
+ */
+function AboutSection() {
+  const LINKS = [
+    {
+      label: 'Privacy policy',
+      url: 'https://shiv-khetan.github.io/Neuron/privacy.html',
+      hint: 'What stays on your device, and what leaves only when you ask',
+    },
+    {
+      label: 'Licence \u2014 Apache 2.0',
+      url: 'https://shiv-khetan.github.io/Neuron/license.html',
+      hint: 'Neuron is open source; these are the terms it is offered under',
+    },
+    {
+      label: 'Source code',
+      url: 'https://github.com/shiv-khetan/Neuron',
+      hint: 'Every claim on this page is checkable against the code',
+    },
+  ];
+  return (
+    <section aria-labelledby="about-heading" className="border-t border-[var(--divider)] pt-8 mt-8">
+      <h2 id="about-heading" className="text-sm font-semibold text-[var(--ink)]">About</h2>
+      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+        Neuron collects nothing about you. No account, no telemetry, no analytics.
+      </p>
+      <ul className="mt-4 space-y-3">
+        {LINKS.map((link) => (
+          <li key={link.url}>
+            {/* Plain anchors on purpose. main.ts already intercepts navigation
+                away from app content and hands http(s) URLs to the OS browser,
+                so this needs no new bridge method -- and that path is the one
+                the security E2E already covers. */}
+            <a
+              href={link.url}
+              className="interactive text-xs font-medium text-[var(--accent-strong)] underline underline-offset-4 hover:text-[var(--ink)]"
+            >
+              {link.label}
+            </a>
+            <p className="text-[11px] text-[var(--ink-muted)]">{link.hint}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function WhatsNewSection() {
   const [open, setOpen] = useState(false);
   const version = changelog.match(/## \[([^\]]+)\]/)?.[1] ?? '';
@@ -267,6 +318,8 @@ export default function SettingsPage({ appearance, onAppearanceChange, bindings,
         <KeybindingsSection bindings={bindings} onBindingsChange={onBindingsChange} />
 
         <WhatsNewSection />
+
+        <AboutSection />
       </div>
     </div>
   );

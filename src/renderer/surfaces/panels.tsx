@@ -87,6 +87,10 @@ function EditorPanel({ surface }: PanelContext) {
   const mode = modes[selectedNote] ?? 'reading';
   const setMode = (next: EditMode) => setModes((prev) => ({ ...prev, [selectedNote]: next }));
   const scheme = colorScheme ?? 'dark';
+  // Wiki-links need the note list and a way to open one. Both already arrive
+  // on the surface props; nothing new has to be plumbed.
+  const notePaths = surface.notesData.map((note) => note.path);
+  const openNote = surface.onSelectNote;
 
   return (
     <div className="flex h-full flex-col">
@@ -106,14 +110,14 @@ function EditorPanel({ surface }: PanelContext) {
       <div className="min-h-0 flex-1">
         {mode === 'reading' && (
           <div className="h-full overflow-auto" onDoubleClick={() => setMode('live')}>
-            <MDXPreview mdxContent={noteContent} onLineClick={() => undefined} />
+            <MDXPreview mdxContent={noteContent} onLineClick={() => undefined} notes={notePaths} onWikiLinkClick={openNote} />
           </div>
         )}
-        {mode === 'live' && <LiveEditor value={noteContent} onChange={onChangeNote} colorScheme={scheme} />}
+        {mode === 'live' && <LiveEditor value={noteContent} onChange={onChangeNote} colorScheme={scheme} notes={notePaths} onWikiLinkClick={openNote} />}
         {mode === 'split' && (
           <div className="flex h-full divide-x divide-[var(--divider)]">
             <div className="min-w-0 flex-1"><Editor value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></div>
-            <div className="min-w-0 flex-1 overflow-auto"><MDXPreview mdxContent={noteContent} onLineClick={() => undefined} /></div>
+            <div className="min-w-0 flex-1 overflow-auto"><MDXPreview mdxContent={noteContent} onLineClick={() => undefined} notes={notePaths} onWikiLinkClick={openNote} /></div>
           </div>
         )}
       </div>
@@ -145,7 +149,7 @@ function TerminalPanel() {
 function PreviewPanel({ spec, surface }: PanelContext) {
   const path = typeof spec.path === 'string' ? spec.path : surface.selectedNote;
   const note = surface.notesData.find((item) => item.path === path);
-  return <MDXPreview mdxContent={note?.content ?? ''} onLineClick={() => undefined} />;
+  return <MDXPreview mdxContent={note?.content ?? ''} onLineClick={() => undefined} notes={surface.notesData.map((item) => item.path)} onWikiLinkClick={surface.onSelectNote} />;
 }
 
 registerPanel('editor', EditorPanel);
