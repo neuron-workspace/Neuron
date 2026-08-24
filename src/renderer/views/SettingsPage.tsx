@@ -28,7 +28,7 @@ function AboutSection() {
     },
     {
       label: 'Licence \u2014 Apache 2.0',
-      url: 'https://github.com/shiv-khetan/Neuron/blob/main/LICENSE',
+      url: 'https://shiv-khetan.github.io/Neuron/license.html',
       hint: 'Neuron is open source; these are the terms it is offered under',
     },
     {
