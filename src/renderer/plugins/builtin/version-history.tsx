@@ -32,6 +32,17 @@ let DIAG_PU = 0;
 let DIAG_MD = 0;
 let DIAG_MU = 0;
 let DIAG_TICK = 0;
+let DIAG_HITS: string[] = [];
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', (e) => {
+    const t = e.target as HTMLElement | null;
+    const btn = document.querySelector('[data-diag-restore]') as HTMLElement | null;
+    const r = btn ? btn.getBoundingClientRect() : null;
+    const where = r ? `btn=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)}` : 'btn=none';
+    DIAG_HITS.push(`@${Math.round(e.clientX)},${Math.round(e.clientY)}->${t ? t.tagName : 'null'}.${t && typeof t.className === 'string' ? t.className.slice(0, 24) : ''} ${where}`);
+    if (DIAG_HITS.length > 6) DIAG_HITS = DIAG_HITS.slice(-6);
+  }, true);
+}
 
 function VersionHistoryPanel({ host }: { host: HostRuntime }) {
   const [entries, setEntries] = useState<JournalEntry[] | null>(null);
@@ -109,7 +120,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
         <div className="p-1.5">
           {(entries ?? []).map((entry) => {
             const skipped = entry.state === 'skipped';
-            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} pd=${DIAG_PD} pu=${DIAG_PU} md=${DIAG_MD} mu=${DIAG_MU} tick=${DIAG_TICK} confirming=${String(confirming)}`;
+            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} pd=${DIAG_PD} pu=${DIAG_PU} md=${DIAG_MD} mu=${DIAG_MU} tick=${DIAG_TICK} confirming=${String(confirming)} HITS[${DIAG_HITS.join(' | ')}]`;
             const isConfirming = confirming === entry.id;
             const Icon = entry.operation === 'delete' ? Trash2 : Pencil;
             return (
@@ -166,6 +177,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                     <Button
                       size="sm"
                       variant="secondary"
+                      data-diag-restore=""
                       onPointerDown={() => { DIAG_PD += 1; setStatus(null); }}
                       onPointerUp={() => { DIAG_PU += 1; setStatus(null); }}
                       onMouseDown={() => { DIAG_MD += 1; setStatus(null); }}
