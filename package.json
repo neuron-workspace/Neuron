@@ -30,8 +30,9 @@
     "test:navigation": "node tools/navigation.test.mjs",
     "test:journal": "node tools/journal.test.mjs",
     "test:db": "node tools/db.test.mjs",
+    "test:contrast": "node tools/contrast.test.mjs",
     "test:e2e": "npm run build:main && playwright test",
-    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db"
+    "test": "npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",
