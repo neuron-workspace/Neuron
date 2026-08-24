@@ -1,0 +1,330 @@
+<style>
+  /* Own palette, own type. The served kit styles unclassed elements only, so a
+     classed root like this one is left alone -- which is the whole reason a
+     mini-app can look like itself rather than like a settings page. */
+  .sn {
+    --bg: #0f1412;
+    --grid: #161d1a;
+    --edge: #223029;
+    --snake: #6ee7a8;
+    --snake-dim: #2f7f5b;
+    --food: #f0a04b;
+    --text: #e6efe9;
+    --muted: #7f9a8c;
+    color-scheme: dark;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .9rem;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  .sn * { box-sizing: border-box; }
+
+  .sn-head {
+    width: min(100%, 30rem);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .sn-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 650;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+  }
+  .sn-scores { display: flex; gap: 1.25rem; font-variant-numeric: tabular-nums; }
+  .sn-score { text-align: right; }
+  .sn-score b { display: block; font-size: 1.5rem; font-weight: 650; line-height: 1; }
+  .sn-score span {
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* The board is square and scales with the pane. aspect-ratio keeps the cells
+     square without measuring anything in script. */
+  .sn-board {
+    position: relative;
+    width: min(100%, 30rem);
+    aspect-ratio: 1;
+    border: 1px solid var(--edge);
+    border-radius: 12px;
+    background: var(--grid);
+    overflow: hidden;
+  }
+  .sn-board canvas { display: block; width: 100%; height: 100%; }
+
+  .sn-overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    gap: .5rem;
+    justify-items: center;
+    text-align: center;
+    padding: 1.5rem;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  .sn-overlay[hidden] { display: none; }
+  .sn-overlay h2 { margin: 0; font-size: 1.15rem; font-weight: 650; }
+  .sn-overlay p { margin: 0; font-size: .8rem; color: var(--muted); max-width: 22rem; line-height: 1.5; }
+
+  .sn-btn {
+    border: 1px solid var(--snake-dim);
+    border-radius: 8px;
+    background: var(--snake);
+    color: #06231a;
+    padding: .45rem 1.1rem;
+    font: 650 .8rem/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .04em;
+    cursor: pointer;
+  }
+  .sn-btn:hover { filter: brightness(1.08); }
+  .sn-btn:focus-visible { outline: 2px solid var(--snake); outline-offset: 3px; }
+
+  .sn-foot {
+    width: min(100%, 30rem);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .sn-keys { display: flex; gap: .3rem; }
+  .sn-keys kbd {
+    border: 1px solid var(--edge);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: .1rem .4rem;
+    font: 500 10px/1.5 ui-monospace, monospace;
+    color: var(--text);
+    background: var(--bg);
+  }
+</style>
+
+<div class="sn">
+  <div class="sn-head">
+    <h1 class="sn-title">Snake</h1>
+    <div class="sn-scores">
+      <div class="sn-score"><b id="score">0</b><span>Score</span></div>
+      <div class="sn-score"><b id="best">—</b><span>Best</span></div>
+    </div>
+  </div>
+
+  <div class="sn-board">
+    <canvas id="board" width="480" height="480"></canvas>
+    <div class="sn-overlay" id="overlay">
+      <h2 id="overlay-title">Ready</h2>
+      <p id="overlay-text">Arrow keys or WASD to steer. Space pauses.</p>
+      <button class="sn-btn" id="start" type="button">Play</button>
+    </div>
+  </div>
+
+  <div class="sn-foot">
+    <div class="sn-keys">
+      <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd>
+      <kbd>WASD</kbd><kbd>Space</kbd>
+    </div>
+    <span id="status">Local · no network</span>
+  </div>
+</div>
+
+<script>
+  // A folder mini-app: this whole folder renders as one app because it holds a
+  // neuron.app.json. The manifest asks for two capabilities and nothing else --
+  // no file access at all -- so the only thing this can touch in the workspace
+  // is the one variable it saves a high score to.
+  const CELLS = 24;              // board is CELLS x CELLS
+  const SPEED_MS = 92;           // step interval; the whole game clock
+  const HIGH_SCORE_VAR = 'snakeHighScore';
+
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const cell = canvas.width / CELLS;
+
+  const el = (id) => document.getElementById(id);
+  const overlay = el('overlay');
+
+  let snake, dir, queued, food, score, best = null, timer = null, state = 'ready';
+
+  const styles = getComputedStyle(document.querySelector('.sn'));
+  const color = (name) => styles.getPropertyValue(name).trim();
+
+  function reset() {
+    const mid = Math.floor(CELLS / 2);
+    snake = [{ x: mid - 1, y: mid }, { x: mid - 2, y: mid }, { x: mid - 3, y: mid }];
+    dir = { x: 1, y: 0 };
+    queued = [];
+    score = 0;
+    el('score').textContent = '0';
+    placeFood();
+  }
+
+  function placeFood() {
+    // Reject squares the snake occupies rather than searching for a free one:
+    // the board is 576 squares and the snake is never long enough for this to
+    // matter, and a scan would need the free list maintained on every move.
+    do {
+      food = { x: (Math.random() * CELLS) | 0, y: (Math.random() * CELLS) | 0 };
+    } while (snake.some((s) => s.x === food.x && s.y === food.y));
+  }
+
+  function draw() {
+    ctx.fillStyle = color('--grid');
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Food: a soft square, inset so it never touches the grid lines.
+    ctx.fillStyle = color('--food');
+    round(food.x * cell + cell * 0.2, food.y * cell + cell * 0.2, cell * 0.6, cell * 0.28);
+
+    // Body drawn tail-first so the head lands on top, and fading toward the
+    // tail so direction of travel is readable at a glance.
+    for (let i = snake.length - 1; i >= 0; i--) {
+      const part = snake[i];
+      ctx.globalAlpha = i === 0 ? 1 : Math.max(0.35, 1 - i / (snake.length + 4));
+      ctx.fillStyle = i === 0 ? color('--snake') : color('--snake-dim');
+      const pad = i === 0 ? cell * 0.06 : cell * 0.12;
+      round(part.x * cell + pad, part.y * cell + pad, cell - pad * 2, cell * 0.26);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function round(x, y, size, radius) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, size, size, radius);
+    ctx.fill();
+  }
+
+  function step() {
+    // One turn per step. Without the queue a fast double-tap (up, then left)
+    // within a single interval loses the first press, which feels like the
+    // game ignoring you.
+    if (queued.length) {
+      const next = queued.shift();
+      if (next.x !== -dir.x || next.y !== -dir.y) dir = next;
+    }
+
+    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    const hitWall = head.x < 0 || head.y < 0 || head.x >= CELLS || head.y >= CELLS;
+    // The tail square is about to be vacated, so moving into it is legal --
+    // excluding it is what stops a full-length snake dying on its own tip.
+    const hitSelf = snake.slice(0, -1).some((s) => s.x === head.x && s.y === head.y);
+    if (hitWall || hitSelf) return end();
+
+    snake.unshift(head);
+    if (head.x === food.x && head.y === food.y) {
+      score += 1;
+      el('score').textContent = String(score);
+      placeFood();
+    } else {
+      snake.pop();
+    }
+    draw();
+  }
+
+  function play() {
+    if (state === 'running') return;
+    if (state !== 'paused') reset();
+    state = 'running';
+    overlay.hidden = true;
+    draw();
+    timer = setInterval(step, SPEED_MS);
+  }
+
+  function pause() {
+    if (state !== 'running') return;
+    clearInterval(timer);
+    state = 'paused';
+    show('Paused', 'Space or Play to continue.', 'Resume');
+  }
+
+  function end() {
+    clearInterval(timer);
+    state = 'ready';
+    const record = best !== null && score > best;
+    if (record) saveBest(score);
+    show(
+      record ? 'New best' : 'Game over',
+      `You scored ${score}.` + (record ? ' Saved to the workspace.' : ''),
+      'Play again',
+    );
+  }
+
+  function show(title, text, button) {
+    el('overlay-title').textContent = title;
+    el('overlay-text').textContent = text;
+    el('start').textContent = button;
+    overlay.hidden = false;
+    el('start').focus();
+  }
+
+  // --- the only thing this app touches outside itself ------------------------
+  //
+  // Two requests against one declared variable. There is no file capability in
+  // the manifest, so even a bug here cannot reach a note.
+  async function loadBest() {
+    try {
+      const res = await fetch('/api/v1/variables/' + HIGH_SCORE_VAR);
+      if (!res.ok) throw new Error(String(res.status));
+      const body = await res.json();
+      best = Number(body.value) || 0;
+      el('best').textContent = String(best);
+    } catch {
+      // A missing variable is not an error worth interrupting a game for. The
+      // score just stops being persistent, and the footer says so rather than
+      // leaving an em-dash the player cannot interpret.
+      best = null;
+      el('best').textContent = '—';
+      el('status').textContent = 'High score not saved — add snakeHighScore to variables.json';
+    }
+  }
+
+  async function saveBest(value) {
+    best = value;
+    el('best').textContent = String(value);
+    try {
+      await fetch('/api/v1/variables/' + HIGH_SCORE_VAR, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+    } catch {
+      el('status').textContent = 'Could not save the high score.';
+    }
+  }
+
+  // --- input -----------------------------------------------------------------
+  const KEYS = {
+    ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 },
+    ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 },
+    w: { x: 0, y: -1 }, s: { x: 0, y: 1 }, a: { x: -1, y: 0 }, d: { x: 1, y: 0 },
+  };
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key === ' ') {
+      event.preventDefault();
+      state === 'running' ? pause() : play();
+      return;
+    }
+    const turn = KEYS[event.key] || KEYS[event.key.toLowerCase()];
+    if (!turn) return;
+    // Arrows scroll the pane otherwise, which drags the board out of view mid-game.
+    event.preventDefault();
+    if (state === 'running' && queued.length < 2) queued.push(turn);
+  });
+
+  el('start').addEventListener('click', play);
+
+  reset();
+  draw();
+  loadBest();
+</script>

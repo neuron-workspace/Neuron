@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, openNote } from './fixtures';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -12,12 +12,12 @@ test('lists workspace notes in the explorer', async ({ page }) => {
 });
 
 test('opening a note shows its content', async ({ page }) => {
-  await page.locator('.note-row', { hasText: 'markdown-basics' }).first().click();
+  await openNote(page, 'guides/markdown-basics.mdx');
   await expect(page.locator('.preview-prose').first()).toBeVisible();
 });
 
 test('an edit reaches disk as plain Markdown', async ({ page, workspace }) => {
-  await page.locator('.note-row', { hasText: 'markdown-basics' }).first().click();
+  await openNote(page, 'guides/markdown-basics.mdx');
 
   // Markdown opens in reading view by default (App.tsx defaultEditorMode), so
   // .cm-content does not exist yet. Double-clicking the prose is the documented
@@ -33,7 +33,7 @@ test('an edit reaches disk as plain Markdown', async ({ page, workspace }) => {
 
   // Neuron saves on keystroke with no save button; poll the file rather than
   // guessing a debounce interval.
-  const file = join(workspace, 'markdown-basics.mdx');
+  const file = join(workspace, 'guides', 'markdown-basics.mdx');
   await expect
     .poll(() => readFileSync(file, 'utf-8').includes('e2e-marker'), { timeout: 15_000 })
     .toBe(true);

@@ -161,6 +161,35 @@ export const test = base.extend<AppFixture>({
 
 export const expect = test.expect;
 
+/**
+ * Open a note through the command palette.
+ *
+ * Not by clicking its `.note-row`: a note inside a collapsed folder has no row
+ * in the DOM at all, so a row click is a test that silently depends on where
+ * the note happens to live. The palette searches the whole workspace, so this
+ * keeps working when notes are reorganised -- which is exactly what broke the
+ * specs that used to click rows for `markdown-basics`.
+ *
+ * The title-bar trigger rather than Ctrl+K: the shortcut runs through a global
+ * keydown handler attached on mount, so a press issued while the renderer is
+ * still hydrating lands nowhere. Retrying is worse, not better -- the binding
+ * TOGGLES, so a second press closes what the first opened.
+ */
+export async function openNote(page: Page, path: string) {
+  const trigger = page.getByRole('button', { name: /Search & commands/ });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+
+  const dialog = page.locator('[role="dialog"]');
+  await expect(dialog).toBeVisible();
+
+  // Filter first. The unfiltered list is long enough that the wanted entry may
+  // be scrolled out of view, and a click on an off-screen item never lands.
+  await dialog.getByRole('combobox').or(dialog.locator('input')).first().fill(path);
+  await dialog.getByText(path, { exact: false }).first().click();
+  await expect(dialog).toBeHidden();
+}
+
 /** URLs the app handed to the OS browser, recorded by the stub above. */
 export function openedExternally(app: ElectronApplication): Promise<string[]> {
   return app.evaluate(() => (globalThis as unknown as { __openExternal?: string[] }).__openExternal ?? []);

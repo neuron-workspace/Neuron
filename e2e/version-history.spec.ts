@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, openNote } from './fixtures';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -6,10 +6,10 @@ import { join } from 'node:path';
 // the recovery surface can actually reach one and put it back on disk.
 
 test('an earlier version can be restored from the side peek', async ({ page, workspace }) => {
-  const file = join(workspace, 'markdown-basics.mdx');
+  const file = join(workspace, 'guides', 'markdown-basics.mdx');
   const original = readFileSync(file, 'utf-8');
 
-  await page.locator('.note-row', { hasText: 'markdown-basics' }).first().click();
+  await openNote(page, 'guides/markdown-basics.mdx');
   const prose = page.locator('.preview-prose').first();
   await expect(prose).toBeVisible();
   await prose.dblclick();
@@ -46,7 +46,7 @@ test('an earlier version can be restored from the side peek', async ({ page, wor
 });
 
 test('a note with no history explains when history starts', async ({ page }) => {
-  await page.locator('.note-row', { hasText: 'getting-started' }).first().click();
+  await openNote(page, 'getting-started.mdx');
   // Click the panel toggle rather than pressing Ctrl+J. Clicking the shell
   // first to "make the shortcut work" is a test papering over a real defect:
   // the dispatcher is one global keydown with no focus scopes, so the shortcut

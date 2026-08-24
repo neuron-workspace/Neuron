@@ -81,9 +81,11 @@ test('the graph recentres on the open note, zooms, and pans', async ({ page }) =
   // comparing viewBox origins between two notes proves nothing -- they are
   // identical by construction. What matters is that the note you opened is the
   // one in the middle.
-  await open('markdown-basics');
+  await open('guides/markdown-basics');
   const svgBox = (await svg.boundingBox())!;
-  const active = graph.locator('.graph-node[aria-label="Open markdown-basics"]');
+  // Nodes are labelled by path, not basename, so two notes with the same name
+  // in different folders stay distinguishable.
+  const active = graph.locator('.graph-node[aria-label="Open guides/markdown-basics"]');
   await expect(active).toBeVisible();
   const nodeBox = (await active.boundingBox())!;
   const offCentre = Math.hypot(
