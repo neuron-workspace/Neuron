@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { registerTerminalWriter } from '../lib/terminal-bus';
 
 // Fixed dark terminal palette. The app's theme tokens are oklch, which
 // xterm's color parser doesn't accept — and terminals read fine dark everywhere.
@@ -25,6 +26,7 @@ export default function XtermTerminal() {
 
     let disposed = false;
     let ptyId: number | null = null;
+    let unregister: (() => void) | null = null;
 
     const term = new Terminal({
       fontFamily: 'JetBrains Mono, ui-monospace, monospace',
@@ -51,6 +53,11 @@ export default function XtermTerminal() {
       if (disposed) { void window.electronAPI.terminal.kill(id); return; }
       ptyId = id;
       term.focus();
+      // Only now is there anything to write to. Registering earlier would let a
+      // queued command be dropped into a pty that does not exist yet.
+      unregister = registerTerminalWriter((data) => {
+        void window.electronAPI.terminal.write(id, data);
+      });
     });
 
     const ro = new ResizeObserver(() => {
@@ -61,6 +68,7 @@ export default function XtermTerminal() {
 
     return () => {
       disposed = true;
+      unregister?.();
       ro.disconnect();
       offData();
       offExit();

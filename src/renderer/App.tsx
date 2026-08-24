@@ -31,6 +31,7 @@ import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
+import { registerTerminalOpener } from './lib/terminal-bus';
 import ActivityRail, { type SidebarMode } from './components/ActivityRail';
 import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
 
@@ -151,6 +152,13 @@ export default function App() {
   const graphOverlayOpen = layout.graphOverlay;
   const toggleGraphOverlay = () => patchLayout({ graphOverlay: !layoutRef.current.graphOverlay });
   const setBottomPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ bottomPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.bottomPanel) });
+
+  // A <Run /> button in a note reveals the terminal it is about to write to.
+  // Running a command into a panel the user cannot see would hide the one part
+  // of this that makes it reviewable.
+  useEffect(() => registerTerminalOpener(() => {
+    if (!layoutRef.current.bottomPanel) patchLayout({ bottomPanel: true });
+  }), [patchLayout]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createSection, setCreateSection] = useState('');

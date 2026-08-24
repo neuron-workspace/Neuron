@@ -21,7 +21,10 @@ test('layout components render, nest, and re-parse their children', async ({ pag
 
   // Cards are sections with their own heading.
   expect(await doc.locator('section').count()).toBeGreaterThan(3);
-  await expect(doc.getByText('Today', { exact: true }).first()).toBeVisible();
+  await expect(doc.getByText('Move today', { exact: true }).first()).toBeVisible();
+  // A Card nested inside another Card -- the case that breaks if children are
+  // parsed once and not recursively.
+  await expect(doc.getByText('Questions for Friday', { exact: true }).first()).toBeVisible();
 
   // Children were re-parsed: a task checkbox inside a Card is a real input, and
   // a DbView inside a Card is a real table. Raw text would give neither.
