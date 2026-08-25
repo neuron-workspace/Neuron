@@ -96,7 +96,21 @@ if (!unpacked) {
     '--config', 'tools/electron-builder.env.cjs',
     target, '--dir', '--publish', 'never',
     `-c.directories.output=${temp}`,
-  ], { cwd: root, stdio: 'inherit', env: { ...process.env, NEURON_BUILD_ENV: 'test' } });
+  ], {
+    cwd: root,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      NEURON_BUILD_ENV: 'test',
+      // electron-builder skips code signing entirely when it detects a pull
+      // request, which would make this smoke test package something the release
+      // never ships and then verify a signature that was never applied. The
+      // guard exists to keep signing certificates out of untrusted PR builds;
+      // macOS here signs ad-hoc, with no certificate and no secret involved, so
+      // there is nothing for it to protect.
+      CSC_FOR_PULL_REQUEST: 'true',
+    },
+  });
   // electron-builder names the macOS output directory after the architecture:
   // `mac` on Intel, `mac-arm64` on Apple Silicon, `mac-universal` for a fat
   // build. Hardcoding `mac` found nothing on an arm64 runner and reported it as
@@ -111,11 +125,39 @@ if (!unpacked) {
     : join(temp, 'linux-unpacked');
 }
 
+/**
+ * On macOS, a bundle that fails `codesign --verify` is not shippable.
+ *
+ * Launching proves nothing here. Gatekeeper only evaluates a signature when the
+ * file carries a quarantine attribute, which a locally built app does not -- so
+ * a completely unsealed bundle starts perfectly well on the machine that built
+ * it and dies with "Neuron is damaged and can't be opened" on the machine that
+ * downloads it. 0.4.4-beta.2 shipped exactly that: zero _CodeSignature seals
+ * anywhere in the bundle, while every launch test passed.
+ */
+function verifySignature(bundlePath) {
+  if (process.platform !== 'darwin') return;
+  const app = bundlePath.includes('.app/') ? bundlePath.slice(0, bundlePath.indexOf('.app/') + 4) : bundlePath;
+  try {
+    execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', app], {
+      encoding: 'utf-8', stdio: 'pipe', timeout: 120_000,
+    });
+    console.log('codesign: the bundle verifies');
+  } catch (error) {
+    const detail = `${error.stderr ?? ''}${error.stdout ?? ''}`.trim() || error.message;
+    console.error(`codesign --verify failed for ${app}\n${detail}`);
+    console.error('\nThis build would be rejected on any Mac that downloads it.');
+    process.exit(1);
+  }
+}
+
 const executablePath = findExecutable(unpacked);
 if (!executablePath) {
   console.error(`No executable found in ${unpacked}`);
   process.exit(1);
 }
+
+verifySignature(executablePath);
 console.log('\nlaunching', executablePath);
 
 const userData = mkdtempSync(join(tmpdir(), 'neuron-smoke-data-'));

@@ -195,6 +195,7 @@
     "mac": {
       "icon": "build/icon.png",
       "category": "public.app-category.productivity",
+      "identity": "-",
       "target": [
         "dmg",
         "zip"
