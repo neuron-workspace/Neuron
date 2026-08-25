@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Ad-hoc signing plus the hardened runtime needs this one entitlement.
+
+    The hardened runtime enforces library validation: every loaded library must
+    be signed by the same Team ID as the main executable. Electron's prebuilt
+    framework is signed by Apple's Electron team, and an ad-hoc signature has no
+    Team ID at all, so the two never match and the app is killed on launch.
+
+    A Developer ID signature would make this unnecessary. Until there is one,
+    this is the documented way to ship a hardened-runtime Electron app without
+    paying for the Apple Developer Program.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

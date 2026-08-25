@@ -28,7 +28,9 @@ jobs:
           - name: Linux x64
             os: ubuntu-latest
             args: --linux --x64
-          - name: macOS universal
+          # Two architectures, not one universal binary. Calling it universal
+          # described a target electron-builder was never asked to build.
+          - name: macOS x64 + arm64
             os: macos-latest
             args: --mac --x64 --arm64
     runs-on: ${{ matrix.os }}
@@ -90,12 +92,20 @@ jobs:
       # launched the artifact users download.
       # Every platform, not just Windows. The dependency that broke 0.4.3 was
       # missing from all three packages; Windows is simply where it was
-      # reported first. `release/mac` is the x64 bundle -- the arm64 one is
-      # built on the same runner but cannot be executed by it.
+      # reported first.
+      #
+      # Both macOS bundles, because only one of them used to be checked and it
+      # was the wrong one. The old note here claimed the runner could not
+      # execute the arm64 build -- backwards: macos-latest IS Apple Silicon, so
+      # arm64 is the native build and the most downloaded one, while
+      # `release/mac` is the x64 build it runs under Rosetta.
       - name: Smoke-test the packaged application
         if: runner.os == 'Windows'
         run: npm run smoke -- release/win-unpacked
-      - name: Smoke-test the packaged application
+      - name: Smoke-test the packaged application (arm64)
+        if: runner.os == 'macOS'
+        run: npm run smoke -- release/mac-arm64
+      - name: Smoke-test the packaged application (x64)
         if: runner.os == 'macOS'
         run: npm run smoke -- release/mac
       - name: Smoke-test the packaged application

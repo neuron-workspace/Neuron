@@ -111,11 +111,39 @@ if (!unpacked) {
     : join(temp, 'linux-unpacked');
 }
 
+/**
+ * On macOS, a bundle that fails `codesign --verify` is not shippable.
+ *
+ * Launching proves nothing here. Gatekeeper only evaluates a signature when the
+ * file carries a quarantine attribute, which a locally built app does not -- so
+ * a completely unsealed bundle starts perfectly well on the machine that built
+ * it and dies with "Neuron is damaged and can't be opened" on the machine that
+ * downloads it. 0.4.4-beta.2 shipped exactly that: zero _CodeSignature seals
+ * anywhere in the bundle, while every launch test passed.
+ */
+function verifySignature(bundlePath) {
+  if (process.platform !== 'darwin') return;
+  const app = bundlePath.includes('.app/') ? bundlePath.slice(0, bundlePath.indexOf('.app/') + 4) : bundlePath;
+  try {
+    execFileSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', app], {
+      encoding: 'utf-8', stdio: 'pipe', timeout: 120_000,
+    });
+    console.log('codesign: the bundle verifies');
+  } catch (error) {
+    const detail = `${error.stderr ?? ''}${error.stdout ?? ''}`.trim() || error.message;
+    console.error(`codesign --verify failed for ${app}\n${detail}`);
+    console.error('\nThis build would be rejected on any Mac that downloads it.');
+    process.exit(1);
+  }
+}
+
 const executablePath = findExecutable(unpacked);
 if (!executablePath) {
   console.error(`No executable found in ${unpacked}`);
   process.exit(1);
 }
+
+verifySignature(executablePath);
 console.log('\nlaunching', executablePath);
 
 const userData = mkdtempSync(join(tmpdir(), 'neuron-smoke-data-'));
