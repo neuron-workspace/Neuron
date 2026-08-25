@@ -97,8 +97,17 @@ if (!unpacked) {
     target, '--dir', '--publish', 'never',
     `-c.directories.output=${temp}`,
   ], { cwd: root, stdio: 'inherit', env: { ...process.env, NEURON_BUILD_ENV: 'test' } });
+  // electron-builder names the macOS output directory after the architecture:
+  // `mac` on Intel, `mac-arm64` on Apple Silicon, `mac-universal` for a fat
+  // build. Hardcoding `mac` found nothing on an arm64 runner and reported it as
+  // a missing executable, which reads like a broken build rather than a
+  // directory this script guessed wrong.
+  const macOutDir = () => {
+    const hit = readdirSync(temp).find((d) => d === 'mac' || d.startsWith('mac-'));
+    return join(temp, hit ?? 'mac');
+  };
   unpacked = process.platform === 'win32' ? join(temp, 'win-unpacked')
-    : process.platform === 'darwin' ? join(temp, 'mac')
+    : process.platform === 'darwin' ? macOutDir()
     : join(temp, 'linux-unpacked');
 }
 
