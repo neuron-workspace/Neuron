@@ -10,9 +10,31 @@ All notable changes to Neuron are documented here. The format follows
 > release landing at 0.0.1. The dates and the contents are unchanged; only the
 > numbers moved. Nothing was removed, and no released tag was reused.
 
-## [0.4.4] - 2026-08-24
+## [0.4.4] - 2026-08-25
 
 ### Fixed
+- **The macOS terminal could not start a shell.** node-pty forks through a
+  `spawn-helper` binary, and npm does not reliably preserve its executable bit
+  when unpacking the prebuilds. It landed as `0644`, every pty spawn failed with
+  `posix_spawnp failed`, and electron-builder copied that mode straight into the
+  bundle -- so the terminal in a shipped macOS build would never have worked, on
+  any machine. The permission is now restored after every install. Present in
+  the `0.4.4-beta.1` macOS downloads; Windows and Linux were unaffected.
+- **A shell that cannot start now says so.** The failure was unguarded, so it
+  left an empty black rectangle and put the reason nowhere a user could reach.
+- **A command sent by a `<Run />` button could be lost when the terminal panel
+  was rebuilt.** Each mount started its own shell, and the queued command went
+  to whichever announced itself first -- so if that shell was the one being
+  discarded, the command went with it and the pane stayed blank. The panel now
+  reuses the window's shell instead of starting another. Reproduced in
+  development, where React deliberately remounts everything twice; switching
+  panels could reach it in a release build.
+- **Hiding the terminal panel no longer destroys your shell.** It keeps its
+  scrollback and working directory, and the panel replays what it missed on
+  reattach.
+- **Canvas no longer claims an empty board while it is still loading.** Every
+  board with cards on it briefly showed "Double-click anywhere to add your
+  first card" before its contents arrived.
 - **0.4.3 could not start at all.** Every install, on every platform, failed
   with `Cannot find package 'zod'` before a window appeared. `zod` is a peer
   dependency of the AI SDK packages; npm hoists peers to the root of
@@ -34,6 +56,12 @@ All notable changes to Neuron are documented here. The format follows
   - A Windows Sandbox configuration for clean-machine installer testing, which
     catches what neither of the above can: missing OS runtimes and first run on
     a profile that has never seen the app.
+- **Tests now run on Windows, macOS and Linux.** One platform proved the code
+  compiled, not that it worked anywhere else, and Neuron leans on node-pty, a
+  filesystem watcher, spawned processes, keyboard chords and path handling --
+  each of which diverges between the three. The matrix found seven real defects
+  on its first runs, including the macOS terminal above, and now runs the
+  packaged smoke test on each platform before a release is published.
 
 ## [0.4.3] - 2026-08-24
 
