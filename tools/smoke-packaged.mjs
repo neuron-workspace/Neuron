@@ -96,7 +96,21 @@ if (!unpacked) {
     '--config', 'tools/electron-builder.env.cjs',
     target, '--dir', '--publish', 'never',
     `-c.directories.output=${temp}`,
-  ], { cwd: root, stdio: 'inherit', env: { ...process.env, NEURON_BUILD_ENV: 'test' } });
+  ], {
+    cwd: root,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      NEURON_BUILD_ENV: 'test',
+      // electron-builder skips code signing entirely when it detects a pull
+      // request, which would make this smoke test package something the release
+      // never ships and then verify a signature that was never applied. The
+      // guard exists to keep signing certificates out of untrusted PR builds;
+      // macOS here signs ad-hoc, with no certificate and no secret involved, so
+      // there is nothing for it to protect.
+      CSC_FOR_PULL_REQUEST: 'true',
+    },
+  });
   // electron-builder names the macOS output directory after the architecture:
   // `mac` on Intel, `mac-arm64` on Apple Silicon, `mac-universal` for a fat
   // build. Hardcoding `mac` found nothing on an arm64 runner and reported it as
