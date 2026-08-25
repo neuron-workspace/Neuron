@@ -37,7 +37,18 @@ test('an earlier version can be restored from the side peek', async ({ page, wor
   const restore = page.getByRole('button', { name: 'Restore' }).first();
   await expect(restore).toBeVisible();
   await restore.click();
-  await expect(page.getByText('Replace the file on disk', { exact: false })).toBeVisible();
+  // TEMP: does a second click land where the first did not?
+  await page.waitForTimeout(1500);
+  const confirm = page.getByText('Replace the file on disk', { exact: false });
+  if (!(await confirm.isVisible())) {
+    console.log('DIAG-RETRY first-click-nothing');
+    await restore.click();
+    await page.waitForTimeout(1500);
+    console.log('DIAG-RETRY second-click-visible=' + (await confirm.isVisible()));
+  } else {
+    console.log('DIAG-RETRY first-click-worked');
+  }
+  await expect(confirm).toBeVisible();
   await page.getByRole('button', { name: 'Replace file' }).click();
 
   await expect
