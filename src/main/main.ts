@@ -578,13 +578,21 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number }
   }
 
   const id = nextPtyId++;
-  const proc = pty.spawn(defaultShell(), [], {
-    name: 'xterm-color',
-    cols: opts.cols ?? 80,
-    rows: opts.rows ?? 24,
-    cwd: activeRepoPath() || process.cwd(),
-    env: process.env as { [key: string]: string },
-  });
+  // A shell that cannot start used to leave an empty black rectangle and no
+  // explanation anywhere the user could see. Let the failure reach the caller
+  // so the panel can print it.
+  let proc: pty.IPty;
+  try {
+    proc = pty.spawn(defaultShell(), [], {
+      name: 'xterm-color',
+      cols: opts.cols ?? 80,
+      rows: opts.rows ?? 24,
+      cwd: activeRepoPath() || process.cwd(),
+      env: process.env as { [key: string]: string },
+    });
+  } catch (error) {
+    throw new Error(`could not start ${defaultShell()}: ${(error as Error).message}`);
+  }
   ptys.set(id, proc);
   ptyHistory.set(id, '');
   windowPtyId = id;
