@@ -16,6 +16,28 @@ const packageJson = require('../package.json');
  */
 const base = packageJson.build;
 
+/*
+ * A note on macOS signing, because the obvious "improvement" here breaks the
+ * app and the breakage does not look like signing.
+ *
+ * `mac.identity` is "-", so the finished bundle is ad-hoc signed. Without it
+ * electron-builder signs nothing, Electron's own prebuilt signature survives
+ * claiming resources that packaging has replaced, and every download reports
+ * "Neuron is damaged and can't be opened".
+ *
+ * The hardened runtime is deliberately OFF. It is a requirement for Apple
+ * notarization, which needs a paid Developer ID, and it is doing no work for an
+ * ad-hoc build. Turning it on enforces library validation, which an ad-hoc
+ * signature can never satisfy against Electron's Apple-signed framework, so it
+ * also demands a `disable-library-validation` entitlement. Supplying an
+ * entitlements file REPLACES electron-builder's defaults rather than adding to
+ * them -- drop `allow-jit` and V8 cannot allocate executable memory, so the app
+ * dies at startup with nothing but "Process failed to launch".
+ *
+ * If Neuron is ever notarized, hardenedRuntime comes back WITH the full
+ * entitlement set, not just the one the warning names.
+ */
+
 const env = process.env.NEURON_BUILD_ENV === 'test' ? 'test' : 'prod';
 const isTest = env === 'test';
 const productName = isTest ? 'Neuron Test' : 'Neuron';
