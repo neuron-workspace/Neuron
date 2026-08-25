@@ -12,7 +12,7 @@
 //
 // Nothing in the suite ever launched the artifact users download. This does.
 import { _electron as electron } from '@playwright/test';
-import { existsSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -21,10 +21,63 @@ import { shutdown } from './procs.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+const { build = {}, build: { productName = 'neuron' } = {} } = JSON.parse(
+  readFileSync(join(root, 'package.json'), 'utf-8'),
+);
+
+/**
+ * The packaged executable, wherever this platform puts it.
+ *
+ * electron-builder writes a different shape per platform: a bare .exe on
+ * Windows, an .app bundle on macOS whose real binary is buried in
+ * Contents/MacOS, and an extensionless ELF on Linux. Accepts either the
+ * unpacked directory or, on macOS, the .app itself.
+ */
 function findExecutable(dir) {
   if (!existsSync(dir)) return null;
-  const exe = readdirSync(dir).find((f) => /\.exe$/i.test(f) && !/unins|elevate|squirrel/i.test(f));
-  return exe ? join(dir, exe) : null;
+
+  if (process.platform === 'darwin') {
+    // Either we were handed the .app, or it sits inside the directory.
+    const bundle = dir.endsWith('.app')
+      ? dir
+      : (() => {
+          const hit = readdirSync(dir).find((f) => f.endsWith('.app'));
+          return hit ? join(dir, hit) : null;
+        })();
+    if (!bundle) return null;
+    const macos = join(bundle, 'Contents', 'MacOS');
+    if (!existsSync(macos)) return null;
+    const bin = readdirSync(macos)[0];
+    return bin ? join(macos, bin) : null;
+  }
+
+  if (process.platform === 'win32') {
+    const exe = readdirSync(dir).find((f) => /\.exe$/i.test(f) && !/unins|elevate|squirrel/i.test(f));
+    return exe ? join(dir, exe) : null;
+  }
+
+  // Linux: name the binary rather than hunting for it. electron-builder calls
+  // it `executableName`, which defaults to productName lowercased.
+  //
+  // The first version scanned for the executable bit and took the first hit.
+  // The directory also holds chrome-sandbox and chrome_crashpad_handler, which
+  // are executable, are extensionless like the app, and sort ahead of it -- so
+  // the scan launched chrome-sandbox, and Playwright reported only "Process
+  // failed to launch", naming nothing.
+  const named = join(dir, (build.executableName ?? productName).toLowerCase());
+  if (existsSync(named)) return named;
+
+  // Fall back to the scan, minus Electron's own helpers.
+  const candidate = readdirSync(dir).find((f) => {
+    if (/^chrome[-_]/i.test(f)) return false;
+    if (/\.(so|so\.\d+|pak|dat|bin|json|html|txt|md|desktop|png)$/i.test(f)) return false;
+    const full = join(dir, f);
+    try {
+      const st = statSync(full);
+      return st.isFile() && (st.mode & 0o111) !== 0;
+    } catch { return false; }
+  });
+  return candidate ? join(dir, candidate) : null;
 }
 
 let unpacked = process.argv[2];
@@ -35,13 +88,27 @@ if (!unpacked) {
   // this machine when a scanner holds the freshly extracted binaries.
   temp = mkdtempSync(join(tmpdir(), 'neuron-smoke-'));
   console.log('packaging to', temp, '…');
+  const target = process.platform === 'win32' ? '--win'
+    : process.platform === 'darwin' ? '--mac'
+    : '--linux';
   execFileSync(process.execPath, [
     join(root, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js'),
     '--config', 'tools/electron-builder.env.cjs',
-    '--win', '--x64', '--dir', '--publish', 'never',
+    target, '--dir', '--publish', 'never',
     `-c.directories.output=${temp}`,
   ], { cwd: root, stdio: 'inherit', env: { ...process.env, NEURON_BUILD_ENV: 'test' } });
-  unpacked = join(temp, 'win-unpacked');
+  // electron-builder names the macOS output directory after the architecture:
+  // `mac` on Intel, `mac-arm64` on Apple Silicon, `mac-universal` for a fat
+  // build. Hardcoding `mac` found nothing on an arm64 runner and reported it as
+  // a missing executable, which reads like a broken build rather than a
+  // directory this script guessed wrong.
+  const macOutDir = () => {
+    const hit = readdirSync(temp).find((d) => d === 'mac' || d.startsWith('mac-'));
+    return join(temp, hit ?? 'mac');
+  };
+  unpacked = process.platform === 'win32' ? join(temp, 'win-unpacked')
+    : process.platform === 'darwin' ? macOutDir()
+    : join(temp, 'linux-unpacked');
 }
 
 const executablePath = findExecutable(unpacked);

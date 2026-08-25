@@ -405,11 +405,16 @@
         text-transform: uppercase;
         color: var(--blue);
       }
-      .assets { display: grid; gap: 0.4rem; }
+      /* minmax(0, 1fr), not the implicit `auto` track. An auto track is sized
+         from its content, so the longest filename made the rows wider than the
+         card and they spilled past its right border -- worst on Windows and
+         Linux, whose names are longest, while macOS happened to fit. */
+      .assets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.4rem; }
       .asset {
         display: flex;
         align-items: center;
         gap: 0.65rem;
+        min-width: 0;
         padding: 0.6rem 0.7rem;
         border: 1px solid var(--line);
         border-radius: var(--radius);
@@ -420,6 +425,9 @@
       .asset-name {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
+        /* A flex item will not shrink below its content without this, so the
+           ellipsis alone was not enough to keep a long name inside the row. */
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

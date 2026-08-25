@@ -10,12 +10,35 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: ${{ matrix.name }}
+    # One platform is not cross-platform testing. Neuron leans on node-pty, a
+    # filesystem watcher, spawned processes, keyboard chords, path handling and
+    # Electron window behaviour -- every one of which diverges between Windows,
+    # macOS and Linux. Running only on Windows proved the code compiled, not
+    # that it worked anywhere else.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            wrap: ''
+          - name: macOS
+            os: macos-latest
+            wrap: ''
+          # Electron needs a display server and the Linux runner has none, so
+          # everything that opens a window runs under a virtual framebuffer.
+          # Without it the failure reads as "Electron crashed" rather than as a
+          # missing display.
+          - name: Linux
+            os: ubuntu-latest
+            wrap: 'xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24"'
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -27,13 +50,25 @@ jobs:
         run: npm test
       - name: Build application
         run: npm run build
+
       - name: Run Electron end-to-end tests
-        run: npm run test:e2e
+        run: ${{ matrix.wrap }} npm run test:e2e
+
+      # Launch what a user would actually download.
+      #
+      # 0.4.3 shipped an application that could not start while every test was
+      # green: they all run against dist/main/main.js with the full
+      # node_modules tree present, and the packaged app loads from app.asar,
+      # which holds only what electron-builder can reach from `dependencies`.
+      # Building successfully says nothing about starting.
+      - name: Smoke-test the packaged application
+        run: ${{ matrix.wrap }} npm run smoke
+
       - name: Upload end-to-end failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: playwright-results
+          name: playwright-results-${{ matrix.os }}
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore

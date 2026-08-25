@@ -20,10 +20,27 @@ export default defineConfig({
   // and loads DEV_URL. Building the renderer instead would need a production
   // flag in main.ts, and a test-only branch in the process that owns the
   // security guards is not worth the convenience.
+  // Start our own renderer, never adopt one that is already listening.
+  //
+  // Reuse looks free and is not. The port is fixed at 5174, so a dev server
+  // started in one checkout gets adopted by a run in another -- and Playwright
+  // cannot tell, because all it checks is that something answers. A Codex task
+  // verifying a change in its own worktree was silently exercising the renderer
+  // from the main checkout, and reported a full green suite for code it had
+  // never loaded.
+  //
+  // Fixing it the other way -- a per-checkout port -- would mean making DEV_URL
+  // dynamic, and DEV_URL is what src/main/navigation.ts compares origins
+  // against to decide where the app frame may navigate. That guard does not get
+  // loosened for test ergonomics.
+  //
+  // vite runs with strictPort, so a port that is already taken now fails loudly
+  // instead of quietly testing the wrong tree. The cost is that `npm run dev`
+  // and the end-to-end suite can no longer share one server.
   webServer: {
     command: 'npm run dev:renderer',
     url: 'http://localhost:5174',
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });

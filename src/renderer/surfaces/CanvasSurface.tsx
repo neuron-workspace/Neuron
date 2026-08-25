@@ -782,7 +782,10 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
         })}
       </div>
 
-      {doc.nodes.length === 0 && (
+      {/* Only after the file has been read. The doc starts empty, so without
+          this every board with cards on it flashed "add your first card"
+          before its contents arrived. */}
+      {loadedOnce.current && doc.nodes.length === 0 && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-[var(--ink-muted)]">Double-click anywhere to add your first card. Right-click for more.</div>
       )}
 

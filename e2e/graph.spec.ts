@@ -180,7 +180,12 @@ test('nodes glide to their new places instead of jumping', async ({ page }) => {
   // Sampling in-page removes the race entirely, because the sampler and the
   // animation now share one clock. If the renderer is starved the tween is
   // starved with it, and the samples still land mid-flight.
-  await target.click();
+  // Click a circle, not the group. The group's box spans the label above the
+  // circle, so its centre lands in the gap between the two -- and the label is
+  // pointer-events-none, so the click reaches the SVG behind it and pans the
+  // canvas instead of selecting. Windows and macOS happened to place the centre
+  // on the circle; Linux, with different font metrics, did not.
+  await target.locator('circle').first().click();
   const points: [number, number][] = await page.evaluate(async (selector) => {
     const el = document.querySelector(selector);
     if (!el) return [];

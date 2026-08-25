@@ -16,6 +16,7 @@
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json && node tools/copy-htmx.mjs",
     "build": "npm run clean:build && npm run build:main && npm run build:renderer",
+    "postinstall": "node tools/fix-pty-permissions.mjs",
     "dist": "npm run dist:test",
     "dist:test": "node tools/package-env.mjs test",
     "dist:dir": "node tools/package-env.mjs test --dir",
@@ -34,7 +35,7 @@
     "test:terminal-bus": "node tools/terminal-bus.test.mjs",
     "test:demo-data": "node tools/demo-data.test.mjs",
     "test:e2e": "npm run build:main && playwright test",
-    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast && npm run test:terminal-bus && npm run test:demo-data && npm run test:procs && npm run test:wikilinks",
+    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:contrast && npm run test:terminal-bus && npm run test:demo-data && npm run test:download-page && npm run test:procs && npm run test:wikilinks",
     "shoot": "node tools/shoot.mjs",
     "test:procs": "node tools/procs.test.mjs",
     "test:wikilinks": "node tools/wikilinks.test.mjs",
@@ -42,7 +43,8 @@
     "store:shots": "node tools/store-shots.mjs",
     "store:logos": "node tools/store-logos.mjs",
     "smoke": "node tools/smoke-packaged.mjs",
-    "test:deps": "node tools/deps.test.mjs"
+    "test:deps": "node tools/deps.test.mjs",
+    "test:download-page": "node tools/download-page.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",

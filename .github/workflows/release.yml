@@ -34,9 +34,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -88,9 +88,19 @@ jobs:
       # and every end-to-end test worked, and electron-builder does not follow
       # peers -- so it was absent from app.asar. Nothing in the suite had ever
       # launched the artifact users download.
+      # Every platform, not just Windows. The dependency that broke 0.4.3 was
+      # missing from all three packages; Windows is simply where it was
+      # reported first. `release/mac` is the x64 bundle -- the arm64 one is
+      # built on the same runner but cannot be executed by it.
       - name: Smoke-test the packaged application
         if: runner.os == 'Windows'
         run: npm run smoke -- release/win-unpacked
+      - name: Smoke-test the packaged application
+        if: runner.os == 'macOS'
+        run: npm run smoke -- release/mac
+      - name: Smoke-test the packaged application
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run smoke -- release/linux-unpacked
 
       # Built separately, and after the installers, for two reasons: a failure
       # here must not lose the .exe artifacts, and the Store package is not a
@@ -105,7 +115,7 @@ jobs:
 
       - name: Upload the Store package
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: neuron-store-appx
           retention-days: 14
@@ -117,7 +127,7 @@ jobs:
         shell: bash
         run: rm -f "${{ steps.cert.outputs.path }}"
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: neuron-${{ matrix.os }}
           retention-days: 3
@@ -137,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
       # What actually lets someone prove a download is the build CI produced.

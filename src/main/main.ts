@@ -539,11 +539,14 @@ ipcMain.handle('terminal:run', async (_event, cmd: string) => {
 });
 
 // ==========================================================================
-// IPC — interactive PTY terminals (node-pty). One pty per renderer terminal;
+// IPC — interactive PTY terminals (node-pty). One pty per window;
 // output is streamed back over `terminal:data`. Used by the terminal panel.
 // ==========================================================================
 
 const ptys = new Map<number, pty.IPty>();
+const ptyHistory = new Map<number, string>();
+const TERMINAL_HISTORY_LIMIT = 200 * 1024;
+let windowPtyId: number | null = null;
 let nextPtyId = 1;
 
 const defaultShell = () =>
@@ -556,27 +559,58 @@ function killAllPtys() {
     try { p.kill(); } catch { /* already gone */ }
   }
   ptys.clear();
+  ptyHistory.clear();
+  windowPtyId = null;
 }
 
 ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number } = {}) => {
+  if (windowPtyId != null) {
+    const existing = ptys.get(windowPtyId);
+    if (existing) {
+      try {
+        existing.resize(Math.max(1, opts.cols ?? 80), Math.max(1, opts.rows ?? 24));
+        return windowPtyId;
+      } catch { /* pty closed; replace it below */ }
+    }
+    ptys.delete(windowPtyId);
+    ptyHistory.delete(windowPtyId);
+    windowPtyId = null;
+  }
+
   const id = nextPtyId++;
-  const proc = pty.spawn(defaultShell(), [], {
-    name: 'xterm-color',
-    cols: opts.cols ?? 80,
-    rows: opts.rows ?? 24,
-    cwd: activeRepoPath() || process.cwd(),
-    env: process.env as { [key: string]: string },
-  });
+  // A shell that cannot start used to leave an empty black rectangle and no
+  // explanation anywhere the user could see. Let the failure reach the caller
+  // so the panel can print it.
+  let proc: pty.IPty;
+  try {
+    proc = pty.spawn(defaultShell(), [], {
+      name: 'xterm-color',
+      cols: opts.cols ?? 80,
+      rows: opts.rows ?? 24,
+      cwd: activeRepoPath() || process.cwd(),
+      env: process.env as { [key: string]: string },
+    });
+  } catch (error) {
+    throw new Error(`could not start ${defaultShell()}: ${(error as Error).message}`);
+  }
   ptys.set(id, proc);
+  ptyHistory.set(id, '');
+  windowPtyId = id;
   proc.onData((data) => {
+    const history = (ptyHistory.get(id) ?? '') + data;
+    ptyHistory.set(id, history.length > TERMINAL_HISTORY_LIMIT ? history.slice(-TERMINAL_HISTORY_LIMIT) : history);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:data', id, data);
   });
   proc.onExit(({ exitCode }) => {
     ptys.delete(id);
+    ptyHistory.delete(id);
+    if (windowPtyId === id) windowPtyId = null;
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', id, exitCode);
   });
   return id;
 });
+
+ipcMain.handle('terminal:history', (_event, id: number) => ptyHistory.get(id) ?? '');
 
 ipcMain.handle('terminal:write', (_event, id: number, data: string) => {
   try { ptys.get(id)?.write(data); } catch { /* pty closed */ }
