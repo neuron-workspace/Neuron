@@ -324,13 +324,13 @@ gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo sh
 
         <!-- ============================= macOS ============================= -->
         <section class="panel" id="p-mac" role="tabpanel" aria-labelledby="tab-mac" tabindex="0" hidden>
-          <h2>macOS will say the app can’t be opened</h2>
+          <h2>macOS will ask you to confirm before opening</h2>
           <p>
-            Neuron is not notarized with an Apple Developer ID, so Gatekeeper refuses
-            it on first launch. The wording depends on your macOS version: either
-            “Neuron can’t be opened because it is from an unidentified developer”, or
-            “Neuron is damaged and can’t be opened” — the second is misleading, and
-            usually means the same thing.
+            Neuron is signed, but not notarized with an Apple Developer ID, so
+            Gatekeeper stops the first launch and says
+            “Neuron can’t be opened because it is from an unidentified developer”.
+            That is the expected prompt for software Apple has not been paid to
+            vouch for, and the steps below clear it permanently.
           </p>
 
           <ol class="steps">
@@ -340,15 +340,21 @@ gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo sh
           </ol>
 
           <div class="aside">
-            <h3>On Apple silicon, if it says “damaged”</h3>
+            <h3>If it says “damaged” instead</h3>
             <p>
-              That is the quarantine attribute rather than actual damage. Removing it
-              is a deliberate act, so run this only if you verified the download:
+              That is a different message and it means something different. Builds
+              before <b>0.4.4-beta.3</b> were packaged without ever being signed, so
+              macOS was right to reject them — the bundle really was invalid, and
+              Open Anyway will not help.
             </p>
-            <pre>xattr -dr com.apple.quarantine /Applications/Neuron.app</pre>
             <p style="margin-top:1rem">
-              Signing and notarizing properly needs an Apple Developer account at
-              $99/year, which Neuron does not have yet.
+              Download a current build rather than working around it. Clearing the
+              quarantine flag on a genuinely broken bundle only hides the reason
+              macOS stopped it.
+            </p>
+            <p style="margin-top:1rem">
+              Notarizing, which would remove the prompt above entirely, needs an
+              Apple Developer account at $99/year that Neuron does not have.
             </p>
           </div>
         </section>
