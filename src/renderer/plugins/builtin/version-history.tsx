@@ -146,7 +146,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                   isConfirming ? 'bg-[var(--surface)]' : 'hover:bg-[var(--surface-hover)]',
                 )}
               >
-                <span aria-label={diag} className="absolute h-0 w-0 overflow-hidden" />
+                <p className="pointer-events-none absolute left-0 top-0 z-50 text-[6px] opacity-60">{diag}</p>
                 <div className="flex items-baseline gap-2">
                   <Icon className="h-3 w-3 shrink-0 translate-y-0.5 text-[var(--ink-muted)]" aria-hidden />
                   <span

@@ -16,6 +16,7 @@
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json && node tools/copy-htmx.mjs",
     "build": "npm run clean:build && npm run build:main && npm run build:renderer",
+    "postinstall": "node tools/fix-pty-permissions.mjs",
     "dist": "npm run dist:test",
     "dist:test": "node tools/package-env.mjs test",
     "dist:dir": "node tools/package-env.mjs test --dir",
