@@ -156,6 +156,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # This job used to need no source at all -- it downloads artifacts and
+      # publishes them. Pruning now runs a script from the repository, so the
+      # repository has to be here. Without it the release publishes and the
+      # prune step alone fails, which is exactly how 0.4.4-beta.3 shipped with
+      # beta.2 still standing.
+      - name: Check out repository
+        uses: actions/checkout@v5
       - name: Download all build artifacts
         uses: actions/download-artifact@v7
         with:
