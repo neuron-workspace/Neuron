@@ -86,6 +86,28 @@ export async function shutdown(app, { graceMs = 5000, verifyMs = 3000 } = {}) {
 }
 
 /**
+ * Elapsed time in seconds, from either shape `ps` reports.
+ *
+ * Linux `etimes` is already a count of seconds. BSD and macOS `etime` is
+ * formatted as [[dd-]hh:]mm:ss, and reading that as a number yields NaN --
+ * which the age guard then treats as "not old enough" and every stranded
+ * process survives the sweep.
+ */
+export function parseElapsed(value) {
+  if (value == null) return NaN;
+  const text = String(value).trim();
+  if (/^\d+$/.test(text)) return Number(text);
+
+  const [days, clock] = text.includes('-') ? text.split('-') : ['0', text];
+  const parts = clock.split(':').map(Number);
+  if (parts.some((n) => !Number.isFinite(n))) return NaN;
+
+  // mm:ss or hh:mm:ss
+  const [h, m, sec] = parts.length === 3 ? parts : [0, parts[0], parts[1]];
+  return ((Number(days) * 24 + h) * 60 + m) * 60 + sec;
+}
+
+/**
  * Kill Electron processes stranded by an earlier run.
  *
  * Teardown handles the normal path; this is for the abnormal one. Interrupting
@@ -121,11 +143,18 @@ export function sweepStrandedApps({
         { encoding: 'utf-8', timeout: 30_000 });
       rows = out.split('\n').map((l) => l.trim()).filter(Boolean);
     } else {
-      // etimes is elapsed seconds, which is exactly the age test.
-      const out = execFileSync('ps', ['-eo', 'pid=,etimes=,args='], { encoding: 'utf-8', timeout: 30_000 });
+      // `etimes` gives elapsed seconds directly, but it is a Linux extension --
+      // macOS ps rejects it, the call throws, and the sweep silently returns 0.
+      // The cross-platform CI matrix caught exactly that on its first run. BSD
+      // ps has `etime`, formatted, so parse it.
+      const field = process.platform === 'darwin' ? 'etime' : 'etimes';
+      const out = execFileSync('ps', ['-eo', `pid=,${field}=,args=`], { encoding: 'utf-8', timeout: 30_000 });
       rows = out.split('\n')
         .filter((l) => l.includes(processName) && markers.some((m) => l.includes(m)))
-        .map((l) => l.trim().split(/\s+/).slice(0, 2).join(' '));
+        .map((l) => {
+          const [pid, elapsed] = l.trim().split(/\s+/);
+          return `${pid} ${parseElapsed(elapsed)}`;
+        });
     }
   } catch {
     // No ps, no powershell, or a locked-down runner. The teardown guard is the
