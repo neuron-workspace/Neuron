@@ -33,6 +33,21 @@ let DIAG_MD = 0;
 let DIAG_MU = 0;
 let DIAG_TICK = 0;
 let DIAG_HITS: string[] = [];
+let DIAG_GEO = '';
+function diagSample(): void {
+  const btn = document.querySelector('[data-diag-restore]') as HTMLElement | null;
+  if (!btn) { DIAG_GEO = 'no-button'; return; }
+  const r = btn.getBoundingClientRect();
+  const cx = Math.round(r.x + r.width / 2);
+  const cy = Math.round(r.y + r.height / 2);
+  const at = document.elementFromPoint(cx, cy) as HTMLElement | null;
+  const cls = at && typeof at.className === 'string' ? at.className.slice(0, 20) : '';
+  const inView = cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight;
+  DIAG_GEO = `vp=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
+    + ` rect=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)}`
+    + ` centre=${cx},${cy} inView=${inView} at=${at ? at.tagName : 'null'}.${cls}`
+    + ` contains=${at && btn.contains(at) ? 'yes' : 'no'}`;
+}
 if (typeof document !== 'undefined') {
   document.addEventListener('pointerdown', (e) => {
     const t = e.target as HTMLElement | null;
@@ -57,7 +72,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
   }, [note]);
 
   useEffect(() => { DIAG_MOUNTS += 1; }, []);
-  useEffect(() => { const t = setInterval(() => { DIAG_TICK += 1; setStatus((v) => (v === '' ? null : '')); }, 400); return () => clearInterval(t); }, []);
+  useEffect(() => { const t = setInterval(() => { DIAG_TICK += 1; diagSample(); setStatus((v) => (v === '' ? null : '')); }, 400); return () => clearInterval(t); }, []);
   useEffect(() => { DIAG_LOADS += 1; setConfirming(null); setStatus(null); void load(); }, [load]);
 
   const restore = async (entry: JournalEntry) => {
@@ -120,7 +135,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
         <div className="p-1.5">
           {(entries ?? []).map((entry) => {
             const skipped = entry.state === 'skipped';
-            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} pd=${DIAG_PD} pu=${DIAG_PU} md=${DIAG_MD} mu=${DIAG_MU} tick=${DIAG_TICK} confirming=${String(confirming)} HITS[${DIAG_HITS.join(' | ')}]`;
+            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} pd=${DIAG_PD} pu=${DIAG_PU} md=${DIAG_MD} mu=${DIAG_MU} tick=${DIAG_TICK} confirming=${String(confirming)} GEO[${DIAG_GEO}] HITS[${DIAG_HITS.join(' | ')}]`;
             const isConfirming = confirming === entry.id;
             const Icon = entry.operation === 'delete' ? Trash2 : Pencil;
             return (
