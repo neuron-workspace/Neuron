@@ -54,19 +54,11 @@ export default function XtermTerminal() {
     term.open(container);
     try { fit.fit(); } catch { /* not laid out yet */ }
 
-    let diagBytes = 0;
-    let diagEvents = 0;
     const offData = window.electronAPI.terminal.onData((id, data) => {
-      diagBytes += data.length;
-      diagEvents += 1;
       if (id !== ptyId) return;
       term.write(data);
       publishWriter();
     });
-    // TEMP: surface the counters where a failure snapshot will show them.
-    const diagTimer = setInterval(() => {
-      if (container) container.setAttribute('data-diag', `pty=${String(ptyId)} events=${diagEvents} bytes=${diagBytes}`);
-    }, 500);
     const offExit = window.electronAPI.terminal.onExit((id) => {
       if (id === ptyId) term.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
     });
@@ -91,8 +83,6 @@ export default function XtermTerminal() {
       if (history) publishWriter();
       else readyTimer = setTimeout(publishWriter, 5000);
       term.focus();
-      // TEMP: prove the attach happened and say what it found.
-      term.write(`\x1b[90m[diag attached id=${id} hist=${history.length}]\x1b[0m\r\n`);
     }).catch((error: Error) => {
       if (disposed) return;
       term.write(`\x1b[31m${String(error?.message ?? error)}\x1b[0m\r\n`);
@@ -107,7 +97,6 @@ export default function XtermTerminal() {
     return () => {
       disposed = true;
       if (readyTimer) clearTimeout(readyTimer);
-      clearInterval(diagTimer);
       unregister?.();
       ro.disconnect();
       offData();

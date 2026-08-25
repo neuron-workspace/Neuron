@@ -36,17 +36,19 @@ test('an earlier version can be restored from the side peek', async ({ page, wor
   // Restore is two-step: the row asks before it replaces the file.
   const restore = page.getByRole('button', { name: 'Restore' }).first();
   await expect(restore).toBeVisible();
-  await restore.click();
-  // TEMP: does a second click land where the first did not?
-  await page.waitForTimeout(1500);
+  // Retry the INPUT, not the assertion. On macOS the first synthetic click
+  // after the side peek opens is dropped before it reaches the page, and an
+  // identical second click on the same element lands immediately.
+  //
+  // This is not a slow app being papered over. At the moment of the lost click
+  // the button is inside the viewport (measured at 1004x657, rect y=196) and
+  // document.elementFromPoint at the button's own centre returns the button
+  // itself -- yet no pointerdown, mousedown or click event reaches the
+  // document at all. Nothing the app could do differently would receive it.
   const confirm = page.getByText('Replace the file on disk', { exact: false });
-  if (!(await confirm.isVisible())) {
-    console.log('DIAG-RETRY first-click-nothing');
-    await restore.click();
-    await page.waitForTimeout(1500);
-    console.log('DIAG-RETRY second-click-visible=' + (await confirm.isVisible()));
-  } else {
-    console.log('DIAG-RETRY first-click-worked');
+  for (let attempt = 1; attempt <= 3 && !(await confirm.isVisible()); attempt += 1) {
+    await restore.click().catch(() => { /* the row swaps once a click lands */ });
+    await confirm.waitFor({ state: 'visible', timeout: 3000 }).catch(() => { /* try again */ });
   }
   await expect(confirm).toBeVisible();
   await page.getByRole('button', { name: 'Replace file' }).click();

@@ -20,9 +20,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMP: macOS-only while diagnosing. Restore the full matrix.
+          - name: Windows
+            os: windows-latest
           - name: macOS
             os: macos-latest
+          - name: Linux
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
@@ -44,19 +47,10 @@ jobs:
       # Electron needs a display server. The GitHub Windows and macOS runners
       # have one; the Linux runner does not, so the suite is wrapped in a
       # virtual framebuffer rather than left to fail as "Electron crashed".
-      - name: Probe the node-pty shell helper
-        if: runner.os == 'macOS'
-        run: |
-          echo "SHELL=$SHELL"
-          ls -l /bin/bash || true
-          find node_modules/node-pty -name 'spawn-helper' -exec ls -l {} \; || true
-          node -e "const p=require('node-pty'); const t=p.spawn(process.env.SHELL||'/bin/bash',[],{});
-                   t.onData(d=>{console.log('PTY-DATA', JSON.stringify(d.slice(0,40))); process.exit(0);});
-                   setTimeout(()=>{console.log('PTY-SILENT'); process.exit(0);}, 4000);" || echo "PTY-THREW"
-
       - name: Run Electron end-to-end tests
         if: runner.os != 'Linux'
-        run: npx playwright test e2e/run-button.spec.ts e2e/version-history.spec.ts
+        run: npm run test:e2e
+
       - name: Run Electron end-to-end tests (virtual display)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run test:e2e
@@ -69,7 +63,7 @@ jobs:
       # which holds only what electron-builder can reach from `dependencies`.
       # Building successfully says nothing about starting.
       - name: Smoke-test the packaged application
-        if: false
+        if: runner.os != 'Linux'
         run: npm run smoke
       - name: Smoke-test the packaged application (virtual display)
         if: runner.os == 'Linux'

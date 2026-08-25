@@ -24,41 +24,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-let DIAG_MOUNTS = 0;
-let DIAG_LOADS = 0;
-let DIAG_CLICKS = 0;
-let DIAG_PD = 0;
-let DIAG_PU = 0;
-let DIAG_MD = 0;
-let DIAG_MU = 0;
-let DIAG_TICK = 0;
-let DIAG_HITS: string[] = [];
-let DIAG_GEO = '';
-function diagSample(): void {
-  const btn = document.querySelector('[data-diag-restore]') as HTMLElement | null;
-  if (!btn) { DIAG_GEO = 'no-button'; return; }
-  const r = btn.getBoundingClientRect();
-  const cx = Math.round(r.x + r.width / 2);
-  const cy = Math.round(r.y + r.height / 2);
-  const at = document.elementFromPoint(cx, cy) as HTMLElement | null;
-  const cls = at && typeof at.className === 'string' ? at.className.slice(0, 20) : '';
-  const inView = cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight;
-  DIAG_GEO = `vp=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
-    + ` rect=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)}`
-    + ` centre=${cx},${cy} inView=${inView} at=${at ? at.tagName : 'null'}.${cls}`
-    + ` contains=${at && btn.contains(at) ? 'yes' : 'no'}`;
-}
-if (typeof document !== 'undefined') {
-  document.addEventListener('pointerdown', (e) => {
-    const t = e.target as HTMLElement | null;
-    const btn = document.querySelector('[data-diag-restore]') as HTMLElement | null;
-    const r = btn ? btn.getBoundingClientRect() : null;
-    const where = r ? `btn=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)}` : 'btn=none';
-    DIAG_HITS.push(`@${Math.round(e.clientX)},${Math.round(e.clientY)}->${t ? t.tagName : 'null'}.${t && typeof t.className === 'string' ? t.className.slice(0, 24) : ''} ${where}`);
-    if (DIAG_HITS.length > 6) DIAG_HITS = DIAG_HITS.slice(-6);
-  }, true);
-}
-
 function VersionHistoryPanel({ host }: { host: HostRuntime }) {
   const [entries, setEntries] = useState<JournalEntry[] | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -71,9 +36,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
     setEntries(await window.electronAPI.journal.list(note));
   }, [note]);
 
-  useEffect(() => { DIAG_MOUNTS += 1; }, []);
-  useEffect(() => { const t = setInterval(() => { DIAG_TICK += 1; diagSample(); setStatus((v) => (v === '' ? null : '')); }, 400); return () => clearInterval(t); }, []);
-  useEffect(() => { DIAG_LOADS += 1; setConfirming(null); setStatus(null); void load(); }, [load]);
+  useEffect(() => { setConfirming(null); setStatus(null); void load(); }, [load]);
 
   const restore = async (entry: JournalEntry) => {
     setBusy(entry.id);
@@ -135,7 +98,6 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
         <div className="p-1.5">
           {(entries ?? []).map((entry) => {
             const skipped = entry.state === 'skipped';
-            const diag = `DIAG mounts=${DIAG_MOUNTS} loads=${DIAG_LOADS} clicks=${DIAG_CLICKS} pd=${DIAG_PD} pu=${DIAG_PU} md=${DIAG_MD} mu=${DIAG_MU} tick=${DIAG_TICK} confirming=${String(confirming)} GEO[${DIAG_GEO}] HITS[${DIAG_HITS.join(' | ')}]`;
             const isConfirming = confirming === entry.id;
             const Icon = entry.operation === 'delete' ? Trash2 : Pencil;
             return (
@@ -146,7 +108,6 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                   isConfirming ? 'bg-[var(--surface)]' : 'hover:bg-[var(--surface-hover)]',
                 )}
               >
-                <p className="pointer-events-none absolute left-0 top-0 z-50 text-[6px] opacity-60">{diag}</p>
                 <div className="flex items-baseline gap-2">
                   <Icon className="h-3 w-3 shrink-0 translate-y-0.5 text-[var(--ink-muted)]" aria-hidden />
                   <span
@@ -192,12 +153,7 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                     <Button
                       size="sm"
                       variant="secondary"
-                      data-diag-restore=""
-                      onPointerDown={() => { DIAG_PD += 1; setStatus(null); }}
-                      onPointerUp={() => { DIAG_PU += 1; setStatus(null); }}
-                      onMouseDown={() => { DIAG_MD += 1; setStatus(null); }}
-                      onMouseUp={() => { DIAG_MU += 1; setStatus(null); }}
-                      onClick={() => { DIAG_CLICKS += 1; setStatus(null); setConfirming(entry.id); }}
+                      onClick={() => { setStatus(null); setConfirming(entry.id); }}
                     >
                       <RotateCcw className="h-3 w-3" /> Restore
                     </Button>
