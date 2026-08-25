@@ -34,9 +34,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload the Store package
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: neuron-store-appx
           retention-days: 14
@@ -127,7 +127,7 @@ jobs:
         shell: bash
         run: rm -f "${{ steps.cert.outputs.path }}"
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: neuron-${{ matrix.os }}
           retention-days: 3
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
       # What actually lets someone prove a download is the build CI produced.

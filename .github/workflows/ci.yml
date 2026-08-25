@@ -22,16 +22,23 @@ jobs:
         include:
           - name: Windows
             os: windows-latest
+            wrap: ''
           - name: macOS
             os: macos-latest
+            wrap: ''
+          # Electron needs a display server and the Linux runner has none, so
+          # everything that opens a window runs under a virtual framebuffer.
+          # Without it the failure reads as "Electron crashed" rather than as a
+          # missing display.
           - name: Linux
             os: ubuntu-latest
+            wrap: 'xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24"'
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -44,16 +51,8 @@ jobs:
       - name: Build application
         run: npm run build
 
-      # Electron needs a display server. The GitHub Windows and macOS runners
-      # have one; the Linux runner does not, so the suite is wrapped in a
-      # virtual framebuffer rather than left to fail as "Electron crashed".
       - name: Run Electron end-to-end tests
-        if: runner.os != 'Linux'
-        run: npm run test:e2e
-
-      - name: Run Electron end-to-end tests (virtual display)
-        if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run test:e2e
+        run: ${{ matrix.wrap }} npm run test:e2e
 
       # Launch what a user would actually download.
       #
@@ -63,15 +62,11 @@ jobs:
       # which holds only what electron-builder can reach from `dependencies`.
       # Building successfully says nothing about starting.
       - name: Smoke-test the packaged application
-        if: runner.os != 'Linux'
-        run: npm run smoke
-      - name: Smoke-test the packaged application (virtual display)
-        if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" npm run smoke
+        run: ${{ matrix.wrap }} npm run smoke
 
       - name: Upload end-to-end failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-results-${{ matrix.os }}
           path: test-results/
