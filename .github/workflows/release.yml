@@ -28,7 +28,9 @@ jobs:
           - name: Linux x64
             os: ubuntu-latest
             args: --linux --x64
-          - name: macOS universal
+          # Two architectures, not one universal binary. Calling it universal
+          # described a target electron-builder was never asked to build.
+          - name: macOS x64 + arm64
             os: macos-latest
             args: --mac --x64 --arm64
     runs-on: ${{ matrix.os }}
@@ -90,12 +92,20 @@ jobs:
       # launched the artifact users download.
       # Every platform, not just Windows. The dependency that broke 0.4.3 was
       # missing from all three packages; Windows is simply where it was
-      # reported first. `release/mac` is the x64 bundle -- the arm64 one is
-      # built on the same runner but cannot be executed by it.
+      # reported first.
+      #
+      # Both macOS bundles, because only one of them used to be checked and it
+      # was the wrong one. The old note here claimed the runner could not
+      # execute the arm64 build -- backwards: macos-latest IS Apple Silicon, so
+      # arm64 is the native build and the most downloaded one, while
+      # `release/mac` is the x64 build it runs under Rosetta.
       - name: Smoke-test the packaged application
         if: runner.os == 'Windows'
         run: npm run smoke -- release/win-unpacked
-      - name: Smoke-test the packaged application
+      - name: Smoke-test the packaged application (arm64)
+        if: runner.os == 'macOS'
+        run: npm run smoke -- release/mac-arm64
+      - name: Smoke-test the packaged application (x64)
         if: runner.os == 'macOS'
         run: npm run smoke -- release/mac
       - name: Smoke-test the packaged application
@@ -146,6 +156,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # This job used to need no source at all -- it downloads artifacts and
+      # publishes them. Pruning now runs a script from the repository, so the
+      # repository has to be here. Without it the release publishes and the
+      # prune step alone fails, which is exactly how 0.4.4-beta.3 shipped with
+      # beta.2 still standing.
+      - name: Check out repository
+        uses: actions/checkout@v5
       - name: Download all build artifacts
         uses: actions/download-artifact@v7
         with:
@@ -203,22 +220,13 @@ jobs:
       # Policy: keep only the newest patch per major.minor. After publishing
       # vX.Y.Z, delete any released vX.Y.<lower> (release + its tag). Strictly
       # scoped — never touches a different major.minor or the current tag.
-      - name: Prune superseded patch releases
+      - name: Prune superseded releases
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          tag='${{ github.ref_name }}'
-          ver="${tag#v}"
-          minor="${ver%.*}"
-          this_patch="${ver##*.}"
-          case "$this_patch" in ''|*[!0-9]*) echo "Non-numeric patch in $tag; skipping prune."; exit 0 ;; esac
-          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | while read -r t; do
-            v="${t#v}"
-            [ "${v%.*}" = "$minor" ] || continue
-            p="${v##*.}"
-            case "$p" in ''|*[!0-9]*) continue ;; esac
-            if [ "$t" != "$tag" ] && [ "$p" -lt "$this_patch" ]; then
-              echo "Pruning $t — superseded by $tag"
-              gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
-            fi
-          done
+        # The logic lives in tools/prune-releases.mjs, covered by
+        # tools/prune-releases.test.mjs, because it deletes published releases
+        # and their tags. As inline shell it was both untestable and wrong:
+        # matching on everything before the last dot made "0.4.4-beta" a
+        # different series from "0.4.4", so shipping a finished release pruned
+        # none of its own betas and said it had tidied up.
+        run: node tools/prune-releases.mjs '${{ github.ref_name }}'

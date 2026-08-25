@@ -16,6 +16,36 @@ const packageJson = require('../package.json');
  */
 const base = packageJson.build;
 
+/*
+ * A note on macOS signing, because the obvious "improvement" here breaks the
+ * app and the breakage does not look like signing.
+ *
+ * `mac.identity` is "-", so the finished bundle is ad-hoc signed. Without it
+ * electron-builder signs nothing, Electron's own prebuilt signature survives
+ * claiming resources that packaging has replaced, and every download reports
+ * "Neuron is damaged and can't be opened".
+ *
+ * There is no `entitlements` key here, and that is deliberate. electron-builder
+ * enables the hardened runtime by default on macOS and supplies its own
+ * entitlements to match -- `allow-jit` among them, without which V8 cannot
+ * allocate executable memory.
+ *
+ * An entitlements file REPLACES that default set rather than adding to it.
+ * Pointing this config at a file containing only
+ * `com.apple.security.cs.disable-library-validation` -- the single key the
+ * build warning names -- therefore removed `allow-jit`, and the app died at
+ * startup reporting nothing more useful than "Process failed to launch".
+ *
+ * The build still prints that warning. It is advisory: electron-builder ad-hoc
+ * signs the nested frameworks in the same pass as the app, so there is no Team
+ * ID mismatch for library validation to reject, and the packaged app is
+ * verified and launched on a real macOS runner by tools/smoke-packaged.mjs on
+ * every CI run.
+ *
+ * If the warning is ever acted on, the file has to carry electron-builder's
+ * full default set plus that key, not that key alone.
+ */
+
 const env = process.env.NEURON_BUILD_ENV === 'test' ? 'test' : 'prod';
 const isTest = env === 'test';
 const productName = isTest ? 'Neuron Test' : 'Neuron';

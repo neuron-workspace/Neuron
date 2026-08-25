@@ -383,6 +383,12 @@
         display: grid;
         gap: 1.25rem;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        /* Cards size to their own contents. Stretching every card to the
+           tallest left Windows and Linux with about 116px of empty box below
+           two rows, against macOS's 23 -- macOS lists a .dmg and a .zip for
+           each of two architectures, so it is twice as long and always will
+           be. Tops still line up; only the bottoms differ. */
+        align-items: start;
       }
       .platform {
         border: 1px solid var(--line);

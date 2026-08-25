@@ -10,9 +10,18 @@ All notable changes to Neuron are documented here. The format follows
 > release landing at 0.0.1. The dates and the contents are unchanged; only the
 > numbers moved. Nothing was removed, and no released tag was reused.
 
-## [0.4.4] - 2026-08-25
+## [0.4.4] - 2026-08-26
 
 ### Fixed
+- **Every macOS build so far was unusable.** The app was packaged and never
+  signed, so what shipped kept Electron's own signature claiming resources that
+  packaging had already replaced. macOS rejected it outright with "Neuron is
+  damaged and can't be opened" -- not the warning an unsigned app gets, which
+  Open Anyway clears, but a bundle that genuinely fails `codesign --verify`.
+  Checked inside the published `0.4.4-beta.1` archive: not one sealed bundle in
+  the whole app, helpers and frameworks included. The finished app is now ad-hoc
+  signed, and the smoke test refuses to pass a bundle that does not verify.
+  Affects every macOS download before `0.4.4-beta.3`.
 - **The macOS terminal could not start a shell.** node-pty forks through a
   `spawn-helper` binary, and npm does not reliably preserve its executable bit
   when unpacking the prebuilds. It landed as `0644`, every pty spawn failed with
@@ -56,6 +65,11 @@ All notable changes to Neuron are documented here. The format follows
   - A Windows Sandbox configuration for clean-machine installer testing, which
     catches what neither of the above can: missing OS runtimes and first run on
     a profile that has never seen the app.
+- **A macOS bundle that fails `codesign --verify` now fails the build.** Nothing
+  could have caught the above: Gatekeeper only checks a signature on a file
+  carrying a quarantine attribute, which a locally built app never has, so an
+  unsigned bundle launches perfectly on the machine that built it. Every launch
+  test passed while the artifact was unusable.
 - **Tests now run on Windows, macOS and Linux.** One platform proved the code
   compiled, not that it worked anywhere else, and Neuron leans on node-pty, a
   filesystem watcher, spawned processes, keyboard chords and path handling --
