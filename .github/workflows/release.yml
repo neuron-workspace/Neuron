@@ -213,22 +213,13 @@ jobs:
       # Policy: keep only the newest patch per major.minor. After publishing
       # vX.Y.Z, delete any released vX.Y.<lower> (release + its tag). Strictly
       # scoped — never touches a different major.minor or the current tag.
-      - name: Prune superseded patch releases
+      - name: Prune superseded releases
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          tag='${{ github.ref_name }}'
-          ver="${tag#v}"
-          minor="${ver%.*}"
-          this_patch="${ver##*.}"
-          case "$this_patch" in ''|*[!0-9]*) echo "Non-numeric patch in $tag; skipping prune."; exit 0 ;; esac
-          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | while read -r t; do
-            v="${t#v}"
-            [ "${v%.*}" = "$minor" ] || continue
-            p="${v##*.}"
-            case "$p" in ''|*[!0-9]*) continue ;; esac
-            if [ "$t" != "$tag" ] && [ "$p" -lt "$this_patch" ]; then
-              echo "Pruning $t — superseded by $tag"
-              gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
-            fi
-          done
+        # The logic lives in tools/prune-releases.mjs, covered by
+        # tools/prune-releases.test.mjs, because it deletes published releases
+        # and their tags. As inline shell it was both untestable and wrong:
+        # matching on everything before the last dot made "0.4.4-beta" a
+        # different series from "0.4.4", so shipping a finished release pruned
+        # none of its own betas and said it had tidied up.
+        run: node tools/prune-releases.mjs '${{ github.ref_name }}'
