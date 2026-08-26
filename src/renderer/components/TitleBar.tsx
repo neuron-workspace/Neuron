@@ -10,6 +10,8 @@ import {
 } from './ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
+import { isMac, platform, usesCustomWindowControls } from '../lib/platform';
+import { formatChord } from '../lib/keybindings';
 
 interface TitleBarProps {
   repository: RepositoryInfo | null;
@@ -25,6 +27,7 @@ interface TitleBarProps {
   onToggleBottomPanel: () => void;
   onOpenMarketplace: () => void;
   onOpenCommandPalette: () => void;
+  onOpenSettings: () => void;
   onSwitchRepo: (dir: string) => void;
   onOpenRepo: () => void;
   onCreateRepo: () => void;
@@ -72,21 +75,51 @@ export default function TitleBar(props: TitleBarProps) {
   const { repository, recents, activeNote } = props;
   const [maximized, setMaximized] = useState(false);
 
+  // The platform never changes under a running window, so this is set once and
+  // left alone. It is what scopes the Windows maximise workaround and the macOS
+  // chrome rules in index.css, rather than either leaking onto the other.
   useEffect(() => {
-    const handleMaximized = (isMax: boolean) => {
-      setMaximized(isMax);
-      if (isMax) {
-        document.body.classList.add('window-maximized');
-      } else {
-        document.body.classList.remove('window-maximized');
+    document.body.classList.add(`platform-${platform}`);
+  }, []);
+
+  // Only clicks arrive here. The macOS menu shows Cmd+F and Cmd+K without
+  // registering them, so those keystrokes still reach CodeMirror's find and the
+  // renderer's own chord dispatcher exactly as they did before.
+  useEffect(() => {
+    return window.electronAPI?.windowControls.onMenuCommand((command) => {
+      if (command === 'palette') props.onOpenCommandPalette();
+      else if (command === 'settings') props.onOpenSettings();
+      else if (command === 'find') {
+        // Find belongs to whichever editor has focus, so hand it the keystroke
+        // rather than reaching into its internals from out here.
+        document.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', metaKey: true, bubbles: true, cancelable: true }),
+        );
       }
+    });
+  }, [props.onOpenCommandPalette, props.onOpenSettings]);
+
+  useEffect(() => {
+    const apply = (state: { inset: boolean; fullScreen: boolean }) => {
+      setMaximized(state.inset);
+      document.body.classList.toggle('window-maximized', state.inset);
+      document.body.classList.toggle('window-fullscreen', state.fullScreen);
     };
-    window.electronAPI?.windowControls.isMaximized().then(handleMaximized);
-    return window.electronAPI?.windowControls.onMaximizedChanged(handleMaximized);
+    window.electronAPI?.windowControls.chromeState().then(apply);
+    return window.electronAPI?.windowControls.onChromeStateChanged(apply);
   }, []);
 
   return (
-    <header className={cn("titlebar flex items-center justify-between border-b pl-2 pr-0", maximized && "maximized")}>
+    <header
+      className={cn(
+        'titlebar flex items-center justify-between border-b pr-0',
+        // The traffic lights are drawn by macOS in the window's top-left, over
+        // whatever is there. Without this the logo and sidebar toggle end up
+        // underneath them.
+        isMac ? 'pl-[78px]' : 'pl-2',
+        maximized && 'maximized',
+      )}
+    >
       <div className="flex min-w-0 items-center gap-1">
         <span className="neuron-logo-bg ml-1 grid h-6 w-6 shrink-0 place-items-center rounded border border-[var(--divider)]">
           <SparkIcon className="neuron-logo h-3.5 w-3.5" />
@@ -141,7 +174,9 @@ export default function TitleBar(props: TitleBarProps) {
           >
             <Search className="h-3.5 w-3.5" />
             <span className="hidden md:inline">Search & commands</span>
-            <kbd className="hidden rounded bg-[var(--surface)] px-1 font-mono text-[10px] md:inline">⌘K</kbd>
+            {/* Was hard-coded to the Mac glyph, so Windows and Linux were told to
+              press a key their keyboards do not have. */}
+          <kbd className="hidden rounded bg-[var(--surface)] px-1 font-mono text-[10px] md:inline">{formatChord('mod+k')}</kbd>
           </button>
           <IconButton label="Plugins & integrations" onClick={props.onOpenMarketplace}>
             <Blocks className="h-4 w-4" />
@@ -187,21 +222,29 @@ export default function TitleBar(props: TitleBarProps) {
           </DropdownMenu>
         </div>
 
-        <div className="ml-1 flex items-center">
-          <button className="window-control" aria-label="Minimize" onClick={() => window.electronAPI?.windowControls.minimize()}>
-            <Minus className="h-4 w-4" />
-          </button>
-          <button
-            className="window-control"
-            aria-label={maximized ? 'Restore' : 'Maximize'}
-            onClick={async () => setMaximized(await window.electronAPI.windowControls.toggleMaximize())}
-          >
-            {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3 w-3" />}
-          </button>
-          <button className="window-control danger" aria-label="Close" onClick={() => window.electronAPI?.windowControls.close()}>
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        {/* macOS draws its own traffic lights and they are the real controls.
+            Painting a second set beside them would be three buttons that look
+            native, are not, and sit next to the ones that are. */}
+        {usesCustomWindowControls && (
+          <div className="ml-1 flex items-center">
+            <button className="window-control" aria-label="Minimize" onClick={() => window.electronAPI?.windowControls.minimize()}>
+              <Minus className="h-4 w-4" />
+            </button>
+            <button
+              className="window-control"
+              // "Restore" alone collided with the Restore buttons in the panel
+              // rail and in version history, so a by-name lookup could match a
+              // window control and resize the window instead.
+              aria-label={maximized ? 'Restore window' : 'Maximize window'}
+              onClick={async () => setMaximized(await window.electronAPI.windowControls.toggleMaximize())}
+            >
+              {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3 w-3" />}
+            </button>
+            <button className="window-control danger" aria-label="Close" onClick={() => window.electronAPI?.windowControls.close()}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

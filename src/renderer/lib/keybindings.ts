@@ -1,5 +1,6 @@
 // Configurable keyboard shortcuts. A binding is a normalized chord string like
 // "mod+k" (mod = Ctrl on Windows/Linux, Cmd on macOS), "mod+shift+o", "mod+`".
+import { isMac } from './platform';
 
 export interface KeyAction {
   id: string;
@@ -23,7 +24,9 @@ export type Bindings = Record<string, string>;
 
 export const DEFAULT_BINDINGS: Bindings = Object.fromEntries(KEY_ACTIONS.map((a) => [a.id, a.default]));
 
-const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+// `isMac` comes from lib/platform, which asks main. It was read from
+// `navigator.platform` here, which is deprecated and which browsers freeze at a
+// fixed string — a shortcut label reading Ctrl on a Mac is worse than none.
 
 /** Build a normalized chord from a keyboard event, or null for modifier-only presses. */
 export function eventToChord(e: KeyboardEvent): string | null {

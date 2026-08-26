@@ -10,6 +10,7 @@ import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
+import { installApplicationMenu } from './menu';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -187,7 +188,21 @@ function createWindow() {
     minHeight: 560,
     title: 'Neuron',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    frame: false, // custom in-app title bar
+    // Window chrome is the one part of this app that must not be the same
+    // everywhere.
+    //
+    // Windows and Linux keep the frameless window and the title bar Neuron
+    // draws itself. macOS keeps its real frame: `hiddenInset` hides the title
+    // bar but leaves the traffic lights, so the window can be moved, zoomed and
+    // taken full screen the way every other Mac app can. Going frameless there
+    // removed all of that and replaced it with buttons that only look like the
+    // system's.
+    //
+    // trafficLightPosition centres the lights in a 40px bar; the default sits
+    // them for a taller one and they end up clipped against the top edge.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 13 } }
+      : { frame: false }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -197,7 +212,12 @@ function createWindow() {
     backgroundColor: '#11181c',
   });
 
-  mainWindow.setMenuBarVisibility(false);
+  // Windows and Linux hide Electron's default menu bar entirely; the in-app
+  // title bar is the menu there. On macOS the menu bar is not part of the
+  // window at all, so hiding it would be meaningless and the real application
+  // menu is installed instead.
+  if (process.platform !== 'darwin') mainWindow.setMenuBarVisibility(false);
+  installApplicationMenu(() => mainWindow);
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   if (isDev) {
@@ -206,11 +226,22 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
+  // What the renderer is really being told here is "compensate for the maximise
+  // bleed", not "the window is maximised".
+  //
+  // A frameless Windows window overhangs the screen by 8px when maximised, and
+  // the title bar pads itself to match. Full screen does not overhang, but
+  // entering it from a maximised window fires neither `unmaximize` nor
+  // `maximize` and `isMaximized()` keeps reporting true — so the padding stayed
+  // and showed up as a strip of empty chrome across the top. Reported as a gap
+  // in full screen on Windows, and it was.
   const emitMaxState = () => {
-    if (mainWindow) mainWindow.webContents.send('window:maximized-changed', mainWindow.isMaximized());
+    if (mainWindow) mainWindow.webContents.send('window:chrome-state-changed', chromeState(mainWindow));
   };
   mainWindow.on('maximize', emitMaxState);
   mainWindow.on('unmaximize', emitMaxState);
+  mainWindow.on('enter-full-screen', emitMaxState);
+  mainWindow.on('leave-full-screen', emitMaxState);
 
   mainWindow.on('closed', () => {
     killAllPtys();
@@ -228,6 +259,25 @@ function createWindow() {
 // IPC — window controls
 // ==========================================================================
 
+/**
+ * Whether the renderer should pad its title bar for the maximise bleed.
+ *
+ * Only a frameless window overhangs the screen when maximised, and only when it
+ * is maximised rather than full screen. macOS keeps its native frame, so it
+ * never bleeds and never needs the inset; a full-screen window does not bleed
+ * either, and treating it as maximised is what put a strip of empty chrome
+ * across the top of the window on Windows.
+ */
+function needsMaximizeInset(window: BrowserWindow): boolean {
+  if (process.platform === 'darwin') return false;
+  return window.isMaximized() && !window.isFullScreen();
+}
+
+/** What the renderer needs to know to draw its chrome correctly. */
+function chromeState(window: BrowserWindow) {
+  return { inset: needsMaximizeInset(window), fullScreen: window.isFullScreen() };
+}
+
 ipcMain.handle('window:minimize', () => mainWindow?.minimize());
 ipcMain.handle('window:toggle-maximize', () => {
   if (!mainWindow) return false;
@@ -236,7 +286,7 @@ ipcMain.handle('window:toggle-maximize', () => {
   return mainWindow.isMaximized();
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
-ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle('window:chrome-state', () => (mainWindow ? chromeState(mainWindow) : { inset: false, fullScreen: false }));
 
 // ==========================================================================
 // IPC — settings (generic key/value; used for plugin config + state)

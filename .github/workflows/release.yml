@@ -123,6 +123,15 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      # Rule 10.1.1.11: "app must not use default or placeholder images".
+      # electron-builder substitutes its own sample tiles when build/appx is
+      # absent, which is how 0.4.4-beta.3 reached certification carrying the
+      # Electron atom. Check the package itself, not the inputs to it.
+      - name: Verify the Store package carries Neuron's tiles
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node tools/appx-assets.test.mjs "$(ls release/*.appx | head -1)"
+
       - name: Upload the Store package
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v6
