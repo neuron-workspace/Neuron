@@ -10,6 +10,39 @@ All notable changes to Neuron are documented here. The format follows
 > release landing at 0.0.1. The dates and the contents are unchanged; only the
 > numbers moved. Nothing was removed, and no released tag was reused.
 
+## [0.4.5] - 2026-08-27
+
+### Fixed
+- **The Store package carried Electron's tile icons.** Certification rejected
+  0.4.4-beta.3 under rule 10.1.1.11, "app must not use default or placeholder
+  images". electron-builder looks for an `appx` directory under buildResources
+  and, finding none, substitutes its own sample images -- so every Store package
+  ever built here shipped the Electron atom, and nothing in the build said so.
+  A missing directory does not fail anything; it changes what comes out. Neuron
+  now ships 60 of its own tiles, covering every square, wide, StoreLogo, scale
+  and target-size variant, drawn from the app mark rather than resized from it.
+- **The window had no native behaviour on macOS.** Neuron ran frameless
+  everywhere, which on macOS meant no traffic lights, no native full screen, no
+  application menu -- and therefore no Cmd+Q, Cmd+W or Cmd+, at all. macOS now
+  keeps its real frame and gets a proper application menu; Windows and Linux are
+  unchanged.
+- **A gap across the top of a full-screen window on Windows.** The title bar
+  padded itself by 8px to compensate for the overhang a maximised frameless
+  window has. Entering full screen fires neither maximise nor unmaximise and
+  `isMaximized()` keeps answering true, so the padding stayed -- over a full
+  screen window, which does not overhang.
+- **Hiding the terminal panel no longer ends your shell**, and a shell that
+  cannot start says why rather than showing an empty pane.
+- Shortcut hints showed the Mac glyph on every platform, telling Windows and
+  Linux users to press a key their keyboards do not have.
+
+### Added
+- **A Store package that fails the build rather than certification.** The
+  release workflow inspects the built `.appx` before uploading it and rejects
+  any tile that is missing, the wrong size, or byte-identical to one of
+  electron-builder's samples -- checked by content hash, because the 44x44
+  sample is a correctly sized 44x44 PNG that no dimension check would catch.
+
 ## [0.4.4] - 2026-08-26
 
 ### Fixed
