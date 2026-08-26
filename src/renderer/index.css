@@ -145,20 +145,43 @@ input:focus-visible,
 .workspace-grid { display: grid; grid-template-rows: 40px minmax(0, 1fr) 24px; height: 100vh; width: 100vw; }
 .workspace-grid.no-status { grid-template-rows: 40px minmax(0, 1fr); }
 
-/* Maximized window fixes for Windows 8px bleed */
-body.window-maximized .workspace-grid {
+/* Compensation for the 8px a frameless Windows window overhangs the screen by
+   when maximised. It is scoped to Windows because it is a workaround for a
+   Windows behaviour: macOS keeps its native frame and never bleeds, so applying
+   this there would simply indent the title bar for no reason.
+
+   Main decides when this class applies and deliberately withholds it in full
+   screen, which does not overhang either — leaving it on there is what put a
+   strip of empty chrome across the top of the window. */
+body.platform-win32.window-maximized .workspace-grid {
   grid-template-rows: 48px minmax(0, 1fr) 24px;
 }
-body.window-maximized .workspace-grid.no-status {
+body.platform-win32.window-maximized .workspace-grid.no-status {
   grid-template-rows: 48px minmax(0, 1fr);
 }
-body.window-maximized .titlebar {
+body.platform-win32.window-maximized .titlebar {
   padding-top: 8px;
   height: 48px;
 }
-body.window-maximized .window-control {
+body.platform-win32.window-maximized .window-control {
   height: 40px;
   margin-top: 8px;
+}
+
+/* macOS shell chrome.
+
+   The title bar is a drag surface under `titleBarStyle: hiddenInset`, and the
+   system font is what makes chrome read as part of the OS rather than as a web
+   page pretending to be one. Only the chrome: editor and preview surfaces keep
+   the typography they were designed with. */
+body.platform-darwin .titlebar,
+body.platform-darwin .status-bar {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+/* In full screen macOS takes the traffic lights away, so the space reserved for
+   them is dead. The renderer removes the padding when it hears about it. */
+body.platform-darwin.window-fullscreen .titlebar {
+  padding-left: 0.5rem;
 }
 .status-bar { height: 24px; background: var(--nav); border-top: 1px solid var(--divider); }
 

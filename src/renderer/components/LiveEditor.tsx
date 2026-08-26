@@ -554,8 +554,8 @@ export default function LiveEditor({ value, onChange, colorScheme = 'dark', tagS
     document.fonts?.addEventListener('loadingdone', onFontsDone);
 
     let cleanup: (() => void) | undefined;
-    if (window.electronAPI?.windowControls?.onMaximizedChanged) {
-      cleanup = window.electronAPI.windowControls.onMaximizedChanged(() => {
+    if (window.electronAPI?.windowControls?.onChromeStateChanged) {
+      cleanup = window.electronAPI.windowControls.onChromeStateChanged(() => {
         setTimeout(handleResize, 120); // wait for CSS transitions to settle
       });
     }

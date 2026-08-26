@@ -26,8 +26,8 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
     };
     window.addEventListener('resize', handleResize);
     let cleanup: (() => void) | undefined;
-    if (window.electronAPI?.windowControls?.onMaximizedChanged) {
-      cleanup = window.electronAPI.windowControls.onMaximizedChanged(() => {
+    if (window.electronAPI?.windowControls?.onChromeStateChanged) {
+      cleanup = window.electronAPI.windowControls.onChromeStateChanged(() => {
         setTimeout(handleResize, 120); // wait for CSS grid transitions to settle
       });
     }
