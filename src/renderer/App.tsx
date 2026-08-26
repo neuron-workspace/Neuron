@@ -680,6 +680,7 @@ export default function App() {
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
             onOpenMarketplace={() => setView('plugins')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
+            onOpenSettings={() => setView('settings')}
             onSwitchRepo={switchRepository}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}

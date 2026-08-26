@@ -4,6 +4,12 @@ interface RepositoryInfo { path: string; name: string; cloud: boolean }
 interface AiMessage { role: 'user' | 'assistant'; content: string }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // The renderer used to sniff this from `navigator.platform`, which is
+  // deprecated and describes the browser engine rather than the host. This is
+  // the value main actually runs on. A plain string, not the `process` object:
+  // exposing that across the bridge would hand the renderer far more than the
+  // one fact it needs.
+  platform: process.platform,
   // Notes
   listNotes: () => ipcRenderer.invoke('notes:list'),
   readNote: (relativePath: string) => ipcRenderer.invoke('notes:read', relativePath),
@@ -45,11 +51,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
     close: () => ipcRenderer.invoke('window:close'),
-    isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
-    onMaximizedChanged: (callback: (maximized: boolean) => void) => {
-      const listener = (_event: unknown, maximized: boolean) => callback(maximized);
-      ipcRenderer.on('window:maximized-changed', listener);
-      return () => ipcRenderer.removeListener('window:maximized-changed', listener);
+    // Was a bare "is it maximised" boolean. That was not enough to draw the
+    // chrome correctly: full screen needs different treatment from maximised on
+    // both platforms, and conflating them is what left a gap across the top of
+    // a full-screen window on Windows.
+    // Menu items the macOS application menu owns but the renderer performs.
+    // Clicking "Search & Commands…" has to reach the palette; the keystroke
+    // itself is deliberately left to the page, so this carries only clicks.
+    onMenuCommand: (callback: (command: string) => void) => {
+      const listener = (_event: unknown, command: string) => callback(command);
+      ipcRenderer.on('menu:command', listener);
+      return () => ipcRenderer.removeListener('menu:command', listener);
+    },
+    chromeState: () => ipcRenderer.invoke('window:chrome-state'),
+    onChromeStateChanged: (callback: (state: { inset: boolean; fullScreen: boolean }) => void) => {
+      const listener = (_event: unknown, state: { inset: boolean; fullScreen: boolean }) => callback(state);
+      ipcRenderer.on('window:chrome-state-changed', listener);
+      return () => ipcRenderer.removeListener('window:chrome-state-changed', listener);
     },
   },
 
