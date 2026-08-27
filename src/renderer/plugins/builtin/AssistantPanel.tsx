@@ -4,6 +4,7 @@ import type { HostRuntime } from '../types';
 import { Button } from '../../components/ui/button';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { cn } from '../../lib/utils';
+import ReplyMarkdown from './ReplyMarkdown';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -175,7 +176,11 @@ export default function AssistantPanel({ host, pluginId, provider, defaultModel,
                     : 'mr-6 border border-[var(--divider)] bg-[var(--surface)] text-[var(--ink-secondary)]',
               )}
             >
-              <pre className="whitespace-pre-wrap break-words font-sans">{message.content}</pre>
+              {message.role === 'user' || message.error ? (
+                <pre className="whitespace-pre-wrap break-words font-sans">{message.content}</pre>
+              ) : (
+                <ReplyMarkdown source={message.content} />
+              )}
 
               {message.role === 'assistant' && !message.error && (
                 <div className="mt-2.5 flex flex-col gap-2 border-t border-[var(--divider)] pt-2 shrink-0">

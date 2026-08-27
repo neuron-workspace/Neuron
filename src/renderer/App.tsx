@@ -428,6 +428,27 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * Tick or untick a task from the rendered view.
+   *
+   * The Markdown is the source of truth, so this rewrites the one line rather
+   * than holding the tick in renderer state: reading mode has no editor behind
+   * it, and a tick that lived only on screen would vanish on reload.
+   */
+  const handleToggleTask = useCallback((lineIndex: number, checked: boolean) => {
+    const lines = noteContent.split('\n');
+    const line = lines[lineIndex];
+    if (line === undefined) return;
+
+    const next = checked
+      ? line.replace(/\[( | )\]/, '[x]')
+      : line.replace(/\[[xX]\]/, '[ ]');
+    if (next === line) return;
+
+    lines[lineIndex] = next;
+    handleContentChange(lines.join('\n'));
+  }, [noteContent, handleContentChange]);
+
   const handleLineClick = useCallback((lineIndex: number) => {
     const targetLine = lineIndex + 1;
     let mode = selectedNote ? editorModes[selectedNote] || 'reading' : 'reading';
@@ -551,14 +572,14 @@ export default function App() {
       </div>
       <div className="flex h-full min-w-0 flex-1 flex-col">
         <div className="pane-header flex items-center border-b px-4 text-[11px] font-medium text-[var(--ink-muted)]">Preview</div>
-        <div className="min-h-0 flex-1"><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></div>
+        <div className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></div>
       </div>
     </div>
   ) : (
     <Tabs defaultValue="source" className="flex h-full w-full flex-col">
       <div className="border-b divider-color px-3 py-2"><TabsList><TabsTrigger value="source">Source</TabsTrigger><TabsTrigger value="preview">Preview</TabsTrigger></TabsList></div>
       <TabsContent value="source" className="min-h-0 flex-1"><Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></TabsContent>
-      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></TabsContent>
+      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></TabsContent>
     </Tabs>
   );
 
@@ -614,7 +635,7 @@ export default function App() {
             {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('raw')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
             {editorMode === 'raw' && rawSplit}
             {editorMode === 'reading' && (
-              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview mdxContent={noteContent} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
+              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
             )}
           </>
         )}

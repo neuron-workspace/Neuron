@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, Link2, FileWarning } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
 import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
@@ -8,6 +8,21 @@ import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
+
+// Links read as one object rather than as underlined text: an icon says where
+// it goes before you read the label, and the pill gives it an edge to click.
+const LINK_PILL =
+  'inline-flex max-w-full items-baseline gap-1 rounded border border-[var(--divider)] bg-[var(--surface)] '
+  + 'px-1.5 py-0.5 align-baseline font-[inherit] text-[0.95em] font-medium leading-tight text-[var(--md-link)] '
+  + 'no-underline transition-colors hover:border-[var(--accent)] hover:bg-[var(--surface-hover)] '
+  + 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] cursor-pointer';
+
+// A link to a note that is not there. Same shape, so a broken link is obviously
+// the same kind of thing as a working one, but muted and struck through.
+const BROKEN_PILL =
+  'inline-flex max-w-full items-baseline gap-1 rounded border border-dashed border-[var(--divider)] '
+  + 'bg-transparent px-1.5 py-0.5 align-baseline text-[0.95em] font-medium leading-tight '
+  + 'text-[var(--ink-muted)] line-through cursor-default';
 
 interface MDXPreviewProps {
   mdxContent: string;
@@ -18,6 +33,12 @@ interface MDXPreviewProps {
   notes?: string[];
   onWikiLinkClick?: (note: string) => void;
   defaultPropertiesCollapsed?: boolean;
+  /**
+   * Tick or untick the task on this source line. Without it the checkboxes
+   * render read-only, which is what reading mode used to do -- a checkbox you
+   * cannot click is a picture of a checkbox.
+   */
+  onToggleTask?: (lineIndex: number, checked: boolean) => void;
 }
 
 interface MDXParseError extends Error {
@@ -70,7 +91,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
+export default function MDXPreview({ mdxContent, onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
   const [renderedContent, setRenderedContent] = useState<React.ReactNode[]>([]);
   const [compilationError, setCompilationError] = useState<{
     message: string;
@@ -466,7 +487,9 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
               <input
                 type="checkbox"
                 checked={checked}
-                readOnly
+                readOnly={!onToggleTask}
+                onChange={(event) => onToggleTask?.(index + fmLineOffset, event.target.checked)}
+                onClick={(event) => event.stopPropagation()}
                 aria-label={checked ? 'Completed task' : 'Incomplete task'}
                 className="task-checkbox mt-1"
               />
@@ -511,7 +534,9 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
           <input
             type="checkbox"
             checked={checked}
-            readOnly
+            readOnly={!onToggleTask}
+            onChange={(event) => onToggleTask?.(index + fmLineOffset, event.target.checked)}
+            onClick={(event) => event.stopPropagation()}
             aria-label={checked ? 'Completed task' : 'Incomplete task'}
             className="task-checkbox mt-1"
           />
@@ -539,7 +564,9 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
     let key = 0;
 
     // Matches bold, italic, code, and wikilinks [[Note Name]]
-    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[\[.*?\]\]|<[bB][rR]\s*\/?>)/g;
+    // [[wikilink]] must come before [text](url) or the wikilink's own
+    // brackets match the inline-link pattern first.
+    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[\[.*?\]\]|\[[^\]]*\]\([^)\s]+\)|<[bB][rR]\s*\/?>)/g;
     const items = currentText.split(regex);
 
     for (const item of items) {
@@ -559,26 +586,77 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
               type="button"
               aria-label={`Open note ${resolved}`}
               title={`Open ${resolved}`}
-              className="cursor-pointer border-0 bg-transparent p-0 align-baseline font-[inherit] font-medium text-[var(--md-link)] underline decoration-solid underline-offset-4"
+              className={LINK_PILL}
               onClick={(event) => {
                 event.stopPropagation();
                 onWikiLinkClick?.(resolved);
               }}
               onDoubleClick={(event) => event.stopPropagation()}
             >
+              <Link2 className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
               {linkTarget}
             </button>
           ) : (
             <span
               key={key++}
               title={`No note found for "${linkTarget}"`}
-              className="cursor-default font-medium text-[var(--md-text)] decoration-dotted underline-offset-4"
-              style={{ textDecorationLine: 'underline line-through' }}
+              className={BROKEN_PILL}
             >
+              <FileWarning className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
               {linkTarget}<span className="sr-only"> (missing note)</span>
             </span>
           )
         );
+      } else if (/^\[[^\]]*\]\([^)\s]+\)$/.test(item)) {
+        // A standard Markdown link. These used to fall through to the plain-text
+        // branch and render as literal `[label](url)` -- the syntax on screen
+        // rather than the link it describes.
+        const split = /^\[([^\]]*)\]\(([^)\s]+)\)$/.exec(item)!;
+        const label = split[1] || split[2];
+        const href = split[2];
+        const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
+
+        if (external) {
+          parts.push(
+            // A real anchor: main already routes http(s) navigation to the
+            // system browser through its own guard, so this needs no bridge of
+            // its own and cannot move the app frame.
+            <a
+              key={key++}
+              href={href}
+              title={href}
+              className={LINK_PILL}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
+              <ArrowUpRight className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+              {label}
+            </a>,
+          );
+        } else {
+          const resolved = resolveWikiLink(wikiNotes, href.replace(/\.(md|mdx)$/i, ''));
+          parts.push(
+            resolved ? (
+              <button
+                key={key++}
+                type="button"
+                aria-label={`Open note ${resolved}`}
+                title={`Open ${resolved}`}
+                className={LINK_PILL}
+                onClick={(event) => { event.stopPropagation(); onWikiLinkClick?.(resolved); }}
+                onDoubleClick={(event) => event.stopPropagation()}
+              >
+                <Link2 className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                {label}
+              </button>
+            ) : (
+              <span key={key++} title={`No note found for "${href}"`} className={BROKEN_PILL}>
+                <FileWarning className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                {label}<span className="sr-only"> (missing note)</span>
+              </span>
+            ),
+          );
+        }
       } else if (/<[bB][rR]\s*\/?>/.test(item)) {
         parts.push(<br key={key++} />);
       } else {

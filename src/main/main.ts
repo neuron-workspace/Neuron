@@ -495,7 +495,13 @@ function walkRepoFiles(repo: string): string[] {
   const files: string[] = [];
   const scanDir = (dir: string) => {
     for (const item of fs.readdirSync(dir)) {
-      if (item.startsWith('.')) continue;
+      // Dot-entries are noise -- .git, .obsidian, editor droppings -- with one
+      // exception. `.neuron` is the workspace's own configuration, and
+      // `.neuron/layout.json` is the one file in there a person would want to
+      // edit by hand. The watcher already made this exception; the lister did
+      // not, so the file changed under a watcher that reported it and a list
+      // that had never heard of it.
+      if (item.startsWith('.') && !(dir === repo && item === '.neuron')) continue;
       const fullPath = path.join(dir, item);
       const stat = fs.statSync(fullPath);
       if (stat.isDirectory()) scanDir(fullPath);
