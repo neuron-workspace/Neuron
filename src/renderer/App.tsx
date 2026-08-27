@@ -716,6 +716,7 @@ export default function App() {
                   <Panel id="sidebar" order={1} defaultSize={18} minSize={12} maxSize={40} className="min-w-0">
                     <Sidebar
                       notes={filteredNotes}
+                      notesData={notesData}
                       selectedNote={selectedNote}
                       onSelectNote={handleSelectNote}
                       onDeleteNote={handleDeleteNote}
