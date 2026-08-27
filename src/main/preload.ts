@@ -46,6 +46,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Workspace templates — a template is a folder under `examples`, copied into
+  // wherever the user chooses.
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    create: (templateId: string) => ipcRenderer.invoke('templates:create', templateId),
+  },
+
   // Window controls
   windowControls: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

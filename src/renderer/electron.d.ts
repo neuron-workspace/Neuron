@@ -4,6 +4,19 @@ export interface RepositoryInfo {
   cloud: boolean;
 }
 
+/**
+ * A workspace template: a folder that gets copied into wherever the user picks.
+ * Adding one means dropping a directory into `examples/` — there is no registry
+ * to keep in step.
+ */
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  noteCount: number;
+}
+
 export interface AiMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -91,6 +104,12 @@ export interface ElectronAPI {
     remove: (dir: string) => Promise<{ success: boolean; clearedActive: boolean }>;
     reveal: (dir: string) => Promise<{ success: boolean }>;
     onChanged: (callback: (repo: RepositoryInfo) => void) => () => void;
+  };
+
+  templates: {
+    list: () => Promise<WorkspaceTemplate[]>;
+    /** null if the user cancelled the folder picker. */
+    create: (templateId: string) => Promise<{ repository?: RepositoryInfo; error?: string } | null>;
   };
 
   // Window controls
