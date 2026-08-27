@@ -240,7 +240,16 @@ export default function App() {
       setNotes(fileList);
       setOpenTabs((current) => current.filter((note) => fileList.includes(note)));
       setSelectedNote((current) => current && fileList.includes(current) ? current : null);
-      const data = await Promise.all(fileList.map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })));
+      // Configuration is reachable in the explorer but is not knowledge: it is
+      // not a graph node, it has no wiki-links, its words are not yours, and it
+      // should not turn up in a search for something you wrote. `notes` keeps
+      // it so it can be opened; `notesData` -- what the graph, tags, search and
+      // link index are all built from -- does not.
+      const data = await Promise.all(
+        fileList
+          .filter((path) => !path.startsWith('.neuron/'))
+          .map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })),
+      );
       setNotesData(data);
       const allTags = new Set<string>();
       data.forEach((note) => {
