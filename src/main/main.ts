@@ -11,6 +11,7 @@ import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htm
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
+import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -113,12 +114,13 @@ function ensureDefaultRepo(): void {
     settings.repositories.recent = [...settings.repositories.recent, demo];
   }
 
-  // Auto-open the demo on a genuine first run (no valid active repo yet).
-  if (!settings.seededDemo) {
-    const hasValidCurrent = !!settings.repositories.current && isDir(settings.repositories.current);
-    if (!hasValidCurrent && demoExists) settings.repositories.current = demo;
-    settings.seededDemo = true;
-  }
+  // A first run no longer silently adopts the bundled demo. It used to, which
+  // meant the app opened writing into its own installation directory -- inside
+  // Program Files for a packaged build, and inside the git checkout for a
+  // developer, where every edit showed up as a change to the repository. The
+  // workspace is the user's, so they choose where it lives; leaving `current`
+  // unset is what makes the chooser appear.
+  if (!settings.seededDemo) settings.seededDemo = true;
 
   writeSettings(settings);
 }
@@ -382,6 +384,48 @@ ipcMain.handle('repository:create', async () => {
   seedWelcomeNote(dir);
   setActiveRepo(dir);
   return repoInfo(dir);
+});
+
+ipcMain.handle('templates:list', () =>
+  listTemplates(templatesRoot(app.isPackaged, process.resourcesPath)));
+
+/**
+ * Copy a template into a folder the user picks, then open it.
+ *
+ * The copy is the point: the bundled template stays pristine and read-only
+ * inside the installation, and the user gets their own writable notes wherever
+ * they keep their files. Opening the bundled folder directly is what put the
+ * app's own installation directory on the writing end of every edit.
+ */
+ipcMain.handle('templates:create', async (_event, templateId: string) => {
+  if (!mainWindow) return null;
+
+  const templates = listTemplates(templatesRoot(app.isPackaged, process.resourcesPath));
+  const template = templates.find((t) => t.id === templateId);
+  if (!template) return { error: `No template called "${templateId}".` };
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: `Where should the ${template.name} workspace go?`,
+    buttonLabel: 'Create here',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const dir = result.filePaths[0];
+  // Refuse rather than merge. Copying a template over someone's existing notes
+  // is not something they can undo from in here.
+  if (hasNotes(dir)) {
+    return { error: 'That folder already contains notes. Choose an empty folder, or open it directly instead.' };
+  }
+
+  try {
+    copyTemplate(template.source, dir);
+  } catch (err) {
+    return { error: `Could not create the workspace: ${(err as Error).message}` };
+  }
+
+  setActiveRepo(dir);
+  return { repository: repoInfo(dir) };
 });
 
 ipcMain.handle('repository:open', async () => {
