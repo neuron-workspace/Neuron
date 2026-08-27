@@ -16,8 +16,14 @@ const THEME = {
 /**
  * Interactive PTY terminal. Spawns a shell in the active repo via the main
  * process and streams I/O over the terminal IPC bridge.
+ *
+ * `sessionKey` names the terminal. Two panels with different keys are two
+ * terminals with two shells; the same key across a remount is the same terminal,
+ * scrollback and all. It matters because a workspace layout can declare a
+ * terminal panel while the terminal plugin is also open — without distinct keys
+ * those two panes shared one shell and echoed each other.
  */
-export default function XtermTerminal() {
+export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?: string } = {}) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,7 +72,7 @@ export default function XtermTerminal() {
       if (ptyId != null) void window.electronAPI.terminal.write(ptyId, data);
     });
 
-    void window.electronAPI.terminal.spawn({ cols: term.cols, rows: term.rows }).then(async (id) => {
+    const attach = () => void window.electronAPI.terminal.spawn({ cols: term.cols, rows: term.rows, key: sessionKey }).then(async (id) => {
       if (disposed) return;
       // Fetch and replay BEFORE claiming the id. `onData` ignores anything that
       // is not for `ptyId`, so until it is set the live stream is dropped --
@@ -88,6 +94,22 @@ export default function XtermTerminal() {
       term.write(`\x1b[31m${String(error?.message ?? error)}\x1b[0m\r\n`);
     });
 
+    attach();
+
+    // Opening a different workspace ends the shell, because a shell cannot
+    // change the directory it was started in. Start a fresh one rooted in the
+    // workspace that was just opened, rather than leaving the panel showing a
+    // dead prompt from the previous one.
+    const offRepo = window.electronAPI.repository.onChanged(() => {
+      if (disposed) return;
+      ptyId = null;
+      unregister?.();
+      unregister = null;
+      if (readyTimer) { clearTimeout(readyTimer); readyTimer = null; }
+      term.reset();
+      attach();
+    });
+
     const ro = new ResizeObserver(() => {
       try { fit.fit(); } catch { /* hidden */ }
       if (ptyId != null) void window.electronAPI.terminal.resize(ptyId, term.cols, term.rows);
@@ -99,12 +121,16 @@ export default function XtermTerminal() {
       if (readyTimer) clearTimeout(readyTimer);
       unregister?.();
       ro.disconnect();
+      offRepo();
       offData();
       offExit();
       inputDisp.dispose();
       term.dispose();
     };
-  }, []);
+    // Keyed on the session: changing which terminal this pane shows tears the
+    // old one down and attaches to the new one, rather than silently keeping
+    // the previous shell on screen under a new name.
+  }, [sessionKey]);
 
   return <div ref={containerRef} className="h-full w-full overflow-hidden p-1" style={{ background: THEME.background }} />;
 }

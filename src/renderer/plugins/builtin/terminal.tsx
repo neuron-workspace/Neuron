@@ -17,7 +17,10 @@ const terminal: PluginModule = {
       title: 'Terminal',
       icon: TerminalSquare,
       location: 'bottom',
-      render: () => <XtermTerminal />,
+      // The panel rail's terminal. Named, so it keeps its own shell and
+      // scrollback rather than sharing with a terminal a workspace layout
+      // happens to declare.
+      render: () => <XtermTerminal sessionKey="panel" />,
     });
   },
 };
