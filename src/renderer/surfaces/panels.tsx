@@ -142,8 +142,13 @@ function TreePanel({ surface }: PanelContext) {
   );
 }
 
-function TerminalPanel() {
-  return <XtermTerminal />;
+function TerminalPanel({ spec }: PanelContext) {
+  // A terminal declared by the workspace layout is its own terminal, separate
+  // from the one in the panel rail. Keying it by the layout's own id keeps a
+  // layout with two terminal panes honest -- two panes, two shells -- and stops
+  // it sharing a shell with the plugin panel, which made both echo each other.
+  const id = typeof spec.id === 'string' ? spec.id : 'layout';
+  return <XtermTerminal sessionKey={`layout:${id}`} />;
 }
 
 function PreviewPanel({ spec, surface }: PanelContext) {
