@@ -72,14 +72,42 @@ test('ticking a task checkbox writes it to disk', async ({ page, workspace }) =>
     .toBeGreaterThan(0);
 });
 
-test('search narrows the explorer to matching notes', async ({ page }) => {
+test('search matches note names', async ({ page }) => {
   await page.getByRole('button', { name: 'Search notes' }).first().click();
   const search = page.locator('section[aria-label="Search notes"]');
   await expect(search).toBeVisible();
 
   await search.getByRole('textbox').first().fill('wikilinks');
-  await expect(search.locator('.note-row', { hasText: 'wikilinks' })).toHaveCount(1);
-  await expect(search.locator('.note-row', { hasText: 'markdown-basics' })).toHaveCount(0);
+  await expect(search.getByText('wikilinks', { exact: false }).first()).toBeVisible();
+  await expect(search.getByText('markdown-basics', { exact: false })).toHaveCount(0);
+});
+
+test('search looks inside notes, not just at their names', async ({ page }) => {
+  await page.getByRole('button', { name: 'Search notes' }).first().click();
+  const search = page.locator('section[aria-label="Search notes"]');
+  await expect(search).toBeVisible();
+
+  // "sandbox" appears in the body of Dashboard.mdx and in no filename at all,
+  // so before search read note contents this returned nothing.
+  await search.getByRole('textbox').first().fill('sandbox');
+  await expect(search.getByText('Dashboard.mdx', { exact: false }).first()).toBeVisible();
+
+  // And it shows the line it matched, so a body hit is not a bare filename.
+  await expect(search.getByText(/sandbox/i).first()).toBeVisible();
+});
+
+test('a second search word narrows rather than widens', async ({ page }) => {
+  await page.getByRole('button', { name: 'Search notes' }).first().click();
+  const search = page.locator('section[aria-label="Search notes"]');
+  const box = search.getByRole('textbox').first();
+
+  await box.fill('htmx');
+  const broad = await search.locator('button', { hasText: /\.(md|mdx|html)/ }).count();
+  expect(broad).toBeGreaterThan(1);
+
+  await box.fill('htmx sandbox');
+  const narrow = await search.locator('button', { hasText: /\.(md|mdx|html)/ }).count();
+  expect(narrow).toBeLessThan(broad);
 });
 
 test('changing the theme preset applies it to the document', async ({ page }) => {

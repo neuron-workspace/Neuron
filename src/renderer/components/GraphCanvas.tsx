@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { searchPaths } from '../lib/search';
 
 export interface NoteData {
   path: string;
@@ -23,6 +24,12 @@ interface GraphCanvasProps {
   notesData: NoteData[];
   onSelectNote: (note: string) => void;
   selectedNote: string | null;
+  /**
+   * When set, the graph becomes a lens on the search rather than a filtered
+   * list: matches stay lit and everything else recedes, so you can see where in
+   * the workspace the answer lives.
+   */
+  searchQuery?: string;
   /** Optional empty-state hint. */
   emptyHint?: string;
 }
@@ -67,7 +74,7 @@ function radiusFor(degree: number): number {
  * connected notes stay a step lighter, and the rest of the graph dims but stays
  * visible so the wider structure is never lost.
  */
-export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emptyHint }: GraphCanvasProps) {
+export default function GraphCanvas({ notesData, onSelectNote, selectedNote, searchQuery, emptyHint }: GraphCanvasProps) {
   const { nodes, links, extent } = useMemo(() => {
     // Links first, because placement depends on them. Previously nodes were
     // laid out in array order and the links were derived afterwards, so two
@@ -287,6 +294,13 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
   // its label (others reveal on hover via the .graph-node:hover rule).
   const showAllLabels = nodes.length <= 120;
 
+  // The same ranking the sidebar uses, so the two never disagree about what
+  // matched.
+  const matched = useMemo(() => {
+    const q = (searchQuery ?? '').trim();
+    return q ? new Set(searchPaths(notesData, q)) : null;
+  }, [notesData, searchQuery]);
+
   type Tier = 'active' | 'near' | 'far' | 'plain';
   const tierOf = (id: string): Tier => {
     if (!hasFocus) return 'plain';
@@ -298,6 +312,12 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
   // graph is the shape of the whole workspace, not just the current
   // neighbourhood. Opacity now only takes the far tier a shade back.
   const nodeOpacity: Record<Tier, number> = { active: 1, near: 1, far: 0.9, plain: 0.95 };
+
+  // A search is the one case where fading IS the message: the question being
+  // asked is "where is this", and a node that does not answer it should get out
+  // of the way rather than stay equally legible.
+  const opacityFor = (id: string, tier: Tier): number =>
+    (matched && !matched.has(id) ? 0.12 : nodeOpacity[tier]);
 
   return (
     <div className="relative h-full w-full select-none">
@@ -361,7 +381,7 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, emp
               role="button"
               tabIndex={0}
               aria-label={`Open ${node.label}`}
-              style={{ opacity: nodeOpacity[tier] }}
+              style={{ opacity: opacityFor(node.id, tier) }}
               onClick={() => onSelectNote(node.id)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
