@@ -12,6 +12,7 @@ import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
+import { configureUpdater } from './updater';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -1021,14 +1022,45 @@ initHtmxViews({
   },
 });
 
+/**
+ * Whether this build carries a real code signature.
+ *
+ * Only macOS is asked, and only because Squirrel.Mac refuses to install into an
+ * app it cannot validate — an ad-hoc signature, which is what these builds have,
+ * is not one. `CodeResources` exists for any signed bundle; a Developer ID adds
+ * a provisioning profile, but its absence is not what decides this.
+ */
+function hasCodeSignature(): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    // Contents/MacOS/<exe> -> Contents
+    const contents = path.dirname(path.dirname(app.getPath('exe')));
+    return fs.existsSync(path.join(contents, '_CodeSignature', 'CodeResources'))
+      && fs.existsSync(path.join(contents, 'embedded.provisionprofile'));
+  } catch {
+    return false;
+  }
+}
+
 app.on('ready', () => {
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
   createWindow();
-  // GitHub-backed auto-update for NSIS builds. Store builds
-  // (process.windowsStore) update through the Store, so skip them; dev skips too.
-  if (app.isPackaged && app.getName() === 'neuron' && !(process as NodeJS.Process & { windowsStore?: boolean }).windowsStore) {
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('Update check failed:', err));
+  // GitHub-backed in-app updates. What counts as an update, and whether to look
+  // at all, lives in ./updater so the rules are testable without Electron --
+  // every branch there is a case where getting it wrong either offers an update
+  // that cannot install or silently offers none.
+  if (app.getName() === 'neuron') {
+    const decision = configureUpdater(autoUpdater, {
+      platform: process.platform,
+      packaged: app.isPackaged,
+      windowsStore: !!(process as NodeJS.Process & { windowsStore?: boolean }).windowsStore,
+      version: app.getVersion(),
+      signed: hasCodeSignature(),
+    });
+    if (decision.check) {
+      autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('Update check failed:', err));
+    }
   }
 });
 app.on('window-all-closed', () => {

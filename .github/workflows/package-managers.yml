@@ -1,0 +1,188 @@
+name: Publish to package managers
+
+# Deliberately a separate workflow from release.yml, triggered by the release
+# rather than by the tag.
+#
+# release.yml builds, smoke-tests, attests and publishes. Nothing here rebuilds
+# anything: every package below points at the artifacts that workflow already
+# published, with the checksums of those exact files. Putting this in the same
+# workflow would have meant either duplicating the build or blocking the release
+# on a third-party registry being reachable.
+#
+# `workflow_dispatch` exists because these steps are idempotent: re-running one
+# after fixing a token republishes the same version from the same release rather
+# than needing a new tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish, e.g. v0.4.5'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    name: Build manifests
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # Prereleases reach GitHub and anyone who opted into them in the app.
+      # They do not reach package managers, which is where people who opted
+      # into nothing install from. Every release so far has been a prerelease,
+      # so this gate is the normal case rather than the exception.
+      - name: Decide whether this release publishes
+        id: gate
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$TAG is a prerelease; package managers publish stable releases only."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate manifests
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: node tools/release-manifests.mjs "$TAG" --out release/manifests
+
+      - name: Upload manifests
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: package-manifests
+          retention-days: 14
+          if-no-files-found: error
+          # The downloaded installers are only here to be hashed.
+          path: |
+            release/manifests/winget/**
+            release/manifests/chocolatey/**
+            release/manifests/neuron.rb
+
+  winget:
+    name: WinGet
+    needs: manifests
+    if: needs.manifests.outputs.publish == 'true'
+    runs-on: windows-latest
+    steps:
+      # Decided in a script, not in an `if:` expression. Whether a step's own
+      # env is in scope for its own condition is exactly the kind of thing that
+      # quietly evaluates false -- release.yml carries the same note for the
+      # signing certificate, for the same reason.
+      - name: Is a WinGet token configured?
+        id: token
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "WINGET_TOKEN is not set; skipping WinGet. See docs/distribution.md."
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Opens a pull request against microsoft/winget-pkgs. It is a no-op when
+      # the version is already there, so a re-run does not open a second one.
+      - name: Submit to winget-pkgs
+        if: steps.token.outputs.have == 'true'
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: ShivamKhetan.Neuron
+          version: ${{ needs.manifests.outputs.version }}
+          installers-regex: '-win-x64\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
+  chocolatey:
+    name: Chocolatey
+    needs: manifests
+    if: needs.manifests.outputs.publish == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: package-manifests
+          path: manifests
+
+      - name: Pack and push
+        shell: pwsh
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+          VERSION: ${{ needs.manifests.outputs.version }}
+        run: |
+          if (-not $env:CHOCO_API_KEY) {
+            Write-Host "CHOCO_API_KEY is not set; skipping Chocolatey. See docs/distribution.md."
+            exit 0
+          }
+          Set-Location manifests/chocolatey
+          choco pack
+
+          # Idempotent: Chocolatey rejects a version that already exists, and
+          # that rejection is the expected outcome of a re-run rather than a
+          # failure worth failing the workflow over.
+          $push = choco push "neuron.$env:VERSION.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY 2>&1 | Out-String
+          Write-Host $push
+          if ($LASTEXITCODE -ne 0) {
+            if ($push -match 'already exists|version.*exists') {
+              Write-Host "Version $env:VERSION is already on Chocolatey; nothing to do."
+              exit 0
+            }
+            exit $LASTEXITCODE
+          }
+
+  homebrew:
+    name: Homebrew
+    needs: manifests
+    if: needs.manifests.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: package-manifests
+          path: manifests
+
+      - name: Update the tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.manifests.outputs.version }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping Homebrew. See docs/distribution.md."
+            exit 0
+          fi
+
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/shiv-khetan/homebrew-neuron.git" tap
+          mkdir -p tap/Casks
+          cp manifests/neuron.rb tap/Casks/neuron.rb
+
+          cd tap
+          git config user.name 'Shivam Khetan'
+          git config user.email 'shivkhetan18@gmail.com'
+
+          # Idempotent by construction: if the cask already says this version,
+          # there is nothing to commit and the run ends quietly.
+          if git diff --quiet; then
+            echo "The tap already has $VERSION; nothing to do."
+            exit 0
+          fi
+          git add Casks/neuron.rb
+          git commit -m "neuron ${VERSION}"
+          git push
