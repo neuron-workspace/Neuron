@@ -1,11 +1,22 @@
-name: Deploy download page
+name: Deploy redirects
 
+# The website moved to neuron-workspace/neuron-workspace.github.io and serves
+# from the organisation root. This deploys five redirect stubs in its place.
+#
+# They exist because the Settings page of every already-installed build links to
+# https://neuron-workspace.github.io/Neuron/privacy.html and .../license.html.
+# Those binaries cannot be changed, so the path has to keep resolving.
+#
+# It uploads redirects/ rather than docs/ on purpose. The old workflow uploaded
+# the whole of docs/, which is why plans/, roadmap/ and design/ were being served
+# publicly as raw Markdown; pointing Pages at a directory that holds nothing but
+# stubs means a file cannot be published here by being dropped in the wrong
+# folder.
 on:
   push:
     branches: [main]
     paths:
-      - "docs/**"
-      - "build/icon.svg"
+      - "redirects/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -29,12 +40,10 @@ jobs:
         uses: actions/checkout@v5
       - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Add canonical app icon
-        run: cp build/icon.svg docs/icon.svg
-      - name: Upload site
+      - name: Upload redirects
         uses: actions/upload-pages-artifact@v4
         with:
-          path: docs
+          path: redirects
       - name: Deploy Pages
         id: deployment
         uses: actions/deploy-pages@v4

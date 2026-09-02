@@ -23,12 +23,12 @@ function AboutSection() {
   const LINKS = [
     {
       label: 'Privacy policy',
-      url: 'https://neuron-workspace.github.io/Neuron/privacy.html',
+      url: 'https://neuron-workspace.github.io/privacy.html',
       hint: 'What stays on your device, and what leaves only when you ask',
     },
     {
       label: 'Licence \u2014 Apache 2.0',
-      url: 'https://neuron-workspace.github.io/Neuron/license.html',
+      url: 'https://neuron-workspace.github.io/license.html',
       hint: 'Neuron is open source; these are the terms it is offered under',
     },
     {
