@@ -36,7 +36,7 @@ check('stable releases publish', () => {
 
 check('prereleases do NOT publish', () => {
   // Package managers are where people who did not opt into anything install
-  // from. Every release so far has been a prerelease, so getting this backwards
+  // from. Everything before 0.4.5 was a prerelease, so getting this backwards
   // would have shipped a beta to everyone.
   assert.equal(shouldPublish('v0.4.5-beta.1'), false);
   assert.equal(shouldPublish('v1.0.0-rc.2'), false);

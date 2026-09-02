@@ -12,9 +12,17 @@ name: Publish to package managers
 # `workflow_dispatch` exists because these steps are idempotent: re-running one
 # after fixing a token republishes the same version from the same release rather
 # than needing a new tag.
+#
+# NOT `on: release: [published]`, which is the obvious trigger and silently does
+# nothing here. release.yml creates the release with GITHUB_TOKEN, and GitHub
+# suppresses workflow triggers from events a GITHUB_TOKEN caused -- the rule that
+# stops workflows recursing. The event fires and no run starts, with nothing in
+# any log to say so; v0.4.5 published to GitHub and this workflow had still never
+# run once. `workflow_run` is not suppressed.
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ['Release desktop builds']
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -38,23 +46,43 @@ jobs:
           node-version: 22
           cache: npm
 
-      # Prereleases reach GitHub and anyone who opted into them in the app.
-      # They do not reach package managers, which is where people who opted
-      # into nothing install from. Every release so far has been a prerelease,
-      # so this gate is the normal case rather than the exception.
+      # Three ways this can decline to publish, and the log says which:
+      #
+      #   - the release build did not succeed. `workflow_run` fires on every
+      #     completion, failures included, and packaging artifacts from a run
+      #     that failed is worse than packaging nothing.
+      #   - it was not a tag build at all. `workflow_run` also fires for
+      #     release.yml running on a branch.
+      #   - it is a prerelease. Package managers are where people who opted into
+      #     nothing install from.
+      #
+      # On a tag push `workflow_run.head_branch` is the tag name, which is the
+      # only place the tag survives into this workflow.
       - name: Decide whether this release publishes
         id: gate
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+          UPSTREAM: ${{ github.event.workflow_run.conclusion }}
         run: |
-          VERSION="${TAG#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [[ "$VERSION" == *-* ]]; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "$TAG is a prerelease; package managers publish stable releases only."
+          publish=false
+          version=
+
+          if [ -n "$UPSTREAM" ] && [ "$UPSTREAM" != "success" ]; then
+            echo "The release build concluded '$UPSTREAM'; not publishing packages from it."
+          elif ! printf '%s' "$TAG" | grep -qE '^v[0-9]'; then
+            echo "'$TAG' is not a release tag; nothing to publish."
           else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            version="${TAG#v}"
+            case "$version" in
+              *-*) echo "$TAG is a prerelease; package managers publish stable releases only." ;;
+              *)   publish=true ;;
+            esac
           fi
+
+          # Written once each. Appending the same key twice and trusting the
+          # later line to win is the sort of thing that works until it does not.
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Generate manifests
         if: steps.gate.outputs.publish == 'true'
