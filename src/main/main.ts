@@ -13,6 +13,7 @@ import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJour
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import { configureUpdater } from './updater';
+import { createDiagnosticLogger, errorDetails } from './diagnostic-logger';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -22,6 +23,44 @@ import * as pty from 'node-pty';
 
 let mainWindow: BrowserWindow | null = null;
 let watcher: chokidar.FSWatcher | null = null;
+const diagnostics = createDiagnosticLogger(app.getPath('logs'));
+let handlingFatalError = false;
+
+process.on('uncaughtException', async (error) => {
+  if (handlingFatalError) return;
+  handlingFatalError = true;
+  const details = errorDetails(error);
+  await diagnostics.write({ level: 'error', category: 'main.uncaught-exception', ...details });
+  // Main-process state is unknown after an uncaught exception. Continuing could
+  // corrupt an open workspace, so record it first, explain where the log is,
+  // then terminate instead of silently swallowing the failure.
+  dialog.showErrorBox(
+    'Neuron encountered a fatal error',
+    `Neuron must close to protect your workspace. Diagnostic details were saved locally in:\n\n${diagnostics.filePath}`,
+  );
+  app.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const details = errorDetails(reason);
+  void diagnostics.write({ level: 'error', category: 'main.unhandled-rejection', ...details });
+});
+
+app.on('render-process-gone', (_event, contents, details) => {
+  void diagnostics.write({
+    level: 'error',
+    category: 'renderer.gone',
+    message: `reason=${details.reason}; exitCode=${details.exitCode}; url=${contents.getURL()}`,
+  });
+});
+
+app.on('child-process-gone', (_event, details) => {
+  void diagnostics.write({
+    level: 'error',
+    category: 'child-process.gone',
+    message: `type=${details.type}; reason=${details.reason}; exitCode=${details.exitCode}; name=${details.name ?? 'unknown'}`,
+  });
+});
 
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
 // canvases, folder mini-apps (neuron.app + neuron.app.json), the internal shell
@@ -916,29 +955,26 @@ ipcMain.handle(
 );
 
 // ==========================================================================
-// IPC — error ledger (.agents/errors.json)
+// IPC — renderer-reported errors join the same local diagnostic log.
 // ==========================================================================
 
 ipcMain.handle(
   'notes:log-error',
   async (_event, errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) => {
-    try {
-      const errorFile = path.join(process.cwd(), '.agents', 'errors.json');
-      let errors: unknown[] = [];
-      if (fs.existsSync(errorFile)) {
-        const content = fs.readFileSync(errorFile, 'utf-8').trim();
-        if (content) errors = JSON.parse(content);
-      }
-      errors.push({ timestamp: new Date().toISOString(), ...errorData });
-      fs.writeFileSync(errorFile, JSON.stringify(errors, null, 2), 'utf-8');
-      return { success: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('Failed to log error to ledger:', err);
-      return { success: false, error: message };
-    }
+    const success = await diagnostics.write({
+      level: 'error',
+      category: `renderer.${errorData.phase || 'unknown'}`,
+      message: errorData.error_message,
+      stack: errorData.stack_trace,
+    });
+    return success ? { success: true } : { success: false, error: 'Could not write diagnostic log' };
   },
 );
+
+ipcMain.handle('diagnostics:open-logs', async () => {
+  const error = await shell.openPath(diagnostics.directory);
+  return error ? { success: false, error } : { success: true };
+});
 
 // ==========================================================================
 // Security — harden every web-contents, especially the in-app browser
@@ -947,6 +983,22 @@ ipcMain.handle(
 // ==========================================================================
 
 app.on('web-contents-created', (_event, contents) => {
+  contents.on('preload-error', (_preloadEvent, preloadPath, error) => {
+    void diagnostics.write({
+      level: 'error',
+      category: 'renderer.preload-error',
+      message: `Preload failed: ${preloadPath}; ${error.message}`,
+      stack: error.stack,
+    });
+  });
+  contents.on('unresponsive', () => {
+    void diagnostics.write({
+      level: 'warn',
+      category: 'renderer.unresponsive',
+      message: `Renderer became unresponsive; url=${contents.getURL()}`,
+    });
+  });
+
   // 1. Force-safe options on any <webview> before it attaches: no preload, no
   //    Node, context isolation + sandbox on. (Electron security checklist #17.)
   contents.on('will-attach-webview', (_e, webPreferences) => {
@@ -1043,6 +1095,12 @@ function hasCodeSignature(): boolean {
 }
 
 app.on('ready', () => {
+  void diagnostics.startSession({
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+  });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
   createWindow();

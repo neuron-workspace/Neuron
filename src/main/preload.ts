@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getNotesDirectory: () => ipcRenderer.invoke('notes:get-dir'),
   logError: (errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) =>
     ipcRenderer.invoke('notes:log-error', errorData),
+  diagnostics: {
+    openLogs: () => ipcRenderer.invoke('diagnostics:open-logs'),
+  },
   onNotesChanged: (callback: (event: 'add' | 'change' | 'unlink', path: string) => void) => {
     const listener = (_event: unknown, type: 'add' | 'change' | 'unlink', path: string) => callback(type, path);
     ipcRenderer.on('notes:changed', listener);
