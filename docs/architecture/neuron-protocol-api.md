@@ -62,7 +62,7 @@ surface. B remains the explicit fail-closed result if the browser gate fails.
 | `src/main/preload.ts` | None beyond returning a transport-produced URL/partition through `htmxViews.open`. | The narrow open/approve/close/reset IPC surface. No view preload or `ipcRenderer` bridge is introduced. |
 | `src/renderer/surfaces/HtmxViewSurface.tsx` | Comments and the URL received from main mention loopback. | Approval UI, isolated `<webview>`, per-view partition, crash isolation, close/revoke, and reload-on-save. Opening a fresh session on relevant file changes is transport-neutral. |
 | `tools/htmx-views.test.mjs` | Live `http` server, cookies, Host spoofing, raw TCP port, HTTP fetch helper, HTTP document URL. | Path/manifest/session/escaping tests and most route behavior assertions. These become dispatcher contract tests; separate adapter tests cover HTTP and protocol. |
-| `docs/htmx-views.md`, `docs/custom-views.md`, `skills/neuron-mini-apps/SKILL.md` | Loopback, cookie, and root-absolute `/api/v1/...` authoring guidance. | Threat model, capability model, view formats, semantic API concepts, and local-first authoring model. |
+| `docs/htmx-views.md`, `docs/custom-views.md`, [`neuron-skills`](https://github.com/neuron-workspace/neuron-skills) | Loopback, cookie, and root-absolute `/api/v1/...` authoring guidance. | Threat model, capability model, view formats, semantic API concepts, and local-first authoring model. |
 | Demo `.nhtml`, `.ndash`, `neuron.app`, templates | Root-absolute `/api/v1/...` and `fetch('/api/v1' + p)`. | The three required view kinds and their real read/write scenarios. They are the migration fixtures. |
 | `tools/copy-htmx.mjs`, `package.json` | The runtime is copied beside the main bundle so the HTTP server can read it. | Offline packaging remains correct. `dist/**/*` places the copied runtime in the ASAR; `asarUnpack` is intentionally limited to `node-pty` and `sql.js`, and `extraResources` covers examples/icon rather than htmx. The target asset registry points to the known packaged runtime; no URL becomes a filesystem path and no new unpack rule is needed. |
 
@@ -568,7 +568,7 @@ Each phase is independently reviewable and retains one dispatcher.
    No route lands without schema, cap, path, limit, JSON, HTML, and error tests.
 6. **Migrate first-party authoring material.** Modify demo `.nhtml`, `.ndash`,
    `neuron.app`, `.neuron/templates`, relevant manifests, `docs/htmx-views.md`,
-   `docs/custom-views.md`, and `skills/neuron-mini-apps/SKILL.md` to use
+   `docs/custom-views.md`, and [`neuron-skills`](https://github.com/neuron-workspace/neuron-skills) to use
    `./api/v1/...`. Never rewrite user workspaces.
 7. **Ship protocol; dev-flag loopback.** Production builds hard-disable the
    listener. Development may opt into loopback for adapter tests/manual
