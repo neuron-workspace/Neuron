@@ -508,7 +508,7 @@
           <a href="./changelog.html">Changelog</a>
         </nav>
         <div class="nav-right">
-          <a class="ghost" data-repository href="https://github.com/shiv-khetan/Neuron">GitHub</a>
+          <a class="ghost" data-repository href="https://github.com/neuron-workspace/Neuron">GitHub</a>
           <a class="btn btn-sm" href="#download">Download</a>
         </div>
       </div>
@@ -533,7 +533,7 @@
               <span id="hero-dl-label">Download Neuron</span>
               <span class="go" aria-hidden="true">→</span>
             </a>
-            <a class="btn btn-line" data-repository href="https://github.com/shiv-khetan/Neuron">View source</a>
+            <a class="btn btn-line" data-repository href="https://github.com/neuron-workspace/Neuron">View source</a>
           </div>
           <p class="hero-note rise rise-4">Free forever. No telemetry, no sign-in, no cloud round-trip.</p>
 
@@ -724,7 +724,7 @@
           </div>
           <pre><span class="c"># Provenance: proves which workflow built it</span>
 gh attestation verify Neuron-0.4.3-win-x64.exe \
-  --repo shiv-khetan/Neuron
+  --repo neuron-workspace/Neuron
 
 <span class="c"># Checksums: proves the bytes are unchanged</span>
 sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
@@ -736,9 +736,9 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
       <div class="wrap foot-in">
         <span>Neuron · Apache-2.0</span>
         <nav class="foot-links" aria-label="Footer">
-          <a data-repository href="https://github.com/shiv-khetan/Neuron">Source</a>
-          <a data-issues href="https://github.com/shiv-khetan/Neuron/issues">Issues</a>
-          <a data-releases href="https://github.com/shiv-khetan/Neuron/releases">Releases</a>
+          <a data-repository href="https://github.com/neuron-workspace/Neuron">Source</a>
+          <a data-issues href="https://github.com/neuron-workspace/Neuron/issues">Issues</a>
+          <a data-releases href="https://github.com/neuron-workspace/Neuron/releases">Releases</a>
           <a href="./changelog.html">Changelog</a>
           <a href="./installing.html">Install help</a>
           <a href="./privacy.html">Privacy</a>
@@ -759,8 +759,8 @@ sha256sum -c SHA256SUMS.txt --ignore-missing</pre>
         (/^[A-Za-z0-9._-]{1,100}$/.test(value ?? '') ? value : fallback);
 
       const owner = location.hostname.endsWith('.github.io')
-        ? safeName(location.hostname.split('.')[0], 'shiv-khetan')
-        : 'shiv-khetan';
+        ? safeName(location.hostname.split('.')[0], 'neuron-workspace')
+        : 'neuron-workspace';
       const repository = safeName(location.pathname.split('/').filter(Boolean)[0], 'Neuron');
       const base = `https://github.com/${owner}/${repository}`;
 

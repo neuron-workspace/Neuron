@@ -110,7 +110,7 @@ export function buildMacApplicationMenu(getWindow: () => BrowserWindow | null): 
       submenu: [
         {
           label: 'Neuron on GitHub',
-          click: () => { void shell.openExternal('https://github.com/shiv-khetan/Neuron'); },
+          click: () => { void shell.openExternal('https://github.com/neuron-workspace/Neuron'); },
         },
       ],
     },

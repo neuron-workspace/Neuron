@@ -9,7 +9,7 @@ body:
       value: |
         Thanks for suggesting an improvement. Describe the workflow and outcome you need rather than only a proposed implementation.
 
-        **Do not report security vulnerabilities here.** Use [GitHub private vulnerability reporting](https://github.com/shiv-khetan/Neuron/security/advisories/new) instead.
+        **Do not report security vulnerabilities here.** Use [GitHub private vulnerability reporting](https://github.com/neuron-workspace/Neuron/security/advisories/new) instead.
   - type: textarea
     id: problem
     attributes:

@@ -10,7 +10,7 @@ All notable changes to Neuron are documented here. The format follows
 > release landing at 0.0.1. The dates and the contents are unchanged; only the
 > numbers moved. Nothing was removed, and no released tag was reused.
 
-## [0.4.5] - 2026-08-27
+## [0.4.5] - 2026-09-02
 
 ### Fixed
 - **The Store package carried Electron's tile icons.** Certification rejected
@@ -35,6 +35,9 @@ All notable changes to Neuron are documented here. The format follows
   cannot start says why rather than showing an empty pane.
 - Shortcut hints showed the Mac glyph on every platform, telling Windows and
   Linux users to press a key their keyboards do not have.
+- **Two terminals shared one shell.** Shells were keyed by window, so opening a
+  second terminal attached it to the first one's process: typing in either fed
+  the same shell, and clearing the screen left the scrollback behind.
 
 ### Added
 - **A Store package that fails the build rather than certification.** The
@@ -42,6 +45,30 @@ All notable changes to Neuron are documented here. The format follows
   any tile that is missing, the wrong size, or byte-identical to one of
   electron-builder's samples -- checked by content hash, because the 44x44
   sample is a correctly sized 44x44 PNG that no dimension check would catch.
+- **Search looks inside notes.** It matched paths alone, so a word you knew you
+  had written was unfindable unless it happened to be in the filename. Results
+  now rank a name match above a body match, cap the contribution of sheer
+  repetition, and show the line each hit came from.
+- **A first run that asks where your notes should live** instead of silently
+  adopting a bundled example folder, with templates to start from.
+- **Links, task checkboxes and images render in preview.** Ticking a checkbox
+  writes the change back to the Markdown file; a link to a note that does not
+  exist is marked as broken rather than rendered as though it worked.
+- **Neuron updates itself.** Builds check GitHub Releases and install updates in
+  place, verified against the sha512 electron-builder publishes -- which does not
+  depend on code signing, so unsigned builds are covered too. A prerelease build
+  accepts prereleases; a stable one does not. Store builds defer to the Store,
+  and macOS waits for a Developer ID rather than downloading updates Squirrel
+  will refuse to install.
+- **Install from WinGet, Chocolatey or Homebrew.** A workflow publishes each
+  release's existing artifacts and their checksums to all three, so no package
+  manager can describe a build that was never released. Prereleases do not
+  publish.
+
+### Changed
+- **Neuron now lives at `github.com/neuron-workspace/Neuron`.** The project moved
+  from a personal account to its own organisation. GitHub redirects the old URLs,
+  and already-installed builds keep updating.
 
 ## [0.4.4] - 2026-08-26
 
@@ -83,7 +110,7 @@ All notable changes to Neuron are documented here. The format follows
   `node_modules`, so it resolved in development and in the whole test suite,
   but electron-builder packages only what it can reach from `dependencies` and
   so it was absent from the shipped application. Reported as
-  [#6](https://github.com/shiv-khetan/Neuron/issues/6).
+  [#6](https://github.com/neuron-workspace/Neuron/issues/6).
 
 ### Added
 - **Three layers of protection against shipping a build that cannot run.** The
@@ -130,7 +157,7 @@ All notable changes to Neuron are documented here. The format follows
 - **Closable shell panels**, with a restore control so closing is never
   one-way, and a floating workspace graph that recentres on the open note.
 - **Build provenance and SHA-256 checksums** on every release. Verify a
-  download with `gh attestation verify <file> --repo shiv-khetan/Neuron`.
+  download with `gh attestation verify <file> --repo neuron-workspace/Neuron`.
 
 ### Fixed
 - **A view's relative API calls never worked.** A view document is served at

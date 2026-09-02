@@ -105,7 +105,7 @@ jobs:
         if: steps.token.outputs.have == 'true'
         uses: vedantmgoyal9/winget-releaser@main
         with:
-          identifier: ShivamKhetan.Neuron
+          identifier: NeuronWorkspace.Neuron
           version: ${{ needs.manifests.outputs.version }}
           installers-regex: '-win-x64\.exe$'
           token: ${{ secrets.WINGET_TOKEN }}
@@ -169,7 +169,7 @@ jobs:
           fi
 
           git clone --depth 1 \
-            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/shiv-khetan/homebrew-neuron.git" tap
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/neuron-workspace/homebrew-neuron.git" tap
           mkdir -p tap/Casks
           cp manifests/neuron.rb tap/Casks/neuron.rb
 
@@ -179,10 +179,15 @@ jobs:
 
           # Idempotent by construction: if the cask already says this version,
           # there is nothing to commit and the run ends quietly.
-          if git diff --quiet; then
+          #
+          # Staged first, and compared against the index rather than the working
+          # tree. On the very first publish Casks/neuron.rb is untracked, and an
+          # unstaged `git diff` reports no change for a file git has never seen --
+          # which would have skipped the push that creates the cask.
+          git add Casks/neuron.rb
+          if git diff --cached --quiet; then
             echo "The tap already has $VERSION; nothing to do."
             exit 0
           fi
-          git add Casks/neuron.rb
           git commit -m "neuron ${VERSION}"
           git push

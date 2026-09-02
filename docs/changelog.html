@@ -219,8 +219,8 @@
       const safeName = (value, fallback) =>
         (/^[A-Za-z0-9._-]{1,100}$/.test(value ?? '') ? value : fallback);
       const owner = location.hostname.endsWith('.github.io')
-        ? safeName(location.hostname.split('.')[0], 'shiv-khetan')
-        : 'shiv-khetan';
+        ? safeName(location.hostname.split('.')[0], 'neuron-workspace')
+        : 'neuron-workspace';
       const repository = safeName(location.pathname.split('/').filter(Boolean)[0], 'Neuron');
       const base = `https://github.com/${owner}/${repository}`;
       const rawUrl = `https://raw.githubusercontent.com/${owner}/${repository}/main/CHANGELOG.md`;

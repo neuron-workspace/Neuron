@@ -58,7 +58,7 @@ async function runPage(releases) {
   vm.runInNewContext(script, {
     document,
     fetch,
-    location: { hostname: 'shiv-khetan.github.io', pathname: '/Neuron/' },
+    location: { hostname: 'neuron-workspace.github.io', pathname: '/Neuron/' },
     navigator: { userAgent: 'test' },
     URLSearchParams,
   });
@@ -83,7 +83,7 @@ const olderPrerelease = { ...prerelease, tag_name: 'v0.4.4-beta.1', published_at
 // A repository containing only prereleases must still take the success path.
 {
   const { elements, requestedUrl } = await runPage([prerelease, olderPrerelease]);
-  assert.equal(requestedUrl, 'https://api.github.com/repos/shiv-khetan/Neuron/releases?per_page=20');
+  assert.equal(requestedUrl, 'https://api.github.com/repos/neuron-workspace/Neuron/releases?per_page=20');
   assert.match(elements.get('dl-meta').innerHTML, /v0\.5\.0-beta\.1/);
 
   const windows = elements.get('dl-windows').innerHTML;
@@ -98,7 +98,7 @@ const olderPrerelease = { ...prerelease, tag_name: 'v0.4.4-beta.1', published_at
   for (const [box, asset] of [[windows, prereleaseAssets[0]], [mac, prereleaseAssets[1]], [linux, prereleaseAssets[2]]]) {
     const href = box.match(/href="([^"]+)"/)?.[1];
     assert.match(href, /^\.\/installing\.html\?/);
-    const target = new URL(href.replaceAll('&amp;', '&'), 'https://shiv-khetan.github.io/Neuron/');
+    const target = new URL(href.replaceAll('&amp;', '&'), 'https://neuron-workspace.github.io/Neuron/');
     assert.equal(target.searchParams.get('url'), asset.browser_download_url);
     assert.notEqual(href, asset.browser_download_url);
   }

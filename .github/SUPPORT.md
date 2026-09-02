@@ -8,14 +8,14 @@ other personal information before posting.
 
 Start with the [feature guide](../docs/features.md) and
 [troubleshooting guide](../docs/troubleshooting.md), then search
-[existing issues](https://github.com/shiv-khetan/Neuron/issues). Neuron does
+[existing issues](https://github.com/neuron-workspace/Neuron/issues). Neuron does
 not currently have a separate chat or Q&A forum. If the question is about
 unexpected behavior, use the bug form; if it is about a capability Neuron does
 not have, use the feature-request form.
 
 ## Report a bug
 
-Use the [bug report form](https://github.com/shiv-khetan/Neuron/issues/new?template=bug_report.yml)
+Use the [bug report form](https://github.com/neuron-workspace/Neuron/issues/new?template=bug_report.yml)
 for a reproducible problem. The form asks for the Neuron version, operating
 system, install form, affected file type, data-loss impact, reproduction steps,
 expected and actual behavior, and sanitized diagnostics. Search existing issues
@@ -24,7 +24,7 @@ the problem.
 
 ## Request a feature
 
-Use the [feature request form](https://github.com/shiv-khetan/Neuron/issues/new?template=feature_request.yml).
+Use the [feature request form](https://github.com/neuron-workspace/Neuron/issues/new?template=feature_request.yml).
 Describe the workflow and desired outcome, not only an implementation idea;
 include the affected file type, current workaround, and sanitized examples.
 
@@ -32,7 +32,7 @@ include the affected file type, current workaround, and sanitized examples.
 
 Do **not** open a public issue for an unpatched vulnerability. Follow the
 [security policy](SECURITY.md) and use
-[GitHub private vulnerability reporting](https://github.com/shiv-khetan/Neuron/security/advisories/new).
+[GitHub private vulnerability reporting](https://github.com/neuron-workspace/Neuron/security/advisories/new).
 Include affected versions, impact, reproduction steps, and any mitigation you
 already know, without exposing personal notes or credentials.
 

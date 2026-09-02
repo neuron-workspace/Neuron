@@ -14,9 +14,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const REPO = 'shiv-khetan/Neuron';
-export const IDENTIFIER = 'ShivamKhetan.Neuron';
-export const HOMEPAGE = 'https://shiv-khetan.github.io/Neuron/';
+export const REPO = 'neuron-workspace/Neuron';
+export const IDENTIFIER = 'NeuronWorkspace.Neuron';
+export const HOMEPAGE = 'https://neuron-workspace.github.io/Neuron/';
 
 /**
  * Package-manager versions are not git tags.
@@ -87,7 +87,8 @@ ManifestVersion: 1.6.0
     [`${IDENTIFIER}.locale.en-US.yaml`]: `${header}PackageIdentifier: ${IDENTIFIER}
 PackageVersion: ${version}
 PackageLocale: en-US
-Publisher: Shivam Khetan
+Publisher: Neuron Workspace
+Author: Shivam Khetan
 PublisherUrl: ${HOMEPAGE}
 PackageName: Neuron
 PackageUrl: ${HOMEPAGE}
