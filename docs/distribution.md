@@ -216,6 +216,8 @@ Homebrew when the release build finishes. It is a separate workflow from
 `release.yml` on purpose: nothing in it rebuilds anything. Every package points
 at the artifacts `release.yml` already published, with the checksums of those
 exact files, so a package can never describe a build that was not released.
+The Windows manifest declares `Scope: user` because the one-click NSIS installer
+is fixed to the current user's profile and never requests elevation.
 
 **Prereleases do not publish.** Package managers are where people who opted into
 nothing install from. Everything before 0.4.5 was a prerelease, so this gate is
