@@ -33,6 +33,7 @@ import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
+import { ExplorerProvider } from './lib/explorer-state';
 import {
   addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
 } from './lib/workspace-explorer';
@@ -315,7 +316,7 @@ export default function App() {
   // nothing -- and compare before setting, or this loops forever.
   useEffect(() => {
     setExplorerRecents((current) => {
-      const pruned = pruneRecents(current, notes);
+      const pruned = pruneRecents(current, explorerPaths);
       return pruned.length === current.length ? current : pruned;
     });
   }, [notes]);
@@ -391,6 +392,42 @@ export default function App() {
     setExplorerFolder(folder);
     if (folder) setExplorerRecents((current) => addRecent(current, { path: folder, kind: 'folder' }));
   }, []);
+
+  const clearExplorerRecents = useCallback(() => setExplorerRecents([]), []);
+
+  // The file list, minus the workspace's own configuration.
+  //
+  // Filtered from `notes` rather than taken from `notesData`, for two reasons.
+  // notesData exists to be READ -- it carries every file's contents for the
+  // graph, tags and search -- and an explorer needs names, not bodies. And it
+  // holds only what could be read as text, so sourcing from it would silently
+  // hide binaries: a .png in the workspace would simply not appear.
+  //
+  // `.neuron/` is excluded because the sidebar and graph hide it too. Listing it
+  // offered to open the workspace's own layout.json, and since the app rewrites
+  // that file as you use it, the row churned under the cursor as well.
+  const explorerPaths = useMemo(
+    () => notes.filter((path) => !path.startsWith('.neuron/')),
+    [notes],
+  );
+
+  // One state object for both empty editor areas: the plain shell's pane and
+  // the layout shell's `editor` panel. Two consumers, one folder and one Recent
+  // list, so they cannot drift apart.
+  const explorerState = useMemo(() => ({
+    atHome,
+    repositoryName: repository?.name ?? 'Workspace',
+    // notesData, not notes: it is the list already filtered of `.neuron/`, so
+    // the explorer cannot offer to open the workspace's own configuration --
+    // which the sidebar and graph both hide. Using the raw list listed .neuron
+    // as the first folder in the workspace.
+    paths: explorerPaths,
+    folder: explorerFolder,
+    navigate: navigateExplorer,
+    openFile: handleSelectNote,
+    recents: explorerRecents,
+    clearRecents: clearExplorerRecents,
+  }), [atHome, repository, explorerPaths, explorerFolder, navigateExplorer, handleSelectNote, explorerRecents, clearExplorerRecents]);
 
   const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
@@ -720,13 +757,13 @@ export default function App() {
     // What used to be a blank "Choose a note to begin" panel. Nothing selected
     // means the explorer at the workspace root; the tabs, if any, are untouched.
     <WorkspaceExplorer
-      repositoryName={repository?.name ?? 'Workspace'}
-      paths={notes}
-      folder={explorerFolder}
-      onNavigate={navigateExplorer}
-      onOpenFile={handleSelectNote}
-      recents={explorerRecents}
-      onClearRecents={() => setExplorerRecents([])}
+      repositoryName={explorerState.repositoryName}
+      paths={explorerState.paths}
+      folder={explorerState.folder}
+      onNavigate={explorerState.navigate}
+      onOpenFile={explorerState.openFile}
+      recents={explorerState.recents}
+      onClearRecents={explorerState.clearRecents}
     />
   );
 
@@ -765,6 +802,7 @@ export default function App() {
 
   return (
     <PluginProvider catalog={builtinPlugins} bridge={bridge}>
+      <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
         <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}`}>
           <TitleBar
@@ -931,6 +969,7 @@ export default function App() {
           onImportChromeLogins={importChromeLogins}
         />
       </TooltipProvider>
+      </ExplorerProvider>
     </PluginProvider>
   );
 }

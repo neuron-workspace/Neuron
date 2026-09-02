@@ -4,6 +4,8 @@ import LiveEditor from '../components/LiveEditor';
 import GraphCanvas from '../components/GraphCanvas';
 import MDXPreview from '../components/MDXPreview';
 import XtermTerminal from '../components/XtermTerminal';
+import WorkspaceExplorer from '../views/WorkspaceExplorer';
+import { useExplorer, type ExplorerState } from '../lib/explorer-state';
 import type { NoteData, SurfaceProps } from './index';
 import type { PanelSpec } from './layout';
 
@@ -92,9 +94,25 @@ type EditMode = 'reading' | 'live' | 'split';
 
 // The main slot in a neuron.config shell. Three views like the standalone editor:
 // reading (default), live editor (double-click to enter), and split source+preview.
+/** The explorer, given the shared state. Two callers, one spelling. */
+function ExplorerPane({ explorer }: { explorer: ExplorerState }) {
+  return (
+    <WorkspaceExplorer
+      repositoryName={explorer.repositoryName}
+      paths={explorer.paths}
+      folder={explorer.folder}
+      onNavigate={explorer.navigate}
+      onOpenFile={explorer.openFile}
+      recents={explorer.recents}
+      onClearRecents={explorer.clearRecents}
+    />
+  );
+}
+
 function EditorPanel({ surface }: PanelContext) {
   const { selectedNote, noteContent, onChangeNote, colorScheme } = surface;
   const [modes, setModes] = useState<Record<string, EditMode>>({});
+  const explorer = useExplorer();
 
   const isNote = !!selectedNote && /\.(md|mdx)$/.test(selectedNote);
   // Plain-text workspace files -- .neuron/layout.json above all -- are editable
@@ -102,7 +120,16 @@ function EditorPanel({ surface }: PanelContext) {
   // editor rather than being turned away as "not a note".
   const isText = !!selectedNote && /\.(json|css|txt|ya?ml)$/i.test(selectedNote);
 
+  // Home wins over the open note here as well as in the plain shell, or
+  // clicking the workspace title while a note is open would appear to do
+  // nothing at all in a workspace that has a layout.
+  if (explorer?.atHome) return <ExplorerPane explorer={explorer} />;
+
   if (!selectedNote || (!isNote && !isText) || noteContent === undefined || !onChangeNote) {
+    // An empty editor panel is the workspace explorer, the same as an empty
+    // editor pane in the plain shell. Shared state, so navigating here and
+    // returning through the other lands in the same folder.
+    if (explorer && !selectedNote) return <ExplorerPane explorer={explorer} />;
     return <div className="grid h-full place-items-center px-6 text-center text-xs text-[var(--ink-muted)]">Select a note from the sidebar or graph to edit it here.</div>;
   }
 

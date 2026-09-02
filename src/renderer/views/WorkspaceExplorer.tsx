@@ -66,7 +66,7 @@ export default function WorkspaceExplorer({
   const openFile = (entry: FileEntry) => onOpenFile(entry.path);
 
   return (
-    <section className="h-full overflow-y-auto" data-workspace-explorer>
+    <section className="h-full overflow-y-auto" data-workspace-explorer data-explorer-paths={paths.length}>
       <div className="mx-auto w-full max-w-3xl px-8 pb-16 pt-8">
         <header>
           <nav className="flex flex-wrap items-center gap-1 text-xs text-[var(--ink-secondary)]" aria-label="Breadcrumb">
@@ -92,14 +92,19 @@ export default function WorkspaceExplorer({
             ))}
           </nav>
 
-          <div className="mt-3 flex items-baseline justify-between gap-4">
-            <h1 className="text-base font-semibold text-[var(--ink)]">
+          {/* Controls sit beside the heading rather than pushed to the right
+              edge. The workspace-map overlay is pinned to the top-right of the
+              editor area, and anything placed under it is unclickable -- the
+              button renders, stays perfectly still, and silently swallows every
+              click into the graph's SVG. */}
+          <div className="mt-3 flex items-baseline gap-3">
+            <h1 className="min-w-0 truncate text-base font-semibold text-[var(--ink)]">
               {atRoot ? repositoryName : trail[trail.length - 1].name}
             </h1>
             {!atRoot && (
               <button
                 type="button"
-                className="interactive flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+                className="interactive flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
                 onClick={() => onNavigate(parentFolder(folder))}
               >
                 <ArrowUp className="h-3.5 w-3.5" /> Up
@@ -110,7 +115,9 @@ export default function WorkspaceExplorer({
 
         {showRecents && (
           <section className="mt-7" aria-labelledby="explorer-recent">
-            <div className="flex items-center justify-between gap-4">
+            {/* Left-aligned for the same reason as the Up button above: the
+                right edge of the editor area is under the graph overlay. */}
+            <div className="flex items-center gap-3">
               <h2 id="explorer-recent" className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
                 <Clock className="h-3.5 w-3.5" /> Recent
               </h2>
