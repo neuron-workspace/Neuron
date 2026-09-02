@@ -9,6 +9,8 @@
 </p>
 
 <p align="center">
+  <a href="https://neuron-workspace.github.io/">Website</a> ·
+  <a href="https://neuron-workspace.github.io/docs/">Documentation</a> ·
   <a href="#download">Download</a> ·
   <a href="docs/development.md">Development</a> ·
   <a href="docs/architecture.md">Architecture</a> ·

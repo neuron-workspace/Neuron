@@ -63,3 +63,13 @@ playwright-report/
 # Code-signing private keys, never committed
 *.pfx
 *.p12
+
+# Microsoft Store listing images (~5.7 MB). Generated, not drawn:
+#   npm run store:logos
+#   npm run build && npm run store:shots
+# They are uploaded to Partner Center by hand and never read by the build, so
+# the repository carried five megabytes of reproducible output. store-assets/
+# README.md stays -- it maps each file to its Partner Center field, which the
+# generators do not encode.
+store-assets/logos/
+store-assets/screenshots/

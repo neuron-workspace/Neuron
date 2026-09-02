@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 export const REPO = 'neuron-workspace/Neuron';
 export const IDENTIFIER = 'NeuronWorkspace.Neuron';
-export const HOMEPAGE = 'https://neuron-workspace.github.io/Neuron/';
+export const HOMEPAGE = 'https://neuron-workspace.github.io/';
 
 /**
  * Package-manager versions are not git tags.

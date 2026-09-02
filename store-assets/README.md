@@ -1,5 +1,10 @@
 # Microsoft Store assets
 
+**The images are not in the repository.** They are generated output, about
+5.7 MB of it, uploaded to Partner Center by hand and never read by the build --
+so they are gitignored and this README is all that is tracked. Run either script
+below and the files appear beside it.
+
 Generated, not drawn by hand. Regenerate either set at any time:
 
 ```bash
