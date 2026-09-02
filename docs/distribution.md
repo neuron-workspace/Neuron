@@ -212,14 +212,26 @@ the running one. Nothing here has to change to enable it.
 ## Package managers
 
 `.github/workflows/package-managers.yml` publishes to WinGet, Chocolatey and
-Homebrew when a release is published. It is a separate workflow from
+Homebrew when the release build finishes. It is a separate workflow from
 `release.yml` on purpose: nothing in it rebuilds anything. Every package points
 at the artifacts `release.yml` already published, with the checksums of those
 exact files, so a package can never describe a build that was not released.
 
 **Prereleases do not publish.** Package managers are where people who opted into
-nothing install from. Every release so far has been a prerelease, so this is the
-normal case rather than the exception.
+nothing install from. Everything before 0.4.5 was a prerelease, so this gate is
+hit more often than not.
+
+**It is triggered by `workflow_run`, not `release: published`.** The obvious
+trigger does not work and does not say so: `release.yml` creates the release
+using `GITHUB_TOKEN`, and GitHub refuses to start workflow runs from events a
+`GITHUB_TOKEN` caused -- the rule that stops a workflow triggering itself for
+ever. The event fires, no run starts, and nothing appears in any log. 0.4.5
+published to GitHub with this workflow having never run once. `tools/publish-gate.test.mjs`
+asserts the trigger for that reason, including that `release:` is *absent*.
+
+The tag reaches the workflow only as `github.event.workflow_run.head_branch`,
+which on a tag push is the tag name. `github.ref` is the default branch here,
+because that is the ref a `workflow_run` workflow runs from.
 
 Every step is idempotent, and the workflow can be re-run by hand
 (`workflow_dispatch` with a tag) after fixing a token — WinGet's action is a

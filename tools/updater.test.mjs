@@ -2,7 +2,7 @@
 //
 // Each branch here is a case where getting it wrong either offers an update
 // that cannot install, or silently offers none at all — and the second is the
-// one nobody notices. Every release this project has published so far is a
+// one nobody notices. Everything this project published before 0.4.5 was a
 // prerelease, which electron-updater ignores by default.
 import { build } from 'esbuild';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
