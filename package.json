@@ -22,6 +22,7 @@
     "dist:dir": "node tools/package-env.mjs test --dir",
     "dist:store": "node tools/package-env.mjs prod --store",
     "release": "node tools/package-env.mjs prod --publish",
+    "icon:svg": "node tools/icons/icon-source.mjs",
     "icon:generate": "node tools/icons/generate-app-icon.js",
     "test:views": "node tools/view-security.test.mjs",
     "test:frontmatter": "node tools/frontmatter.test.mjs",
@@ -37,12 +38,13 @@
     "test:terminal-history": "node tools/terminal-history.test.mjs",
     "test:demo-data": "node tools/demo-data.test.mjs",
     "test:e2e": "npm run build:main && playwright test",
-    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:templates && npm run test:contrast && npm run test:terminal-bus && npm run test:terminal-history && npm run test:demo-data && npm run test:procs && npm run test:prune && npm run test:chrome && npm run test:appx-assets && npm run test:wikilinks && npm run test:search && npm run test:mermaid && npm run test:updater && npm run test:manifests && npm run test:windows-installer && npm run test:publish-gate",
+    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:templates && npm run test:contrast && npm run test:terminal-bus && npm run test:terminal-history && npm run test:demo-data && npm run test:procs && npm run test:prune && npm run test:chrome && npm run test:appx-assets && npm run test:icon-source && npm run test:wikilinks && npm run test:search && npm run test:mermaid && npm run test:updater && npm run test:manifests && npm run test:windows-installer && npm run test:publish-gate",
     "shoot": "node tools/shoot.mjs",
     "test:procs": "node tools/procs.test.mjs",
     "test:prune": "node tools/prune-releases.test.mjs",
     "test:chrome": "node tools/platform-chrome.test.mjs",
     "test:appx-assets": "node tools/appx-assets.test.mjs",
+    "test:icon-source": "node tools/icon-source.test.mjs",
     "test:wikilinks": "node tools/wikilinks.test.mjs",
     "test:search": "node tools/search.test.mjs",
     "test:mermaid": "node tools/mermaid.test.mjs",
@@ -199,7 +201,7 @@
       "identityName": "ShivamKhetan.NeuronDesktop",
       "publisher": "CN=7632F1A5-D41D-4A68-802B-CBBC1A910C2A",
       "publisherDisplayName": "Shivam Khetan",
-      "backgroundColor": "#1a1a1a",
+      "backgroundColor": "#000000",
       "languages": [
         "en-US"
       ]
