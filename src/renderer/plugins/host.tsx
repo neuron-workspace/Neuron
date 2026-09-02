@@ -26,6 +26,7 @@ interface AppBridge {
   activeNote: string | null;
   noteContent: string;
   notes: string[];
+  notesData: { path: string; content: string }[];
   openNote: (path: string) => void;
   createNote: (relativePath: string, content?: string) => Promise<boolean>;
   refreshNotes: () => Promise<void>;
@@ -135,6 +136,7 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
       activeNote: b.activeNote,
       noteContent: b.noteContent,
       notes: b.notes,
+      notesData: b.notesData,
       openNote: b.openNote,
       createNote: b.createNote,
       refreshNotes: b.refreshNotes,
