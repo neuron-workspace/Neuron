@@ -17,6 +17,7 @@ is cheap to draw exactly at any size, so that is what happens here. Keep this
 in step with build/icon.svg by hand -- it is deliberately not an SVG renderer,
 because pulling one in for eight polygons is not worth the dependency.
 """
+import json
 import math
 import os
 from PIL import Image, ImageDraw
@@ -34,13 +35,26 @@ def scaled(base, scale):
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 OUT = os.path.join(ROOT, 'build', 'appx')
 
-# Straight from build/icon.svg, in its 512-unit viewBox.
-VIEWBOX = 512
-CORNER_RADIUS = 112
-PLATE = (0, 0, 0, 255)
-MARK = (255, 255, 255, 255)
-BRANCH = [(-24, -136), (24, -136), (16, 6), (-16, 6)]
-BRANCHES = 5
+# Read from build/icon.json rather than copied out of build/icon.svg. The copy
+# is how the Store logos ended up on a blue gradient while the application icon
+# stayed black: three transcriptions of one mark, and nothing that failed when
+# they disagreed.
+with open(os.path.join(ROOT, 'build', 'icon.json'), encoding='utf-8') as f:
+    _ICON = json.load(f)
+
+
+def _rgba(hex_colour):
+    """'#rrggbb' as an opaque Pillow tuple."""
+    h = hex_colour.lstrip('#')
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+
+
+VIEWBOX = _ICON['viewBox']
+CORNER_RADIUS = _ICON['cornerRadius']
+PLATE = _rgba(_ICON['plate'])
+MARK = _rgba(_ICON['mark'])
+BRANCH = [tuple(point) for point in _ICON['branch']]
+BRANCHES = _ICON['branches']
 
 # Supersample, then average down. These are small images whose edges are the
 # whole design, and aliasing on a 16px taskbar icon is exactly what looks cheap.
@@ -73,11 +87,15 @@ def icon(size):
     return img.resize((size, size), Image.LANCZOS)
 
 
-# The mark does not fill its own box: the branches reach 136 units out of a
-# 512-unit viewBox, so the drawn shape is only 2*136/512 across. Scaling by the
-# box would leave the tiles looking mostly empty, so `coverage` means the
-# fraction of the tile the VISIBLE mark should span, and this converts.
-MARK_EXTENT = 2 * 136 / VIEWBOX
+# The mark does not fill its own box: the branches reach out to a fraction of
+# the viewBox, so the drawn shape is narrower than the box it is declared in.
+# Scaling by the box would leave the tiles looking mostly empty, so `coverage`
+# means the fraction of the tile the VISIBLE mark should span, and this converts.
+#
+# Derived from BRANCH rather than restating its reach: the 136 used to be
+# written here as a literal, which is a second copy of a number that only
+# build/icon.json should own.
+MARK_EXTENT = 2 * max(abs(y) for _, y in BRANCH) / VIEWBOX
 
 
 def tile(width, height, coverage=0.60):
