@@ -2,7 +2,7 @@
 import { build } from 'esbuild';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import assert from 'node:assert/strict';
 
 const out = mkdtempSync(join(tmpdir(), 'neuron-windows-installer-'));
@@ -30,8 +30,13 @@ check('packaged argv accepts quoted paths with spaces', () => {
   assert.equal(workspacePathFromArgv(['Neuron.exe', `"${spaceDir}"`], true), spaceDir);
 });
 
-check('packaged argv accepts a trailing backslash', () => {
-  assert.equal(workspacePathFromArgv(['Neuron.exe', `${trailingDir}\\`], true), trailingDir);
+check('packaged argv accepts a trailing separator', () => {
+  // Explorer's %V can hand over a path with a trailing separator, and on Windows
+  // that is a backslash. The separator is taken from the platform rather than
+  // written as "\\": on Linux and macOS a backslash is an ordinary character in
+  // a filename, so a hardcoded one asks for a directory that does not exist and
+  // the test fails everywhere except the platform the feature is for.
+  assert.equal(workspacePathFromArgv(['Neuron.exe', `${trailingDir}${sep}`], true), trailingDir);
 });
 
 check('development argv skips the Electron app argument', () => {
