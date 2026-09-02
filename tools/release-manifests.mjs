@@ -70,9 +70,8 @@ export function wingetManifests({ version, url, hash }) {
     [`${IDENTIFIER}.installer.yaml`]: `${header}PackageIdentifier: ${IDENTIFIER}
 PackageVersion: ${version}
 InstallerType: nullsoft
-# No Scope is declared: the NSIS build is still the assisted installer that lets
-# the user choose a directory, so it is neither reliably per-user nor per-machine.
-# Claiming one would make WinGet promise behaviour the installer does not have.
+# The one-click NSIS installer is fixed to the current user's profile.
+Scope: user
 InstallModes:
   - interactive
   - silent
