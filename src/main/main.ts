@@ -14,6 +14,7 @@ import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import { configureUpdater } from './updater';
 import { createDiagnosticLogger, errorDetails } from './diagnostic-logger';
+import { workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -63,9 +64,9 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, folder mini-apps (neuron.app + neuron.app.json), the internal shell
+// canvases, Mermaid diagrams, folder mini-apps (neuron.app + neuron.app.json), the internal shell
 // config, and .neuron configuration/assets.
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas)$)/;
+const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid)$)/;
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent
@@ -1053,7 +1054,9 @@ app.on('web-contents-created', (_event, contents) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
-app.on('second-instance', () => {
+app.on('second-instance', (_event, commandLine) => {
+  const workspace = workspacePathFromArgv(commandLine, app.isPackaged);
+  if (workspace) setActiveRepo(workspace);
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -1103,6 +1106,8 @@ app.on('ready', () => {
   });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
+  const workspace = workspacePathFromArgv(process.argv, app.isPackaged);
+  if (workspace) setActiveRepo(workspace);
   createWindow();
   // GitHub-backed in-app updates. What counts as an update, and whether to look
   // at all, lives in ./updater so the rules are testable without Electron --

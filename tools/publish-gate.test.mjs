@@ -11,7 +11,7 @@
 // failed and nothing logged. So the trigger is asserted here too, not just the
 // decision it feeds.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,11 +65,39 @@ const out = mkdtempSync(join(tmpdir(), 'neuron-gate-'));
 const script = join(out, 'gate.sh');
 writeFileSync(script, step.run, 'utf-8');
 
+/**
+ * A bash that can run a script living at a Windows path.
+ *
+ * On Windows `bash` on PATH is usually WSL's shim in WindowsApps, which has a
+ * different filesystem view: it cannot execute C:\...\gate.sh, and cannot write
+ * the $GITHUB_OUTPUT file beside it. So this test passed from Git Bash and from
+ * CI, and failed from PowerShell -- the default Windows shell -- with nothing
+ * more useful than "Command failed".
+ *
+ * Git ships a bash that does understand those paths, and this is a git
+ * repository, so it is present by definition.
+ */
+function bashExe() {
+  if (process.platform !== 'win32') return 'bash';
+  const candidates = [
+    join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
+    join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'bin', 'bash.exe'),
+    join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'bin', 'bash.exe'),
+  ];
+  const found = candidates.find((p) => p && existsSync(p));
+  assert.ok(found,
+    'no Git Bash found. The bash on PATH may be WSL, which cannot run a script ' +
+    `at a Windows path. Looked in:\n  ${candidates.join('\n  ')}`);
+  return found;
+}
+
+const BASH = bashExe();
+
 /** Run the real gate script and read back what it wrote to $GITHUB_OUTPUT. */
 const gate = ({ tag, upstream = '' }) => {
   const outputs = join(out, 'outputs.txt');
   writeFileSync(outputs, '');
-  const log = execFileSync('bash', [script], {
+  const log = execFileSync(BASH, [script], {
     env: { ...process.env, TAG: tag, UPSTREAM: upstream, GITHUB_OUTPUT: outputs },
     encoding: 'utf-8',
   });
@@ -131,7 +159,7 @@ check('both outputs are always written, exactly once', () => {
   ]) {
     const outputs = join(out, 'outputs.txt');
     writeFileSync(outputs, '');
-    execFileSync('bash', [script], {
+    execFileSync(BASH, [script], {
       env: { ...process.env, TAG: c.tag, UPSTREAM: c.upstream, GITHUB_OUTPUT: outputs },
       encoding: 'utf-8',
     });
