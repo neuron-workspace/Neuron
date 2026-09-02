@@ -4,6 +4,8 @@ import type { HostRuntime } from '../types';
 import { Button } from '../../components/ui/button';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { cn } from '../../lib/utils';
+import { buildActiveContext, buildContext } from '../../lib/assistant-context';
+import { searchNotes } from '../../lib/search';
 import ReplyMarkdown from './ReplyMarkdown';
 
 interface ChatMessage {
@@ -24,20 +26,6 @@ interface AssistantPanelProps {
 
 type ContextMode = 'none' | 'active' | 'workspace';
 
-function getKeywordScore(content: string, query: string): number {
-  const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-  let score = 0;
-  if (words.length === 0) return 0;
-  const contentLower = content.toLowerCase();
-  for (const word of words) {
-    const escapedWord = word.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    const regex = new RegExp(escapedWord, 'g');
-    const count = (contentLower.match(regex) || []).length;
-    score += count;
-  }
-  return score;
-}
-
 export default function AssistantPanel({ host, pluginId, provider, defaultModel, emptyHint }: AssistantPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -57,35 +45,14 @@ export default function AssistantPanel({ host, pluginId, provider, defaultModel,
     let sourcesUsed: string[] = [];
 
     if (contextMode === 'active' && host.activeNote) {
-      system = `You are a writing assistant embedded in Neuron, a local Markdown notes app. The user is editing the note "${host.activeNote}". Its current content is below. Help with their request; keep answers concise and Markdown-friendly.\n\n---\n${host.noteContent}\n---`;
-      sourcesUsed = [host.activeNote];
+      const context = buildActiveContext({ path: host.activeNote, content: host.noteContent });
+      system = `You are a writing assistant embedded in Neuron, a local Markdown notes app. The user is editing the note "${host.activeNote}". Its current content is below. Help with their request; keep answers concise and Markdown-friendly.\n\n${context.text}`;
+      sourcesUsed = context.sources;
     } else if (contextMode === 'workspace') {
-      // Find relevant notes by keyword scoring
-      const scoredNotes = await Promise.all(
-        host.notes.map(async (path) => {
-          try {
-            const content = await window.electronAPI.readNote(path);
-            const score = getKeywordScore(content, text) + getKeywordScore(path, text) * 5; // Path matching gets a boost
-            return { path, content, score };
-          } catch {
-            return { path, content: '', score: 0 };
-          }
-        })
-      );
-
-      // Take the top 3 matches with a score > 0
-      const topMatches = scoredNotes
-        .filter((n) => n.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3);
-
-      if (topMatches.length > 0) {
-        system = `You are a writing assistant embedded in Neuron, a local Markdown notes app. Below are the most relevant files from the user's workspace containing answers to their query. Use their content to formulate your response. Help with their request; keep answers concise and Markdown-friendly.\n\n`;
-        system += topMatches.map((m) => `--- File: "${m.path}" ---\n${m.content}\n---`).join('\n\n');
-        sourcesUsed = topMatches.map((m) => m.path);
-      } else {
-        system = `You are a writing assistant embedded in Neuron, a local Markdown notes app. Keep answers concise and Markdown-friendly. The user asked about workspace notes but no matching keywords were found.`;
-      }
+      const hits = searchNotes(host.notesData, text, { limit: 3, snippets: 3 });
+      const context = buildContext(hits, { notes: host.notesData });
+      system = `You are a writing assistant embedded in Neuron, a local Markdown notes app. Below are the most relevant excerpts from the user's workspace. Use them to formulate your response and cite the file and line numbers when useful. Help with their request; keep answers concise and Markdown-friendly.\n\n${context.text}`;
+      sourcesUsed = context.sources;
     } else {
       system = 'You are a writing assistant embedded in Neuron, a local Markdown notes app. Keep answers concise and Markdown-friendly.';
     }

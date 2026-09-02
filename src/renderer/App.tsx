@@ -517,10 +517,11 @@ export default function App() {
     activeNote: selectedNote,
     noteContent,
     notes,
+    notesData,
     openNote: handleSelectNote,
     createNote,
     refreshNotes: loadNotes,
-  }), [selectedNote, noteContent, notes, handleSelectNote, createNote, loadNotes]);
+  }), [selectedNote, noteContent, notes, notesData, handleSelectNote, createNote, loadNotes]);
 
   // --- Responsive (raw split collapses to tabs when narrow) -----------------
   // Panels are user-resizable, so responsive mode only needs the viewport width.
