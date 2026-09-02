@@ -8,6 +8,7 @@ import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
 import { parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
+import MermaidDiagram from './MermaidDiagram';
 
 // Links read as one object rather than as underlined text: an icon says where
 // it goes before you read the label, and the pill gives it an edge to click.
@@ -26,6 +27,7 @@ const BROKEN_PILL =
 
 interface MDXPreviewProps {
   mdxContent: string;
+  colorScheme?: 'light' | 'dark';
   onLineClick?: (lineIndex: number) => void;
   showProperties?: boolean;
   tagSuggestions?: string[];
@@ -91,7 +93,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
+export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
   const [renderedContent, setRenderedContent] = useState<React.ReactNode[]>([]);
   const [compilationError, setCompilationError] = useState<{
     message: string;
@@ -133,7 +135,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         });
       }
     }
-  }, [fm.body, wikiNotes, onWikiLinkClick]);
+  }, [colorScheme, fm.body, wikiNotes, onWikiLinkClick]);
 
   // Parsing helper to split and evaluate markdown vs custom components
   function parseMDX(content: string): React.ReactNode[] {
@@ -163,7 +165,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
 
       // Code Block parser (markdown)
       if (line.trim().startsWith('```')) {
-        const lang = line.trim().slice(3);
+        const lang = line.trim().slice(3).trim();
         const codeLines: string[] = [];
         const startLine = i;
         i++;
@@ -172,7 +174,15 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
           i++;
         }
         const codeText = codeLines.join('\n');
-        nodes.push(
+        nodes.push(lang.toLowerCase() === 'mermaid' ? (
+          <div
+            key={`mermaid-${i}`}
+            onClick={() => lineClick(startLine)}
+            className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+          >
+            <MermaidDiagram source={codeText} colorScheme={colorScheme} />
+          </div>
+        ) : (
           <pre
             key={`code-${i}`}
             onClick={() => lineClick(startLine)}
@@ -181,7 +191,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
             {lang && <div className="mb-2 text-[10px] font-medium text-muted">{lang}</div>}
             <code>{codeText}</code>
           </pre>
-        );
+        ));
         i++;
         continue;
       }
