@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Notebook, MoreHorizontal, Eye, SplitSquareHorizontal, PenLine } from 'lucide-react';
+import { MoreHorizontal, Eye, SplitSquareHorizontal, PenLine } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
@@ -32,6 +32,10 @@ import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
+import WorkspaceExplorer from './views/WorkspaceExplorer';
+import {
+  addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
+} from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
 import ActivityRail, { type SidebarMode } from './components/ActivityRail';
 import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
@@ -104,6 +108,18 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceReady, setAppearanceReady] = useState(false);
+
+  // The workspace explorer.
+  //
+  // `atHome` is deliberately its own flag rather than being inferred from
+  // `selectedNote === null`. Having no file open implies the explorer, but the
+  // reverse is not true: clicking the workspace title must show it WITHOUT
+  // closing anyone's tabs, so home has to be a place you can navigate to while
+  // a note is still open. Conflating the two is how the explorer either refuses
+  // to appear or refuses to go away.
+  const [atHome, setAtHome] = useState(false);
+  const [explorerFolder, setExplorerFolder] = useState('');
+  const [explorerRecents, setExplorerRecents] = useState<RecentEntry[]>([]);
 
   // Workbench layout: which shell regions are visible. Persisted per user.
   const [layout, setLayout] = useState<WorkbenchLayout>(DEFAULT_LAYOUT);
@@ -276,6 +292,34 @@ export default function App() {
     loadNotes();
   }, [repository, loadNotes]);
 
+  // Recents are per workspace and per machine, so they live in the settings
+  // bridge beside `layout` rather than in a file inside the workspace that
+  // would sync someone's browsing history to every other machine.
+  useEffect(() => {
+    setExplorerFolder('');
+    if (!repository) { setExplorerRecents([]); return; }
+    let cancelled = false;
+    void window.electronAPI?.settings.get<unknown>(recentsKey(repository.path)).then((stored) => {
+      if (!cancelled) setExplorerRecents(resolveRecents(stored));
+    });
+    return () => { cancelled = true; };
+  }, [repository]);
+
+  useEffect(() => {
+    if (!repository) return;
+    void window.electronAPI?.settings.set(recentsKey(repository.path), explorerRecents);
+  }, [repository, explorerRecents]);
+
+  // Paths move and vanish outside the app. Prune against the current listing so
+  // a stale entry disappears quietly instead of offering a link that opens
+  // nothing -- and compare before setting, or this loops forever.
+  useEffect(() => {
+    setExplorerRecents((current) => {
+      const pruned = pruneRecents(current, notes);
+      return pruned.length === current.length ? current : pruned;
+    });
+  }, [notes]);
+
   useEffect(() => {
     if (!repository || !window.electronAPI) { setShellConfig(null); return; }
     let cancelled = false;
@@ -327,7 +371,25 @@ export default function App() {
     setSelectedNote(note);
     setOpenTabs((current) => current.includes(note) ? current : [...current, note]);
     setView('notes');
+    // Opening a file leaves home, whichever route got here -- sidebar, explorer,
+    // command palette or a wiki-link. One place to clear it, because a second
+    // route that forgot would leave the explorer covering the note it opened.
+    setAtHome(false);
+    if (!isUrl(note)) setExplorerRecents((current) => addRecent(current, { path: note, kind: 'file' }));
     setNotice(null);
+  }, []);
+
+  /** Show the workspace explorer without disturbing what is already open. */
+  const goHome = useCallback((folder = '') => {
+    setView('notes');
+    setExplorerFolder(folder);
+    setAtHome(true);
+    setNotice(null);
+  }, []);
+
+  const navigateExplorer = useCallback((folder: string) => {
+    setExplorerFolder(folder);
+    if (folder) setExplorerRecents((current) => addRecent(current, { path: folder, kind: 'folder' }));
   }, []);
 
   const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
@@ -630,7 +692,10 @@ export default function App() {
   );
 
 
-  const notesView = selectedNote ? (
+  // Home wins over the open note, which is what lets the workspace title show
+  // the explorer without closing tabs -- they stay in `openTabs`, and clicking
+  // one calls handleSelectNote, which clears `atHome` and brings it back.
+  const notesView = selectedNote && !atHome ? (
     <div className="flex h-full w-full flex-col">
       {editorHeader}
       <div className="min-h-0 flex-1">
@@ -652,12 +717,17 @@ export default function App() {
       </div>
     </div>
   ) : (
-    <section className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-      <div className="empty-state-icon"><Notebook className="h-5 w-5" /></div>
-      <h1 className="mt-5 text-base font-semibold text-[var(--ink)]">Choose a note to begin</h1>
-      <p className="mt-2 max-w-sm text-sm leading-6 text-[var(--ink-secondary)]">Open a file from the sidebar, or create a new note or section.</p>
-      <button className="interactive mt-4 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--canvas)]" onClick={() => requestCreate()}>Create note</button>
-    </section>
+    // What used to be a blank "Choose a note to begin" panel. Nothing selected
+    // means the explorer at the workspace root; the tabs, if any, are untouched.
+    <WorkspaceExplorer
+      repositoryName={repository?.name ?? 'Workspace'}
+      paths={notes}
+      folder={explorerFolder}
+      onNavigate={navigateExplorer}
+      onOpenFile={handleSelectNote}
+      recents={explorerRecents}
+      onClearRecents={() => setExplorerRecents([])}
+    />
   );
 
   let mainContent: React.ReactNode;
@@ -757,6 +827,7 @@ export default function App() {
                       view={view}
                       mode={sidebarMode}
                       repositoryName={repository.name}
+                      onGoHome={() => goHome()}
                       tags={tags}
                       onSelectTag={setSelectedTag}
                       selectedTag={selectedTag}
