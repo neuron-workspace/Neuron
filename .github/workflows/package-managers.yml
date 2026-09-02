@@ -129,9 +129,18 @@ jobs:
 
       # Opens a pull request against microsoft/winget-pkgs. It is a no-op when
       # the version is already there, so a re-run does not open a second one.
+      #
+      # This UPDATES an existing package and cannot create one: it needs a
+      # published version to use as the base for the next manifest. The first
+      # version of NeuronWorkspace.Neuron has to be submitted by hand, from the
+      # manifests the job above generates. See docs/distribution.md.
+      #
+      # Pinned to a commit rather than @main. It is handed a token that can push
+      # branches and open pull requests under the account that owns it, so what
+      # it runs should not be able to change without this line changing.
       - name: Submit to winget-pkgs
         if: steps.token.outputs.have == 'true'
-        uses: vedantmgoyal9/winget-releaser@main
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier: NeuronWorkspace.Neuron
           version: ${{ needs.manifests.outputs.version }}
