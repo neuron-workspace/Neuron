@@ -152,7 +152,7 @@ the existing matrix. No signing is required for either.
 **Flathub** is the distribution channel worth adding: it is where Linux users
 look for applications, it handles updates and sandboxing, and it is free.
 
-`flatpak/io.github.shiv_khetan.Neuron.metainfo.xml` holds the AppStream
+`flatpak/io.github.neuron_workspace.Neuron.metainfo.xml` holds the AppStream
 metadata Flathub requires — the listing text, screenshots, release history and
 content rating.
 
@@ -164,8 +164,8 @@ Two things are not done and cannot be finished from here:
   Writing one without that build loop produces a file that looks right and does
   not build.
 - **The app id.** Flathub requires an id under a domain you control. For a
-  GitHub-hosted project that is `io.github.<username>.<project>`, with hyphens
-  in the username written as underscores — `io.github.shiv_khetan.Neuron`. The
+  GitHub-hosted project that is `io.github.<owner>.<project>`, with hyphens
+  in the owner written as underscores — `io.github.neuron_workspace.Neuron`. The
   current electron-builder `appId` is `io.github.neuron.notes`, which maps to no
   real GitHub account and would be rejected. The Flatpak id can differ from the
   electron-builder `appId` without changing Windows or macOS behaviour, which is
@@ -247,13 +247,45 @@ them one at a time.
 
 | Secret | Where it comes from | What to do |
 |---|---|---|
-| `WINGET_TOKEN` | A GitHub **classic** PAT with `public_repo` | Fork `microsoft/winget-pkgs` to your account first. The action pushes a branch to your fork and opens a pull request against Microsoft's repo. A fine-grained token will not work — the action needs to push to a fork it did not create. |
+| `WINGET_TOKEN` | A GitHub **classic** PAT with `public_repo` | Fork `microsoft/winget-pkgs` to your account first, and submit version 1 by hand (below) — the action can only update a package that already exists. It then pushes a branch to your fork and opens a pull request against Microsoft's repo. A fine-grained token will not work — the action needs to push to a fork it did not create. |
 | `CHOCO_API_KEY` | community.chocolatey.org → your account → API Keys | Register the `neuron` package id once by pushing manually, or the first automated push will be rejected. Chocolatey moderates new packages; expect the first version to sit in review. |
 | `HOMEBREW_TAP_TOKEN` | A GitHub PAT with `contents: write` on the tap repo | `neuron-workspace/homebrew-neuron` already exists -- the name is not a choice, `brew tap neuron-workspace/neuron` resolves to it. The workflow clones it, writes `Casks/neuron.rb` and pushes. Users then `brew tap neuron-workspace/neuron && brew install --cask neuron`. |
 
 No account is needed for any of this to keep working as it does today: with none
 of the three secrets set, the workflow runs, logs three skips, and the GitHub
 release is unaffected.
+
+### The first WinGet submission has to be manual
+
+`winget-releaser` uses [Komac](https://github.com/russellbanks/Komac) to build the
+next version's manifest **from the previous one**, so it cannot create a package
+that is not in `microsoft/winget-pkgs` yet:
+
+> At least one version of your package should already be present in the Windows
+> Package Manager Community Repository.
+
+Same shape as Chocolatey, and it fails rather than skipping if you set the token
+before doing this. The `manifests` job already writes exactly what the first
+submission needs:
+
+1. Run the workflow (`workflow_dispatch` with the tag) and download the
+   `package-manifests` artifact, or generate it locally as described below.
+2. Fork and clone `microsoft/winget-pkgs`.
+3. Copy the three files from `winget/` into
+   `manifests/n/NeuronWorkspace/Neuron/<version>/`.
+4. Validate and test them:
+
+   ```
+   winget validate --manifest manifests/n/NeuronWorkspace/Neuron/<version>
+   winget install --manifest manifests/n/NeuronWorkspace/Neuron/<version>
+   ```
+
+   (`winget settings --enable LocalManifestFiles` first, from an admin shell.)
+5. Open the pull request. The first one is reviewed by a person; expect comments.
+
+After that version is merged, every later release is handled by the workflow, and
+the generated `winget/` manifests become a reference copy rather than the thing
+that gets submitted.
 
 ### Regenerating the manifests by hand
 
