@@ -237,7 +237,7 @@ them one at a time.
 |---|---|---|
 | `WINGET_TOKEN` | A GitHub **classic** PAT with `public_repo` | Fork `microsoft/winget-pkgs` to your account first. The action pushes a branch to your fork and opens a pull request against Microsoft's repo. A fine-grained token will not work — the action needs to push to a fork it did not create. |
 | `CHOCO_API_KEY` | community.chocolatey.org → your account → API Keys | Register the `neuron` package id once by pushing manually, or the first automated push will be rejected. Chocolatey moderates new packages; expect the first version to sit in review. |
-| `HOMEBREW_TAP_TOKEN` | A GitHub PAT with `contents: write` on the tap repo | Create a public repo named exactly `homebrew-neuron` under your account. The workflow clones it, writes `Casks/neuron.rb` and pushes. Users then `brew tap neuron-workspace/neuron && brew install --cask neuron`. |
+| `HOMEBREW_TAP_TOKEN` | A GitHub PAT with `contents: write` on the tap repo | `neuron-workspace/homebrew-neuron` already exists -- the name is not a choice, `brew tap neuron-workspace/neuron` resolves to it. The workflow clones it, writes `Casks/neuron.rb` and pushes. Users then `brew tap neuron-workspace/neuron && brew install --cask neuron`. |
 
 No account is needed for any of this to keep working as it does today: with none
 of the three secrets set, the workflow runs, logs three skips, and the GitHub
