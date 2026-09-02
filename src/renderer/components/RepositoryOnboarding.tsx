@@ -1,5 +1,6 @@
-import { FolderPlus, FolderOpen, FolderGit2, Cloud, ArrowRight } from 'lucide-react';
-import type { RepositoryInfo } from '../electron.d';
+import { useEffect, useState } from 'react';
+import { FolderPlus, FolderOpen, FolderGit2, Cloud, ArrowRight, Sparkles, AlertCircle } from 'lucide-react';
+import type { RepositoryInfo, WorkspaceTemplate } from '../electron.d';
 import { Button } from './ui/button';
 
 interface RepositoryOnboardingProps {
@@ -10,6 +11,30 @@ interface RepositoryOnboardingProps {
 }
 
 export default function RepositoryOnboarding({ recents, onCreate, onOpen, onSwitch }: RepositoryOnboardingProps) {
+  const [templates, setTemplates] = useState<WorkspaceTemplate[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void window.electronAPI?.templates.list().then(setTemplates).catch(() => setTemplates([]));
+  }, []);
+
+  const startFromTemplate = async (template: WorkspaceTemplate) => {
+    setError(null);
+    setBusy(template.id);
+    try {
+      const result = await window.electronAPI.templates.create(template.id);
+      // null means the folder picker was dismissed, which is not an error. On
+      // success main sets the active workspace, and App is already listening for
+      // that — nothing to do here but stop showing the spinner.
+      if (result?.error) setError(result.error);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-[var(--canvas)] px-6 py-10">
       <div className="w-full max-w-2xl">
@@ -52,6 +77,45 @@ export default function RepositoryOnboarding({ recents, onCreate, onOpen, onSwit
             </span>
           </button>
         </div>
+
+        {templates.length > 0 && (
+          <div className="mt-7">
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[var(--ink-muted)]">
+              <Sparkles className="h-3 w-3" /> Start from a template
+            </div>
+            <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
+              {templates.map((template, index) => (
+                <button
+                  key={template.id}
+                  onClick={() => void startFromTemplate(template)}
+                  disabled={busy !== null}
+                  className={`interactive flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60 ${index > 0 ? 'border-t border-[var(--divider)]' : ''}`}
+                >
+                  <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-[var(--ink)]">{template.name}</div>
+                    <div className="truncate text-[11px] text-[var(--ink-muted)]">
+                      {template.description || `${template.noteCount} note${template.noteCount === 1 ? '' : 's'} to start from`}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-[11px] text-[var(--ink-muted)]">
+                    {busy === template.id ? 'Creating…' : 'Choose folder'}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] leading-4 text-[var(--ink-muted)]">
+              A template is copied into a folder you pick, so the originals stay untouched and your notes are yours to edit.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--danger)] bg-[color-mix(in_oklch,var(--danger)_8%,var(--surface))] px-3 py-2 text-xs text-[var(--ink)]">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--danger)]" />
+            <span>{error}</span>
+          </div>
+        )}
 
         {recents.length > 0 && (
           <div className="mt-7">

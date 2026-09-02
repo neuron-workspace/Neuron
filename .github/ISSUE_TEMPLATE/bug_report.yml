@@ -9,7 +9,7 @@ body:
       value: |
         Thanks for helping improve Neuron. Remove personal notes, workspace paths, API keys, and other sensitive information from screenshots and logs.
 
-        **Do not report security vulnerabilities here.** Use [GitHub private vulnerability reporting](https://github.com/shiv-khetan/Neuron/security/advisories/new) instead.
+        **Do not report security vulnerabilities here.** Use [GitHub private vulnerability reporting](https://github.com/neuron-workspace/Neuron/security/advisories/new) instead.
   - type: input
     id: app-version
     attributes:

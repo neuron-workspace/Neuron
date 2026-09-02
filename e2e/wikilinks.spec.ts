@@ -84,11 +84,19 @@ test('missing and ambiguous targets are explained, inert, and markup-safe', asyn
     cursor: getComputedStyle(element).cursor,
     text: element.textContent,
     decorationLine: getComputedStyle(element).textDecorationLine,
-    decorationStyle: getComputedStyle(element).textDecorationStyle,
+    borderStyle: getComputedStyle(element).borderStyle,
   }));
-  expect(missingState).toMatchObject({ tag: 'SPAN', tabIndex: -1, cursor: 'default', text: 'No Such Note (missing note)', decorationStyle: 'dotted' });
-  expect(missingState.decorationLine).toContain('underline');
+
+  // What matters is that it is not a link and cannot be mistaken for one: a
+  // span rather than a button, not reachable by keyboard, no pointer cursor,
+  // and it says so in words for anyone who cannot see the styling.
+  expect(missingState).toMatchObject({ tag: 'SPAN', tabIndex: -1, cursor: 'default', text: 'No Such Note (missing note)' });
+
+  // And that it is visibly marked as broken. Links render as pills now, so a
+  // missing one keeps the pill shape -- a broken link should read as the same
+  // kind of thing as a working one -- but dashed and struck through.
   expect(missingState.decorationLine).toContain('line-through');
+  expect(missingState.borderStyle).toContain('dashed');
 
   await expect(page.getByTitle('No note found for "Shared"')).toBeVisible();
   await expect(page.getByRole('button', { name: /Open note .*Shared/ })).toHaveCount(0);

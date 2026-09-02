@@ -46,6 +46,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Workspace templates — a template is a folder under `examples`, copied into
+  // wherever the user chooses.
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    create: (templateId: string) => ipcRenderer.invoke('templates:create', templateId),
+  },
+
   // Window controls
   windowControls: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
@@ -92,7 +99,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   terminal: {
     run: (cmd: string) => ipcRenderer.invoke('terminal:run', cmd),
-    spawn: (opts: { cols?: number; rows?: number }) => ipcRenderer.invoke('terminal:spawn', opts),
+    // `key` names the terminal, not the shell: reattaching with the same key
+    // returns the same shell and its scrollback, and a new key is a new
+    // terminal with its own.
+    spawn: (opts: { cols?: number; rows?: number; key?: string }) => ipcRenderer.invoke('terminal:spawn', opts),
     history: (id: number) => ipcRenderer.invoke('terminal:history', id),
     write: (id: number, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: number, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),

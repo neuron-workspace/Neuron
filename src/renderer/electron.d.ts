@@ -4,6 +4,19 @@ export interface RepositoryInfo {
   cloud: boolean;
 }
 
+/**
+ * A workspace template: a folder that gets copied into wherever the user picks.
+ * Adding one means dropping a directory into `examples/` — there is no registry
+ * to keep in step.
+ */
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  noteCount: number;
+}
+
 export interface AiMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -93,6 +106,12 @@ export interface ElectronAPI {
     onChanged: (callback: (repo: RepositoryInfo) => void) => () => void;
   };
 
+  templates: {
+    list: () => Promise<WorkspaceTemplate[]>;
+    /** null if the user cancelled the folder picker. */
+    create: (templateId: string) => Promise<{ repository?: RepositoryInfo; error?: string } | null>;
+  };
+
   // Window controls
   windowControls: {
     minimize: () => Promise<void>;
@@ -121,8 +140,11 @@ export interface ElectronAPI {
   };
   terminal: {
     run: (cmd: string) => Promise<{ success: boolean; stdout: string; stderr: string; code: number }>;
-    /** Spawn an interactive PTY in the active repo; returns its id. */
-    spawn: (opts: { cols?: number; rows?: number }) => Promise<number>;
+    /**
+     * Attach to the terminal named by `key`, starting a shell if it has none.
+     * The same key returns the same shell; a new key is a new terminal.
+     */
+    spawn: (opts: { cols?: number; rows?: number; key?: string }) => Promise<number>;
     history: (id: number) => Promise<string>;
     write: (id: number, data: string) => Promise<void>;
     resize: (id: number, cols: number, rows: number) => Promise<void>;

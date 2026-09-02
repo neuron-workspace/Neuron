@@ -314,7 +314,7 @@
               installer can be re-signed, but it cannot be given GitHub's attestation.
             </p>
             <pre><span class="c"># Proves this file came from Neuron's CI, not someone else</span>
-gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo shiv-khetan/Neuron</pre>
+gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo neuron-workspace/Neuron</pre>
             <p style="margin-top:1rem">
               The Microsoft Store build is signed by Microsoft on submission, so once
               Neuron is listed there you will not see SmartScreen at all.
@@ -395,7 +395,7 @@ gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo sh
           <a href="./changelog.html">Changelog</a>
           <a href="./privacy.html">Privacy</a>
           <a href="./license.html">Licence</a>
-          <a data-issues href="https://github.com/shiv-khetan/Neuron/issues">Report a problem</a>
+          <a data-issues href="https://github.com/neuron-workspace/Neuron/issues">Report a problem</a>
         </nav>
       </div>
     </footer>
@@ -405,8 +405,8 @@ gh attestation verify <span id="verify-name">Neuron-win-x64.exe</span> --repo sh
       const safeName = (value, fallback) =>
         (/^[A-Za-z0-9._-]{1,100}$/.test(value ?? '') ? value : fallback);
       const owner = location.hostname.endsWith('.github.io')
-        ? safeName(location.hostname.split('.')[0], 'shiv-khetan')
-        : 'shiv-khetan';
+        ? safeName(location.hostname.split('.')[0], 'neuron-workspace')
+        : 'neuron-workspace';
       const repository = safeName(location.pathname.split('/').filter(Boolean)[0], 'Neuron');
       const base = `https://github.com/${owner}/${repository}`;
       document.querySelectorAll('[data-issues]').forEach((a) => { a.href = `${base}/issues`; });

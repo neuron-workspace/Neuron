@@ -68,7 +68,7 @@ What does answer it, and costs nothing:
 Anyone can verify a download:
 
 ```bash
-gh attestation verify Neuron-0.4.3-win-x64.exe --repo shiv-khetan/Neuron
+gh attestation verify Neuron-0.4.3-win-x64.exe --repo neuron-workspace/Neuron
 sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
 
@@ -175,6 +175,81 @@ Two things are not done and cannot be finished from here:
 Submission, once the manifest builds: fork `flathub/flathub`, add a branch named
 for the app id containing the manifest and metainfo, and open a pull request.
 Review is manual and typically takes days to weeks.
+
+## In-app updates
+
+electron-builder already writes `latest.yml`, `latest-mac.yml` and
+`latest-linux.yml` beside the installers on every release, each carrying a
+sha512 for every artifact. **That file is the security boundary.** It is fetched
+from GitHub over HTTPS, and electron-updater refuses to install a download whose
+hash does not match it. None of that depends on the binary being code-signed,
+which matters because these builds are not.
+
+`src/main/updater.ts` decides whether to check and what counts as an update.
+The rules, and why each exists:
+
+| Situation | Checks? | Why |
+|---|---|---|
+| Packaged Windows or Linux | yes | The hash in `latest.yml` is the integrity check, signed or not |
+| Development build | no | Nothing to update |
+| Microsoft Store build | no | The Store updates it |
+| macOS, ad-hoc signed | **no** | Squirrel.Mac will not install into an app it cannot validate; checking would download an update, fail at install, and repeat every launch |
+| macOS, Developer ID | yes | Validation succeeds |
+| Running a prerelease | accepts prereleases | Otherwise a beta user is told they are up to date forever — the only newer versions are betas, and the updater skips those by default |
+| Running a stable build | stable only | A stable user did not opt into betas |
+
+Two things that must not be "fixed" later without understanding them:
+`verifyUpdateCodeSignature` is never disabled, and the feed URL is never set in
+code. The first would make unsigned builds work by removing a check rather than
+by not needing one; the second is how an update channel quietly stops being the
+one that was built and tested. `tools/updater.test.mjs` asserts both, so a
+future edit that reaches for either fails the suite.
+
+When a Windows certificate does arrive, it becomes an *additional* check —
+electron-updater compares the publisher name on the downloaded installer against
+the running one. Nothing here has to change to enable it.
+
+## Package managers
+
+`.github/workflows/package-managers.yml` publishes to WinGet, Chocolatey and
+Homebrew when a release is published. It is a separate workflow from
+`release.yml` on purpose: nothing in it rebuilds anything. Every package points
+at the artifacts `release.yml` already published, with the checksums of those
+exact files, so a package can never describe a build that was not released.
+
+**Prereleases do not publish.** Package managers are where people who opted into
+nothing install from. Every release so far has been a prerelease, so this is the
+normal case rather than the exception.
+
+Every step is idempotent, and the workflow can be re-run by hand
+(`workflow_dispatch` with a tag) after fixing a token — WinGet's action is a
+no-op when the version already exists, Chocolatey treats "already exists" as
+success, and the Homebrew step exits quietly when the cask already says that
+version.
+
+### What you have to set up by hand
+
+Nothing below is created automatically, and each publisher is skipped with a log
+line rather than failing the run when its secret is absent — so you can enable
+them one at a time.
+
+| Secret | Where it comes from | What to do |
+|---|---|---|
+| `WINGET_TOKEN` | A GitHub **classic** PAT with `public_repo` | Fork `microsoft/winget-pkgs` to your account first. The action pushes a branch to your fork and opens a pull request against Microsoft's repo. A fine-grained token will not work — the action needs to push to a fork it did not create. |
+| `CHOCO_API_KEY` | community.chocolatey.org → your account → API Keys | Register the `neuron` package id once by pushing manually, or the first automated push will be rejected. Chocolatey moderates new packages; expect the first version to sit in review. |
+| `HOMEBREW_TAP_TOKEN` | A GitHub PAT with `contents: write` on the tap repo | `neuron-workspace/homebrew-neuron` already exists -- the name is not a choice, `brew tap neuron-workspace/neuron` resolves to it. The workflow clones it, writes `Casks/neuron.rb` and pushes. Users then `brew tap neuron-workspace/neuron && brew install --cask neuron`. |
+
+No account is needed for any of this to keep working as it does today: with none
+of the three secrets set, the workflow runs, logs three skips, and the GitHub
+release is unaffected.
+
+### Regenerating the manifests by hand
+
+`node tools/release-manifests.mjs v0.4.5 --out release/manifests` downloads the
+published installers, hashes them, and writes the WinGet manifests, the
+Chocolatey package and the Homebrew cask. Useful for inspecting exactly what
+would be published, and for the first Chocolatey submission, which has to be
+done manually anyway.
 
 ## Testing that a build actually runs
 

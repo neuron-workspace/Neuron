@@ -17,7 +17,7 @@ with a desktop session. Clone the repository and install exactly the versions
 in the committed lockfile:
 
 ```bash
-git clone https://github.com/shiv-khetan/Neuron.git
+git clone https://github.com/neuron-workspace/Neuron.git
 cd Neuron
 npm ci
 ```

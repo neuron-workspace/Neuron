@@ -7,14 +7,14 @@
   The component id must equal the Flatpak app id and the .desktop filename.
   Flathub requires an id whose domain you demonstrably control; for a project
   hosted on GitHub that means io.github.<username>.<project>, with hyphens in
-  the username written as underscores. Hence shiv_khetan, not shiv-khetan.
+  the owner written as underscores. Hence neuron_workspace, not neuron-workspace.
 
   Validate before submitting:
     flatpak run org.freedesktop.appstream.cli validate \
-      flatpak/io.github.shiv_khetan.Neuron.metainfo.xml
+      flatpak/io.github.neuron_workspace.Neuron.metainfo.xml
 -->
 <component type="desktop-application">
-  <id>io.github.shiv_khetan.Neuron</id>
+  <id>io.github.neuron_workspace.Neuron</id>
 
   <name>Neuron</name>
   <summary>Local-first Markdown workspace with databases and canvases</summary>
@@ -22,7 +22,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
 
-  <developer id="io.github.shiv_khetan">
+  <developer id="io.github.neuron_workspace">
     <name>Shivam Khetan</name>
   </developer>
 
@@ -47,10 +47,10 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">io.github.shiv_khetan.Neuron.desktop</launchable>
-  <url type="homepage">https://github.com/shiv-khetan/Neuron</url>
-  <url type="bugtracker">https://github.com/shiv-khetan/Neuron/issues</url>
-  <url type="vcs-browser">https://github.com/shiv-khetan/Neuron</url>
+  <launchable type="desktop-id">io.github.neuron_workspace.Neuron.desktop</launchable>
+  <url type="homepage">https://github.com/neuron-workspace/Neuron</url>
+  <url type="bugtracker">https://github.com/neuron-workspace/Neuron/issues</url>
+  <url type="vcs-browser">https://github.com/neuron-workspace/Neuron</url>
 
   <!--
     Flathub requires at least one screenshot and renders the first as the
@@ -59,7 +59,7 @@
   -->
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/shiv-khetan/Neuron/main/docs/screenshots/workspace-light.png</image>
+      <image>https://raw.githubusercontent.com/neuron-workspace/Neuron/main/docs/screenshots/workspace-light.png</image>
       <caption>A dashboard note in reading view, with layout components and a live table</caption>
     </screenshot>
   </screenshots>

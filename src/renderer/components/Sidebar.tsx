@@ -3,11 +3,14 @@ import { AppWindow, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderCl
 import type { SidebarMode } from './ActivityRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
+import { searchNotes } from '../lib/search';
 
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
 
 interface SidebarProps {
   notes: string[];
+  /** Note bodies, so search can look inside them and not only at filenames. */
+  notesData?: { path: string; content: string }[];
   selectedNote: string | null;
   onSelectNote: (note: string) => void;
   onDeleteNote: (note: string) => Promise<boolean>;
@@ -81,7 +84,7 @@ function ToolbarButton({ label, onClick, busy, children }: { label: string; onCl
 }
 
 export default function Sidebar(props: SidebarProps) {
-  const { notes, selectedNote, onSelectNote, onDeleteNote, onRequestCreate, onRequestCreateFolder, onRefresh, view, mode, repositoryName, tags, onSelectTag, selectedTag } = props;
+  const { notes, notesData, selectedNote, onSelectNote, onDeleteNote, onRequestCreate, onRequestCreateFolder, onRefresh, view, mode, repositoryName, tags, onSelectTag, selectedTag } = props;
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Folders start collapsed by default — collapse them all when a workspace's
@@ -93,8 +96,16 @@ export default function Sidebar(props: SidebarProps) {
   const [refreshing, setRefreshing] = useState(false);
 
   // The search box only filters in search mode; the explorer always shows all.
-  const query = mode === 'search' ? search.trim().toLowerCase() : '';
-  const filtered = useMemo(() => notes.filter((n) => n.toLowerCase().includes(query)), [notes, query]);
+  const query = mode === 'search' ? search.trim() : '';
+
+  // Ranked over names AND bodies. This used to be a substring test against the
+  // path, so a word you knew you had written was unfindable unless it happened
+  // to be in the filename.
+  const hits = useMemo(
+    () => (query ? searchNotes(notesData ?? notes.map((path) => ({ path, content: '' })), query) : []),
+    [notesData, notes, query],
+  );
+  const filtered = useMemo(() => (query ? hits.map((hit) => hit.path) : notes), [hits, notes, query]);
   const tree = useMemo(() => buildTree(filtered), [filtered]);
 
   useEffect(() => {
@@ -230,7 +241,36 @@ export default function Sidebar(props: SidebarProps) {
             </label>
             <p className="mt-1.5 px-0.5 text-[11px] text-[var(--ink-muted)]">{filtered.length} of {notes.length} notes</p>
           </div>
-          {noteTree}
+          {query ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
+              {hits.map((hit) => (
+                <button
+                  key={hit.path}
+                  onClick={() => onSelectNote(hit.path)}
+                  className={cn(
+                    'interactive block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--surface-hover)]',
+                    selectedNote === hit.path && 'bg-[var(--surface-hover)]',
+                  )}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                    <span className="truncate text-xs font-medium text-[var(--ink)]">{hit.path}</span>
+                  </div>
+                  {/* The line that matched, so a body hit does not look like a
+                      filename hit with nothing behind it. */}
+                  {hit.matches.map((match) => (
+                    <div key={match.line} className="mt-0.5 flex gap-1.5 pl-5">
+                      <span className="shrink-0 font-mono text-[10px] tabular-nums text-[var(--ink-muted)]">{match.line}</span>
+                      <span className="truncate font-mono text-[10px] leading-4 text-[var(--ink-secondary)]">{match.text}</span>
+                    </div>
+                  ))}
+                </button>
+              ))}
+              {hits.length === 0 && (
+                <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">No notes match your search.</div>
+              )}
+            </div>
+          ) : noteTree}
         </section>
       )}
 

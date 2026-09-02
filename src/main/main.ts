@@ -11,6 +11,8 @@ import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htm
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
+import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
+import { configureUpdater } from './updater';
 import * as path from 'path';
 import * as fs from 'fs';
 import chokidar from 'chokidar';
@@ -113,12 +115,13 @@ function ensureDefaultRepo(): void {
     settings.repositories.recent = [...settings.repositories.recent, demo];
   }
 
-  // Auto-open the demo on a genuine first run (no valid active repo yet).
-  if (!settings.seededDemo) {
-    const hasValidCurrent = !!settings.repositories.current && isDir(settings.repositories.current);
-    if (!hasValidCurrent && demoExists) settings.repositories.current = demo;
-    settings.seededDemo = true;
-  }
+  // A first run no longer silently adopts the bundled demo. It used to, which
+  // meant the app opened writing into its own installation directory -- inside
+  // Program Files for a packaged build, and inside the git checkout for a
+  // developer, where every edit showed up as a change to the repository. The
+  // workspace is the user's, so they choose where it lives; leaving `current`
+  // unset is what makes the chooser appear.
+  if (!settings.seededDemo) settings.seededDemo = true;
 
   writeSettings(settings);
 }
@@ -129,6 +132,13 @@ function setActiveRepo(dir: string): void {
   settings.repositories.recent = [dir, ...settings.repositories.recent.filter((p) => p !== dir)].slice(0, 8);
   writeSettings(settings);
   revokeAllViewSessions(); // HTMX view tokens are workspace-bound
+  // The shell's working directory is fixed when it starts, and since the panel
+  // reuses one shell for the life of the window it would otherwise sit in the
+  // previous workspace forever. Ending it here lets the panel start a new one
+  // rooted in the workspace the user just opened. Writing `cd` into the running
+  // shell would be shell-specific, land in their scrollback, and break if they
+  // were mid-command.
+  disposeWindowPty();
   setupWatcher();
   if (mainWindow) mainWindow.webContents.send('repository:changed', repoInfo(dir));
 }
@@ -377,6 +387,48 @@ ipcMain.handle('repository:create', async () => {
   return repoInfo(dir);
 });
 
+ipcMain.handle('templates:list', () =>
+  listTemplates(templatesRoot(app.isPackaged, process.resourcesPath)));
+
+/**
+ * Copy a template into a folder the user picks, then open it.
+ *
+ * The copy is the point: the bundled template stays pristine and read-only
+ * inside the installation, and the user gets their own writable notes wherever
+ * they keep their files. Opening the bundled folder directly is what put the
+ * app's own installation directory on the writing end of every edit.
+ */
+ipcMain.handle('templates:create', async (_event, templateId: string) => {
+  if (!mainWindow) return null;
+
+  const templates = listTemplates(templatesRoot(app.isPackaged, process.resourcesPath));
+  const template = templates.find((t) => t.id === templateId);
+  if (!template) return { error: `No template called "${templateId}".` };
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: `Where should the ${template.name} workspace go?`,
+    buttonLabel: 'Create here',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const dir = result.filePaths[0];
+  // Refuse rather than merge. Copying a template over someone's existing notes
+  // is not something they can undo from in here.
+  if (hasNotes(dir)) {
+    return { error: 'That folder already contains notes. Choose an empty folder, or open it directly instead.' };
+  }
+
+  try {
+    copyTemplate(template.source, dir);
+  } catch (err) {
+    return { error: `Could not create the workspace: ${(err as Error).message}` };
+  }
+
+  setActiveRepo(dir);
+  return { repository: repoInfo(dir) };
+});
+
 ipcMain.handle('repository:open', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -444,7 +496,13 @@ function walkRepoFiles(repo: string): string[] {
   const files: string[] = [];
   const scanDir = (dir: string) => {
     for (const item of fs.readdirSync(dir)) {
-      if (item.startsWith('.')) continue;
+      // Dot-entries are noise -- .git, .obsidian, editor droppings -- with one
+      // exception. `.neuron` is the workspace's own configuration, and
+      // `.neuron/layout.json` is the one file in there a person would want to
+      // edit by hand. The watcher already made this exception; the lister did
+      // not, so the file changed under a watcher that reported it and a list
+      // that had never heard of it.
+      if (item.startsWith('.') && !(dir === repo && item === '.neuron')) continue;
       const fullPath = path.join(dir, item);
       const stat = fs.statSync(fullPath);
       if (stat.isDirectory()) scanDir(fullPath);
@@ -596,13 +654,102 @@ ipcMain.handle('terminal:run', async (_event, cmd: string) => {
 const ptys = new Map<number, pty.IPty>();
 const ptyHistory = new Map<number, string>();
 const TERMINAL_HISTORY_LIMIT = 200 * 1024;
-let windowPtyId: number | null = null;
+
+/**
+ * One shell per terminal, identified by a key the renderer chooses.
+ *
+ * This replaces a single shell per window. That model fixed a real bug -- a
+ * panel that remounted used to abandon its shell, losing any command queued
+ * against it -- but it went too far: every terminal on screen then shared one
+ * shell, so a workspace whose layout declares a terminal AND the terminal panel
+ * showed the same session twice, echoing each other keystroke for keystroke.
+ *
+ * A key separates the two questions. The same key means "this is the terminal I
+ * had before", so a remount reattaches and keeps its scrollback. A different key
+ * means a genuinely different terminal, with its own shell. Tabs are just more
+ * keys.
+ */
+const ptyByKey = new Map<string, number>();
 let nextPtyId = 1;
 
-const defaultShell = () =>
-  process.platform === 'win32'
-    ? process.env.COMSPEC || 'cmd.exe'
-    : process.env.SHELL || '/bin/bash';
+/** The first of these that exists on PATH, or null. */
+function onPath(candidates: string[]): string | null {
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  for (const candidate of candidates) {
+    for (const dir of dirs) {
+      try {
+        const full = path.join(dir, candidate);
+        if (fs.existsSync(full)) return full;
+      } catch { /* unreadable PATH entry */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * PowerShell on Windows, not cmd.
+ *
+ * Notes are written once and opened on whatever machine the workspace lands on,
+ * so a `<Run />` button saying `ls` is the normal case rather than a mistake.
+ * cmd.exe answers that with "'ls' is not recognized"; PowerShell ships `ls`,
+ * `pwd`, `cat` and `rm` as aliases, so the same note works on all three
+ * platforms without pretending Windows is Linux.
+ *
+ * pwsh is preferred because it is the maintained one. COMSPEC remains the last
+ * resort for a machine with neither, which is not a machine PowerShell was ever
+ * removed from -- it is one where PATH is unusual.
+ */
+const defaultShell = () => {
+  if (process.platform !== 'win32') return process.env.SHELL || '/bin/bash';
+  return onPath(['pwsh.exe', 'powershell.exe']) ?? process.env.COMSPEC ?? 'cmd.exe';
+};
+
+/**
+ * Sequences that mean "what came before this is gone".
+ *
+ *   ESC[2J  erase the screen        ESC[3J  erase the scrollback
+ *   ESC c   full reset
+ *
+ * Kept out of the append below so the intent is readable rather than a regex
+ * in a hot path.
+ */
+const CLEARS_SCREEN = /\x1b\[[23]J|\x1bc/g;
+
+/**
+ * Add pty output to the replayable history.
+ *
+ * The history exists so a panel that remounts does not show an empty pane; it
+ * is replayed verbatim on attach. That made `cls` look broken: the shell
+ * cleared the screen, but the erased output was still in this buffer and came
+ * straight back on the next attach. Anything before the last clear is gone as
+ * far as the user is concerned, so it goes here too.
+ */
+function appendHistory(history: string, data: string): string {
+  let next = history + data;
+
+  CLEARS_SCREEN.lastIndex = 0;
+  let cut = -1;
+  for (let m = CLEARS_SCREEN.exec(next); m; m = CLEARS_SCREEN.exec(next)) cut = m.index;
+  if (cut >= 0) next = next.slice(cut);
+
+  return next.length > TERMINAL_HISTORY_LIMIT ? next.slice(-TERMINAL_HISTORY_LIMIT) : next;
+}
+
+/**
+ * End every shell, so the next attach starts one in the current workspace.
+ *
+ * All of them, not just the focused one: a shell cannot change the directory it
+ * was started in, so after opening a different workspace every existing shell is
+ * pointing at the old one.
+ */
+function disposeWindowPty(): void {
+  for (const id of ptyByKey.values()) {
+    try { ptys.get(id)?.kill(); } catch { /* already gone */ }
+    ptys.delete(id);
+    ptyHistory.delete(id);
+  }
+  ptyByKey.clear();
+}
 
 function killAllPtys() {
   for (const p of ptys.values()) {
@@ -610,21 +757,23 @@ function killAllPtys() {
   }
   ptys.clear();
   ptyHistory.clear();
-  windowPtyId = null;
+  ptyByKey.clear();
 }
 
-ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number } = {}) => {
-  if (windowPtyId != null) {
-    const existing = ptys.get(windowPtyId);
+ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; key?: string } = {}) => {
+  const key = opts.key || 'default';
+  const known = ptyByKey.get(key);
+  if (known != null) {
+    const existing = ptys.get(known);
     if (existing) {
       try {
         existing.resize(Math.max(1, opts.cols ?? 80), Math.max(1, opts.rows ?? 24));
-        return windowPtyId;
+        return known;
       } catch { /* pty closed; replace it below */ }
     }
-    ptys.delete(windowPtyId);
-    ptyHistory.delete(windowPtyId);
-    windowPtyId = null;
+    ptys.delete(known);
+    ptyHistory.delete(known);
+    ptyByKey.delete(key);
   }
 
   const id = nextPtyId++;
@@ -645,16 +794,15 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number }
   }
   ptys.set(id, proc);
   ptyHistory.set(id, '');
-  windowPtyId = id;
+  ptyByKey.set(key, id);
   proc.onData((data) => {
-    const history = (ptyHistory.get(id) ?? '') + data;
-    ptyHistory.set(id, history.length > TERMINAL_HISTORY_LIMIT ? history.slice(-TERMINAL_HISTORY_LIMIT) : history);
+    ptyHistory.set(id, appendHistory(ptyHistory.get(id) ?? '', data));
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:data', id, data);
   });
   proc.onExit(({ exitCode }) => {
     ptys.delete(id);
     ptyHistory.delete(id);
-    if (windowPtyId === id) windowPtyId = null;
+    if (ptyByKey.get(key) === id) ptyByKey.delete(key);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', id, exitCode);
   });
   return id;
@@ -874,14 +1022,45 @@ initHtmxViews({
   },
 });
 
+/**
+ * Whether this build carries a real code signature.
+ *
+ * Only macOS is asked, and only because Squirrel.Mac refuses to install into an
+ * app it cannot validate — an ad-hoc signature, which is what these builds have,
+ * is not one. `CodeResources` exists for any signed bundle; a Developer ID adds
+ * a provisioning profile, but its absence is not what decides this.
+ */
+function hasCodeSignature(): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    // Contents/MacOS/<exe> -> Contents
+    const contents = path.dirname(path.dirname(app.getPath('exe')));
+    return fs.existsSync(path.join(contents, '_CodeSignature', 'CodeResources'))
+      && fs.existsSync(path.join(contents, 'embedded.provisionprofile'));
+  } catch {
+    return false;
+  }
+}
+
 app.on('ready', () => {
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
   createWindow();
-  // GitHub-backed auto-update for NSIS builds. Store builds
-  // (process.windowsStore) update through the Store, so skip them; dev skips too.
-  if (app.isPackaged && app.getName() === 'neuron' && !(process as NodeJS.Process & { windowsStore?: boolean }).windowsStore) {
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('Update check failed:', err));
+  // GitHub-backed in-app updates. What counts as an update, and whether to look
+  // at all, lives in ./updater so the rules are testable without Electron --
+  // every branch there is a case where getting it wrong either offers an update
+  // that cannot install or silently offers none.
+  if (app.getName() === 'neuron') {
+    const decision = configureUpdater(autoUpdater, {
+      platform: process.platform,
+      packaged: app.isPackaged,
+      windowsStore: !!(process as NodeJS.Process & { windowsStore?: boolean }).windowsStore,
+      version: app.getVersion(),
+      signed: hasCodeSignature(),
+    });
+    if (decision.check) {
+      autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('Update check failed:', err));
+    }
   }
 });
 app.on('window-all-closed', () => {

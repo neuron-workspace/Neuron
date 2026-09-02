@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/shiv-khetan/Neuron/security/advisories/new
+    url: https://github.com/neuron-workspace/Neuron/security/advisories/new
     about: Report unpatched vulnerabilities privately. Do not open a public issue.
   - name: Contribution guide
-    url: https://github.com/shiv-khetan/Neuron/blob/main/.github/CONTRIBUTING.md
+    url: https://github.com/neuron-workspace/Neuron/blob/main/.github/CONTRIBUTING.md
     about: Read the contribution requirements before proposing a pull request.
