@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -14,6 +14,7 @@ import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import { configureUpdater } from './updater';
 import { createDiagnosticLogger, errorDetails } from './diagnostic-logger';
+import { configureCrashReporter } from './crash-reporter';
 import { workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -26,6 +27,19 @@ let mainWindow: BrowserWindow | null = null;
 let watcher: chokidar.FSWatcher | null = null;
 const diagnostics = createDiagnosticLogger(app.getPath('logs'));
 let handlingFatalError = false;
+
+// Before anything else, including the handlers below.
+//
+// Those catch what JavaScript can catch. They cannot catch a crash beneath it:
+// a Chromium CHECK() failure calls __debugbreak(), which terminates the process
+// with EXCEPTION_BREAKPOINT before any handler runs -- Windows shows its own
+// "a breakpoint has been reached" dialog and the log file stays empty. Crashpad
+// records those because it runs out-of-process and outlives the crash.
+//
+// Started here rather than in `ready` because a crash during startup is the one
+// most worth having, and Crashpad only sees what happens after it starts.
+// Nothing is uploaded; see ./crash-reporter.
+const crashDumps = configureCrashReporter(app, crashReporter, app.getPath('logs'));
 
 process.on('uncaughtException', async (error) => {
   if (handlingFatalError) return;
@@ -1103,6 +1117,14 @@ app.on('ready', () => {
     platform: process.platform,
     arch: process.arch,
     electronVersion: process.versions.electron,
+  });
+  // Recorded so the log says where the dumps are. A native crash writes a dump
+  // and nothing else -- if the two are not findable together, whoever reads the
+  // log later has no reason to think a dump exists at all.
+  void diagnostics.write({
+    level: 'info',
+    category: 'app.crash-dumps',
+    message: `Native crash dumps (local only, never uploaded): ${crashDumps}`,
   });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
