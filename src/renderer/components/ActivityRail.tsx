@@ -70,7 +70,10 @@ export default function ActivityRail(props: ActivityRailProps) {
         <RailButton label="Component gallery" active={view === 'gallery'} onClick={() => onNavigate('gallery')}>
           <LayoutGrid className="h-[18px] w-[18px]" />
         </RailButton>
-        <RailButton label="Integrations & Plugins" active={view === 'plugins'} onClick={() => onNavigate('plugins')}>
+        {/* Same words as the title bar, the command palette and the page's own
+            heading. This rail said "Integrations & Plugins" and everything else
+            said "Plugins & integrations". */}
+        <RailButton label="Plugins & integrations" active={view === 'plugins'} onClick={() => onNavigate('plugins')}>
           <Blocks className="h-[18px] w-[18px]" />
         </RailButton>
         <RailButton label="Settings" active={view === 'settings'} onClick={() => onNavigate('settings')}>

@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Eye, PenLine, SplitSquareHorizontal } from 'lucide-react';
+import { Segmented, type SegmentedOption } from '../components/ui/segmented';
 import Editor from '../components/Editor';
 import LiveEditor from '../components/LiveEditor';
 import GraphCanvas from '../components/GraphCanvas';
@@ -90,7 +92,16 @@ function GraphPanel({ spec, surface }: PanelContext) {
   );
 }
 
-type EditMode = 'reading' | 'live' | 'split';
+export type EditMode = 'reading' | 'live' | 'split';
+
+/** The one place the three view modes are named, shared with App's own switch
+    so a note does not offer "Reading view" in one shell and "reading" in the
+    other. */
+export const EDIT_MODES: SegmentedOption<EditMode>[] = [
+  { value: 'reading', label: 'Reading', icon: <Eye className="h-3.5 w-3.5" /> },
+  { value: 'live', label: 'Live', icon: <PenLine className="h-3.5 w-3.5" /> },
+  { value: 'split', label: 'Split', icon: <SplitSquareHorizontal className="h-3.5 w-3.5" /> },
+];
 
 // The main slot in a neuron.config shell. Three views like the standalone editor:
 // reading (default), live editor (double-click to enter), and split source+preview.
@@ -156,18 +167,8 @@ function EditorPanel({ surface }: PanelContext) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-0.5 border-b border-[var(--divider)] px-2 py-1">
-        {(['reading', 'live', 'split'] as EditMode[]).map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={mode === m}
-            onClick={() => setMode(m)}
-            className={`interactive rounded px-2 py-0.5 text-[11px] font-medium capitalize ${mode === m ? 'bg-[var(--surface-hover)] text-[var(--ink)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'}`}
-          >
-            {m}
-          </button>
-        ))}
+      <div className="flex items-center border-b border-[var(--divider)] px-2 py-1.5">
+        <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />
       </div>
       <div className="min-h-0 flex-1">
         {mode === 'reading' && (

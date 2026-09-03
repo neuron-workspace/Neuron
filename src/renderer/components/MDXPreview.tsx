@@ -190,7 +190,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           <pre
             key={`code-${i}`}
             onClick={() => lineClick(startLine)}
-            className="work-surface my-5 overflow-x-auto rounded-md border p-4 font-mono text-sm text-[var(--md-text)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            className="work-surface my-5 cursor-pointer overflow-x-auto rounded-md border p-4 font-mono text-sm text-[var(--md-text)] transition-colors duration-150 hover:border-[var(--ink-muted)]"
           >
             {lang && <div className="mb-2 text-[10px] font-medium text-muted">{lang}</div>}
             <code>{codeText}</code>
@@ -217,7 +217,10 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           <div
             key={`table-${i}`}
             onClick={() => lineClick(startLine)}
-            className="my-5 overflow-x-auto rounded-md border border-[var(--divider)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            // Hovering a block to jump to its source is not selection, focus or
+            // a primary action, so it does not get the accent. It lights the
+            // frame one step, the way every other row in the app does.
+            className="my-5 cursor-pointer overflow-x-auto rounded-md border border-[var(--divider)] transition-colors duration-150 hover:border-[var(--ink-muted)]"
           >
             <table className="w-full min-w-[32rem] border-collapse font-sans text-sm text-[var(--md-text)]">
               <thead className="bg-[var(--surface)] text-[var(--md-heading)]">
@@ -456,7 +459,11 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         <h1
           key={index}
           onClick={() => lineClick(index)}
-          className="mt-7 mb-3 border-b divider-color pb-3 font-sans text-2xl font-semibold text-[var(--md-heading)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
+          // No rule under the heading. Size and weight already separate an h1
+          // from the paragraph below it; the border added a second, louder
+          // signal saying the same thing, and every document opened with a line
+          // across it.
+          className="-mx-1 mb-3 mt-7 cursor-pointer rounded px-1 font-sans text-2xl font-semibold text-[var(--md-heading)] transition-colors duration-150 hover:bg-[var(--surface)]"
         >
           {text.slice(2)}
         </h1>

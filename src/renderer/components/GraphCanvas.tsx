@@ -32,6 +32,16 @@ interface GraphCanvasProps {
   searchQuery?: string;
   /** Optional empty-state hint. */
   emptyHint?: string;
+  /**
+   * Rendered small -- the 248px floating overlay rather than a full pane.
+   *
+   * Label placement is in graph units, so the same policy that reads cleanly
+   * across a pane puts every name on top of its neighbours once the same graph
+   * is drawn a fifth of the size. A 24-note workspace produced seven pairs of
+   * overlapping labels and five running off the edge, which reads as a
+   * rendering fault rather than a map.
+   */
+  compact?: boolean;
 }
 
 const HEX = 46; // distance unit between hex cells
@@ -74,7 +84,7 @@ function radiusFor(degree: number): number {
  * connected notes stay a step lighter, and the rest of the graph dims but stays
  * visible so the wider structure is never lost.
  */
-export default function GraphCanvas({ notesData, onSelectNote, selectedNote, searchQuery, emptyHint }: GraphCanvasProps) {
+export default function GraphCanvas({ notesData, onSelectNote, selectedNote, searchQuery, emptyHint, compact }: GraphCanvasProps) {
   const { nodes, links, extent } = useMemo(() => {
     // Links first, because placement depends on them. Previously nodes were
     // laid out in array order and the links were derived afterwards, so two
@@ -290,9 +300,10 @@ export default function GraphCanvas({ notesData, onSelectNote, selectedNote, sea
     return { hasFocus: focus, neighbours: near };
   }, [selectedNote, links, nodeById]);
 
-  // Labels get noisy on big graphs; when focused, only the neighbourhood keeps
-  // its label (others reveal on hover via the .graph-node:hover rule).
-  const showAllLabels = nodes.length <= 120;
+  // Labels get noisy on big graphs, and at overlay size they are noisy on every
+  // graph; when focused, only the neighbourhood keeps its label (others reveal
+  // on hover via the .graph-node:hover rule).
+  const showAllLabels = !compact && nodes.length <= 120;
 
   // The same ranking the sidebar uses, so the two never disagree about what
   // matched.

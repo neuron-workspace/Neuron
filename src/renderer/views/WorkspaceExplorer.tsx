@@ -67,59 +67,68 @@ export default function WorkspaceExplorer({
 
   return (
     <section className="h-full overflow-y-auto" data-workspace-explorer data-explorer-paths={paths.length}>
-      <div className="mx-auto w-full max-w-3xl px-8 pb-16 pt-8">
+      <div className="mx-auto w-full max-w-2xl px-8 pb-16 pt-8">
+        {/* At the root the breadcrumb, the heading and the section label were
+            all the workspace's name, stacked: the same word three times before
+            a single file. The trail only earns its place once there is
+            somewhere to go back to. */}
         <header>
-          <nav className="flex flex-wrap items-center gap-1 text-xs text-[var(--ink-secondary)]" aria-label="Breadcrumb">
-            <button
-              type="button"
-              className="interactive rounded px-1.5 py-0.5 font-medium hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
-              onClick={() => onNavigate('')}
-            >
-              {repositoryName}
-            </button>
-            {trail.map((crumb, index) => (
-              <React.Fragment key={crumb.path}>
-                <span aria-hidden="true" className="text-[var(--ink-muted)]">/</span>
-                <button
-                  type="button"
-                  className="interactive rounded px-1.5 py-0.5 hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
-                  aria-current={index === trail.length - 1 ? 'page' : undefined}
-                  onClick={() => onNavigate(crumb.path)}
-                >
-                  {crumb.name}
-                </button>
-              </React.Fragment>
-            ))}
-          </nav>
+          {!atRoot && (
+            <nav className="flex flex-wrap items-center gap-0.5 text-xs text-[var(--ink-secondary)]" aria-label="Breadcrumb">
+              <button
+                type="button"
+                className="interactive rounded px-1.5 py-0.5 font-medium hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+                onClick={() => onNavigate('')}
+              >
+                {repositoryName}
+              </button>
+              {trail.slice(0, -1).map((crumb) => (
+                <React.Fragment key={crumb.path}>
+                  <span aria-hidden="true" className="text-[var(--ink-muted)]">/</span>
+                  <button
+                    type="button"
+                    className="interactive rounded px-1.5 py-0.5 hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+                    onClick={() => onNavigate(crumb.path)}
+                  >
+                    {crumb.name}
+                  </button>
+                </React.Fragment>
+              ))}
+            </nav>
+          )}
 
           {/* Controls sit beside the heading rather than pushed to the right
               edge. The workspace-map overlay is pinned to the top-right of the
               editor area, and anything placed under it is unclickable -- the
               button renders, stays perfectly still, and silently swallows every
               click into the graph's SVG. */}
-          <div className="mt-3 flex items-baseline gap-3">
-            <h1 className="min-w-0 truncate text-base font-semibold text-[var(--ink)]">
-              {atRoot ? repositoryName : trail[trail.length - 1].name}
-            </h1>
+          <div className={`flex items-center gap-2 ${atRoot ? '' : 'mt-2'}`}>
             {!atRoot && (
               <button
                 type="button"
-                className="interactive flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+                title="Go to the parent folder"
+                className="interactive -ml-1 flex min-h-[var(--control-sm)] shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
                 onClick={() => onNavigate(parentFolder(folder))}
               >
                 <ArrowUp className="h-3.5 w-3.5" /> Up
               </button>
             )}
+            <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight text-[var(--ink)]">
+              {atRoot ? repositoryName : trail[trail.length - 1].name}
+            </h1>
+            <span className="shrink-0 text-xs tabular-nums text-[var(--ink-muted)]">
+              {folders.length + files.length} {folders.length + files.length === 1 ? 'item' : 'items'}
+            </span>
           </div>
         </header>
 
         {showRecents && (
-          <section className="mt-7" aria-labelledby="explorer-recent">
+          <section className="mt-6" aria-labelledby="explorer-recent">
             {/* Left-aligned for the same reason as the Up button above: the
                 right edge of the editor area is under the graph overlay. */}
-            <div className="flex items-center gap-3">
-              <h2 id="explorer-recent" className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
-                <Clock className="h-3.5 w-3.5" /> Recent
+            <div className="flex items-center gap-2">
+              <h2 id="explorer-recent" className="flex items-center gap-1.5 text-xs font-medium text-[var(--ink-secondary)]">
+                <Clock className="h-3.5 w-3.5 text-[var(--ink-muted)]" /> Recent
               </h2>
               <button
                 type="button"
@@ -129,7 +138,7 @@ export default function WorkspaceExplorer({
                 <Trash2 className="h-3.5 w-3.5" /> Clear
               </button>
             </div>
-            <ul className="mt-2 grid gap-0.5 sm:grid-cols-2">
+            <ul className="mt-1.5 grid gap-0.5 sm:grid-cols-2">
               {recents.map((entry) => {
                 const name = entry.path.slice(entry.path.lastIndexOf('/') + 1);
                 const where = parentFolder(entry.path);
@@ -154,38 +163,38 @@ export default function WorkspaceExplorer({
           </section>
         )}
 
-        <section className="mt-7" aria-labelledby="explorer-contents">
-          <h2 id="explorer-contents" className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
-            {atRoot ? 'Workspace' : 'Contents'}
-          </h2>
-
+        {/* No section heading here. The h1 above already names the folder and
+            counts what is in it; a second label under it said the same thing
+            in small caps. */}
+        <section className="mt-4" aria-label={atRoot ? 'Workspace contents' : `Contents of ${trail[trail.length - 1].name}`}>
           {folders.length === 0 && files.length === 0 ? (
-            <p className="mt-3 text-sm text-[var(--ink-secondary)]">
+            <p className="text-sm text-[var(--ink-secondary)]">
               {paths.length === 0
                 ? 'This workspace has no notes yet. Create one from the sidebar to begin.'
                 : 'This folder is empty.'}
             </p>
           ) : (
-            <ul className="mt-2 grid gap-0.5">
+            <ul className="grid gap-px">
               {folders.map((entry) => (
                 <li key={entry.path}>
                   <button type="button" className={ROW} data-folder={entry.path} onClick={() => openFolder(entry)}>
                     <Folder className="h-4 w-4 shrink-0 text-[var(--ink-muted)]" />
                     <span className="min-w-0 flex-1 truncate text-sm text-[var(--ink)]">{entry.name}</span>
                     <span className="shrink-0 text-xs tabular-nums text-[var(--ink-muted)]">
-                      {entry.count} {entry.count === 1 ? 'file' : 'files'}
+                      {entry.count}
                     </span>
                   </button>
                 </li>
               ))}
+              {/* Files carry no trailing badge. The extension was spelled out
+                  on the right of every row -- MD, MDX, CANVAS -- restating the
+                  icon on the left and the suffix already in the name, with the
+                  width of the pane of empty space in between. */}
               {files.map((entry) => (
                 <li key={entry.path}>
                   <button type="button" className={ROW} data-file={entry.path} onClick={() => openFile(entry)}>
                     <FileIcon extension={entry.extension} />
                     <span className="min-w-0 flex-1 truncate text-sm text-[var(--ink)]">{entry.name}</span>
-                    {entry.extension && (
-                      <span className="shrink-0 text-xs uppercase text-[var(--ink-muted)]">{entry.extension}</span>
-                    )}
                   </button>
                 </li>
               ))}

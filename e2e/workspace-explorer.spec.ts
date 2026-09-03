@@ -12,7 +12,11 @@ const explorer = '[data-workspace-explorer]';
 
 test('with nothing open, the editor area is the explorer rather than a blank panel', async ({ page }) => {
   await expect(page.locator(explorer)).toBeVisible();
-  await expect(page.locator(`${explorer} h2`).first()).toBeVisible();
+  // The heading names the folder being browsed. At the root there is no
+  // section label under it any more -- it repeated the workspace name a third
+  // time, after the breadcrumb and the heading -- so the h1 is what proves the
+  // view rendered rather than the first h2.
+  await expect(page.locator(`${explorer} h1`)).toBeVisible();
 });
 
 test('opening a file from the explorer dismisses it', async ({ page }) => {

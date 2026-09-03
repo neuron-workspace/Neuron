@@ -131,7 +131,7 @@ export default function TitleBar(props: TitleBarProps) {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="titlebar-no-drag interactive flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
+            <button className="titlebar-no-drag interactive flex min-h-[var(--control-sm)] min-w-0 items-center gap-1.5 rounded-md px-2 text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
               <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
               <span className="max-w-[160px] truncate text-xs font-medium">{repository?.name ?? 'No workspace'}</span>
               {repository?.cloud && <Cloud className="h-3 w-3 shrink-0 text-[var(--ink-muted)]" />}

@@ -62,7 +62,12 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
   return (
     <div
       ref={boxRef}
-      className="pointer-events-auto absolute z-20 overflow-hidden rounded-lg border divider-color bg-[var(--surface)] shadow-lg"
+      // --z-overlay, not a raw z-20. index.css defines a semantic scale
+      // (panel 30 < overlay 50 < modal 60) and this floated at 20, below the
+      // hover-revealed close button of the panel it floats over -- so reaching
+      // for the graph's own close button revealed that one on the way and
+      // clicked it instead, if it landed at all.
+      className="pointer-events-auto absolute z-[var(--z-overlay)] overflow-hidden rounded-lg border divider-color bg-[var(--surface)] shadow-lg"
       style={pos
         ? { left: pos.x, top: pos.y, width: SIZE, height: SIZE }
         : { right: EDGE, top: DEFAULT_TOP, width: SIZE, height: SIZE }}
@@ -74,6 +79,7 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
         onSelectNote={onSelectNote}
         selectedNote={selectedNote}
         emptyHint="Links between notes appear here."
+        compact
       />
 
       {/* Two separate affordances on purpose. Dragging the canvas pans the
@@ -87,7 +93,7 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
           onPointerMove={onDrag}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
-          className="interactive grid h-6 w-6 cursor-grab place-items-center rounded-md bg-[var(--surface)]/85 text-[var(--ink-muted)] backdrop-blur-sm transition-colors duration-150 hover:bg-[var(--surface-hover)] hover:text-[var(--ink)] active:cursor-grabbing"
+          className="tool-button interactive cursor-grab bg-[var(--surface)] active:cursor-grabbing"
         >
           <GripVertical className="h-3.5 w-3.5" />
         </button>
@@ -95,7 +101,7 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
           type="button"
           onClick={onClose}
           aria-label="Hide graph"
-          className="interactive grid h-6 w-6 place-items-center rounded-md bg-[var(--surface)]/85 text-[var(--ink-muted)] backdrop-blur-sm transition-colors duration-150 hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+          className="tool-button interactive bg-[var(--surface)]"
         >
           <X className="h-3.5 w-3.5" />
         </button>
