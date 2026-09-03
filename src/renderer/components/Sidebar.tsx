@@ -20,6 +20,8 @@ interface SidebarProps {
   view: View;
   mode: SidebarMode;
   repositoryName: string;
+  /** Show the workspace explorer, without closing anything already open. */
+  onGoHome: () => void;
   tags: string[];
   onSelectTag: (tag: string | null) => void;
   selectedTag: string | null;
@@ -84,7 +86,7 @@ function ToolbarButton({ label, onClick, busy, children }: { label: string; onCl
 }
 
 export default function Sidebar(props: SidebarProps) {
-  const { notes, notesData, selectedNote, onSelectNote, onDeleteNote, onRequestCreate, onRequestCreateFolder, onRefresh, view, mode, repositoryName, tags, onSelectTag, selectedTag } = props;
+  const { notes, notesData, selectedNote, onSelectNote, onDeleteNote, onRequestCreate, onRequestCreateFolder, onRefresh, view, mode, repositoryName, onGoHome, tags, onSelectTag, selectedTag } = props;
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Folders start collapsed by default — collapse them all when a workspace's
@@ -214,7 +216,18 @@ export default function Sidebar(props: SidebarProps) {
           <div className="flex items-center justify-between gap-1 border-b divider-color px-3 py-2">
             <div className="flex min-w-0 items-center gap-1.5">
               <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
-              <span className="truncate text-xs font-semibold text-[var(--ink)]" title={repositoryName}>{repositoryName}</span>
+              {/* The workspace name is the way back to the explorer, and it
+                  stays available while notes are open -- going home does not
+                  close anything, so the tabs are still there to return to. */}
+              <button
+                type="button"
+                className="interactive truncate rounded px-1 text-left text-xs font-semibold text-[var(--ink)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                title={`${repositoryName} — workspace home`}
+                data-workspace-home
+                onClick={onGoHome}
+              >
+                {repositoryName}
+              </button>
               <span className="shrink-0 rounded bg-[var(--surface)] px-1.5 font-mono text-[10px] tabular-nums text-[var(--ink-muted)]">{filtered.length}</span>
             </div>
             <div className="flex shrink-0 items-center">
