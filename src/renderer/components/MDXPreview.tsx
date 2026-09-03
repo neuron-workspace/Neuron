@@ -125,7 +125,11 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         remediation: remediation,
       });
 
-      // Log to .agents/errors.json via IPC
+      // To the diagnostic log under the app's logs directory, via IPC. This
+      // used to name .agents/errors.json, which was gitignored tooling that
+      // never shipped and was resolved against the process working directory.
+      // The message embeds the offending block, so the main side redacts style
+      // and code content before it reaches disk.
       if (window.electronAPI && window.electronAPI.logError) {
         window.electronAPI.logError({
           phase: 'COMPILATION',

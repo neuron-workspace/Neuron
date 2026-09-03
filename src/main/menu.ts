@@ -109,6 +109,11 @@ export function buildMacApplicationMenu(getWindow: () => BrowserWindow | null): 
       role: 'help',
       submenu: [
         {
+          label: 'Open Logs Folder',
+          click: () => { void shell.openPath(app.getPath('logs')); },
+        },
+        { type: 'separator' },
+        {
           label: 'Neuron on GitHub',
           click: () => { void shell.openExternal('https://github.com/neuron-workspace/Neuron'); },
         },

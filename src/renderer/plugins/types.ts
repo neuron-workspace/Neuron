@@ -37,6 +37,7 @@ export interface HostRuntime {
   activeNote: string | null;
   noteContent: string;
   notes: string[];
+  notesData: { path: string; content: string }[];
   openNote: (path: string) => void;
   createNote: (relativePath: string, content?: string) => Promise<boolean>;
   refreshNotes: () => Promise<void>;
