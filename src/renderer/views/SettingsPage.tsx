@@ -43,6 +43,12 @@ function AboutSection() {
       <p className="mt-1 text-xs text-[var(--ink-muted)]">
         Neuron collects nothing about you. No account, no telemetry, no analytics.
       </p>
+      <div className="mt-4">
+        <Button type="button" variant="outline" size="sm" onClick={() => void window.electronAPI.diagnostics.openLogs()}>
+          Open logs folder
+        </Button>
+        <p className="mt-1 text-[11px] text-[var(--ink-muted)]">Diagnostics stay on this device and never include note contents.</p>
+      </div>
       <ul className="mt-4 space-y-3">
         {LINKS.map((link) => (
           <li key={link.url}>
