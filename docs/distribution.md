@@ -233,6 +233,19 @@ Checked 5 September 2026, against 0.4.5.
 | Chocolatey | **Submitted, awaiting a human moderator.** All three automated checks (validation, verification, virus scan) pass. | `choco install neuron` — see the caveat below |
 | WinGet | **Not submitted.** `NeuronWorkspace.Neuron` does not exist in `microsoft/winget-pkgs` yet, and the action cannot create it. | nothing yet |
 
+Homebrew matters more on macOS than the table makes it look. `updater.ts` turns
+in-app updates off entirely on darwin without a Developer ID signature, because
+Squirrel.Mac would download every update, fail at the install step, and do it
+again on the next launch. So `brew upgrade` is not a convenience there — it is
+the only way a macOS install ever moves to a new version. The cask deliberately
+does *not* declare `auto_updates true`, and that is correct: the app genuinely
+does not update itself on that platform.
+
+Windows is the other way round: a Chocolatey install self-updates, so the
+version Chocolatey has recorded drifts behind the installed one until the next
+`choco upgrade`. That is the normal situation for a self-updating app in a
+package manager and nothing here tries to prevent it.
+
 The Chocolatey caveat is worth knowing before pointing anyone at it: an
 unapproved package is excluded from the package feed, so a bare
 `choco install neuron` cannot resolve it, while
