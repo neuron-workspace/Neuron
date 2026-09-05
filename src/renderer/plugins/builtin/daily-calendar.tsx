@@ -27,7 +27,7 @@ function DailyPanel({ host }: { host: HostRuntime }) {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-[var(--divider)] p-3">
-        <div className="text-[11px] uppercase tracking-wide text-[var(--ink-muted)]">Today</div>
+        <div className="text-[11px] font-medium text-[var(--ink-muted)]">Today</div>
         <div className="mt-0.5 text-sm font-medium text-[var(--ink)]">{formatted}</div>
         <Button size="sm" className="mt-3 w-full" onClick={() => void openOrCreateToday(host)}>
           <Plus className="h-3.5 w-3.5" /> Open today&apos;s note

@@ -7,6 +7,7 @@ import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { ScrollArea } from '../components/ui/scroll-area';
+import { Segmented } from '../components/ui/segmented';
 import { cn } from '../lib/utils';
 
 const categoryMeta: Record<PluginCategory, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -107,7 +108,11 @@ function PluginRow({
   const needsConfig = enabled && !!manifest.configSchema?.length && Object.keys(getConfig(manifest.id)).length === 0;
 
   return (
-    <div className={cn('rounded-md border p-4', enabled ? 'border-[color-mix(in_oklch,var(--accent)_34%,var(--divider))] bg-[var(--surface)]' : 'border-[var(--divider)] bg-[var(--canvas)]')}>
+    // The switch already says whether this is on. An accent border, a filled
+    // background and an "Enabled" badge said it three more times, which left
+    // nothing louder for the state that actually needs attention -- a plugin
+    // that is on but not yet configured.
+    <div className={cn('p-4', enabled && 'bg-[var(--surface)]')}>
       <div className="flex items-start gap-3">
         <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
           <Icon className="h-4 w-4" />
@@ -116,9 +121,7 @@ function PluginRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold text-[var(--ink)]">{manifest.name}</h3>
             <Badge variant="outline">{meta.label}</Badge>
-            {enabled && (needsConfig
-              ? <Badge variant="warning">Needs configuration</Badge>
-              : <Badge variant="default">Enabled</Badge>)}
+            {enabled && needsConfig && <Badge variant="warning">Needs configuration</Badge>}
           </div>
           <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">{manifest.description}</p>
           <p className="mt-1 font-mono text-[10px] text-[var(--ink-muted)]">v{manifest.version}{manifest.author ? ` · ${manifest.author}` : ''}</p>
@@ -145,7 +148,7 @@ function PluginRow({
 
 function SandboxedPluginRow({ plugin, onOpen }: { plugin: SandboxedPluginDescriptor; onOpen: () => void }) {
   return (
-    <div className="rounded-md border border-[var(--divider)] bg-[var(--canvas)] p-4">
+    <div className="p-4">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
           <LayoutGrid className="h-4 w-4" />
@@ -222,47 +225,69 @@ export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { on
 
   return (
     <div className="canvas-surface flex h-full w-full flex-col">
-      <header className="border-b divider-color px-6 py-4">
-        <h1 className="text-base font-semibold tracking-[-0.01em] text-[var(--ink)]">Integrations & Plugins</h1>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-[var(--ink-secondary)]">
-          <ShieldCheck className="h-3.5 w-3.5 text-[var(--accent-strong)]" />
-          Built-ins are trusted Neuron code. Workspace plugins run as capability-scoped HTML apps in an isolated webview.
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="relative w-full max-w-xs">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins" className="pl-8" />
-          </label>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setCategory('all')} className={cn('tag-button interactive px-2.5 text-xs', category === 'all' && 'border-[var(--accent)] bg-[var(--accent)] text-[var(--canvas)]')}>All</button>
-            {presentCategories.map((c) => (
-              <button key={c} onClick={() => setCategory(c)} className={cn('tag-button interactive px-2.5 text-xs', category === c && 'border-[var(--accent)] bg-[var(--accent)] text-[var(--canvas)]')}>{categoryMeta[c].label}</button>
-            ))}
+      {/* The header ran the full width of the window while the list below it
+          was centred in a 768px column, so the page title started 235px to the
+          left of the first plugin it introduced. One column for both. */}
+      <header className="border-b divider-color">
+        <div className="mx-auto max-w-3xl px-6 py-4">
+          {/* Named as the rest of the app names it -- the title bar, the command
+              palette and the activity rail all say "Plugins & integrations". */}
+          <h1 className="text-base font-semibold tracking-[-0.01em] text-[var(--ink)]">Plugins &amp; integrations</h1>
+          <p className="mt-1 flex items-start gap-1.5 text-xs leading-5 text-[var(--ink-secondary)]">
+            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
+            Built-ins are trusted Neuron code. Workspace plugins run as capability-scoped HTML apps in an isolated webview.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label className="relative w-full max-w-xs">
+              <span className="sr-only">Search plugins</span>
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins" className="pl-8" />
+            </label>
+            {/* One choice at a time, so the app's segmented control rather than
+                a row of chips that fill with accent and stand 4px shorter than
+                the search field beside them. */}
+            <Segmented
+              label="Filter by category"
+              value={category}
+              onChange={setCategory}
+              options={[
+                { value: 'all' as const, label: 'All' },
+                ...presentCategories.map((c) => ({ value: c, label: categoryMeta[c].label })),
+              ]}
+            />
           </div>
         </div>
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto max-w-3xl space-y-3 p-6">
-          {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} onOpenSidePanel={onOpenSidePanel} onOpenBottomPanel={onOpenBottomPanel} />)}
-          {filteredSandboxed.map((plugin) => (
-            <SandboxedPluginRow
-              key={plugin.manifestPath}
-              plugin={plugin}
-              onOpen={() => openSandboxedPlugin(plugin.entry)}
-            />
-          ))}
-          {filtered.length === 0 && filteredSandboxed.length === 0 && <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>}
+        <div className="mx-auto max-w-3xl px-6 py-6">
+          {/* Rows in one frame, not a stack of cards. Each plugin was its own
+              bordered box, and an enabled one with settings became a box
+              containing a bordered box -- the nested card the design system
+              rules out. */}
+          {(filtered.length > 0 || filteredSandboxed.length > 0) && (
+            <div className="divide-y divide-[var(--divider)] overflow-hidden rounded-md border border-[var(--divider)]">
+              {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} onOpenSidePanel={onOpenSidePanel} onOpenBottomPanel={onOpenBottomPanel} />)}
+              {filteredSandboxed.map((plugin) => (
+                <SandboxedPluginRow
+                  key={plugin.manifestPath}
+                  plugin={plugin}
+                  onOpen={() => openSandboxedPlugin(plugin.entry)}
+                />
+              ))}
+            </div>
+          )}
+          {filtered.length === 0 && filteredSandboxed.length === 0 && (
+            <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>
+          )}
 
-          <div className="rounded-md border border-dashed border-[var(--divider)] p-4">
-            <div className="flex items-center gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--ink-muted)]">
-                <PackagePlus className="h-4 w-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-semibold text-[var(--ink)]">Add a custom plugin</h3>
-                <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Copy a folder containing <code>index.html</code> and <code>neuron.app.json</code> into <code>plugins/</code>. It runs as an isolated HTML app, never as renderer code.</p>
-              </div>
+          <div className="mt-4 flex items-center gap-3 rounded-md border border-dashed border-[var(--divider)] p-4">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--ink-muted)]">
+              <PackagePlus className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-[var(--ink)]">Add a custom plugin</h3>
+              <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Copy a folder containing <code>index.html</code> and <code>neuron.app.json</code> into <code>plugins/</code>. It runs as an isolated HTML app, never as renderer code.</p>
             </div>
           </div>
         </div>

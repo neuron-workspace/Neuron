@@ -234,7 +234,10 @@ export default function SettingsPage({ appearance, onAppearanceChange, bindings,
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-4xl px-7 pb-12 pt-7">
+      {/* max-w-3xl, matching the plugins page. At 4xl the label of each
+          Markdown colour sat about 800px from the swatch it controls, with
+          nothing in between. */}
+      <div className="mx-auto w-full max-w-3xl px-7 pb-12 pt-7">
         <header className="mb-8 flex items-start gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
             <Settings2 className="h-4 w-4" />

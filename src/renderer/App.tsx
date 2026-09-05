@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { MoreHorizontal, Eye, SplitSquareHorizontal, PenLine } from 'lucide-react';
+import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
@@ -18,7 +18,6 @@ import SettingsPage from './views/SettingsPage';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuCheckboxItem, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import { PluginProvider } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
@@ -29,6 +28,8 @@ import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
+import { EDIT_MODES, type EditMode } from './surfaces/panels';
+import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
@@ -54,7 +55,11 @@ import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appe
 interface NoteData { path: string; content: string }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
-type EditorMode = 'live' | 'raw' | 'reading';
+// The same three modes the layout shell offers, under the same names. This was
+// 'raw' here and 'split' there, presented as a dropdown here and a button row
+// there, so the identical choice looked and read like two different features
+// depending on whether the workspace happened to have a layout.json.
+type EditorMode = EditMode;
 
 // Default content for new .html views. Plain HTML + htmx attributes;
 // Neuron serves it from the local view server with the neuron-view stylesheet.
@@ -403,9 +408,12 @@ export default function App() {
   // holds only what could be read as text, so sourcing from it would silently
   // hide binaries: a .png in the workspace would simply not appear.
   //
-  // `.neuron/` is excluded because the sidebar and graph hide it too. Listing it
-  // offered to open the workspace's own layout.json, and since the app rewrites
-  // that file as you use it, the row churned under the cursor as well.
+  // `.neuron/` is excluded here and nowhere else, on purpose: the sidebar is
+  // the file tree and still shows it, because editing layout.json by hand is a
+  // real thing to want. The explorer is where you land with nothing open, and
+  // offering the workspace's own configuration there put a row that the app
+  // rewrites as you use it -- churning under the cursor -- ahead of your notes.
+  // (The graph shows only notes with wiki-links, so it never had the question.)
   const explorerPaths = useMemo(
     () => notes.filter((path) => !path.startsWith('.neuron/')),
     [notes],
@@ -583,7 +591,7 @@ export default function App() {
   }, [selectedNote, editorModes]);
 
   // Markdown opens in reading view; other text files (JSON config, CSS, manifests) open as raw source.
-  const defaultEditorMode: EditorMode = selectedNote && /\.(md|mdx)$/i.test(selectedNote) ? 'reading' : 'raw';
+  const defaultEditorMode: EditorMode = selectedNote && /\.(md|mdx)$/i.test(selectedNote) ? 'reading' : 'split';
   const editorMode: EditorMode = (selectedNote && editorModes[selectedNote]) || defaultEditorMode;
   const setEditorMode = (mode: EditorMode) => {
     if (selectedNote) setEditorModes((prev) => ({ ...prev, [selectedNote]: mode }));
@@ -703,27 +711,25 @@ export default function App() {
       <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
       {selectedNote && Surface ? (
           <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
-            <div className="mode-switch" aria-label="Surface mode">
-              <button aria-pressed={!surfaceEditing} className="interactive text-xs font-medium" onClick={() => setSurfaceSource(false)}>Preview</button>
-              <button aria-pressed={surfaceEditing} className="interactive text-xs font-medium" onClick={() => setSurfaceSource(true)}>Source</button>
-            </div>
+            <Segmented
+              label="Surface mode"
+              value={surfaceEditing ? 'source' : 'preview'}
+              onChange={(next) => setSurfaceSource(next === 'source')}
+              options={[
+                { value: 'preview', label: 'Preview', icon: <Eye className="h-3.5 w-3.5" /> },
+                { value: 'source', label: 'Source', icon: <FileCode2 className="h-3.5 w-3.5" /> },
+              ]}
+            />
           </div>
       ) : selectedNote && !browsing ? (
           <div className="flex h-full shrink-0 items-center gap-3 border-l border-[var(--divider)] px-3">
             {saveState === 'error' && <span role="status" className="text-[11px] text-[var(--danger)]">{saveLabel}</span>}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button aria-label="View options" className="interactive grid h-7 w-7 place-items-center rounded-md text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>View mode</DropdownMenuLabel>
-                <DropdownMenuCheckboxItem checked={editorMode === 'live'} onCheckedChange={() => setEditorMode('live')}><PenLine className="mr-2 h-4 w-4" /> Live editor</DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem checked={editorMode === 'raw'} onCheckedChange={() => setEditorMode('raw')}><SplitSquareHorizontal className="mr-2 h-4 w-4" /> Edit as raw file (split)</DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem checked={editorMode === 'reading'} onCheckedChange={() => setEditorMode('reading')}><Eye className="mr-2 h-4 w-4" /> Reading view</DropdownMenuCheckboxItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {/* Not in a layout workspace. There the editor is a panel that owns
+                its own view mode, so this switch drove nothing -- two identical
+                controls one above the other, and only the lower one worked. It
+                was invisible while this was a dropdown and the other a row of
+                text; giving them the same shape is what showed it. */}
+            {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
           </div>
       ) : null}
     </header>
@@ -745,8 +751,8 @@ export default function App() {
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
-            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('raw')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
-            {editorMode === 'raw' && rawSplit}
+            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
+            {editorMode === 'split' && rawSplit}
             {editorMode === 'reading' && (
               <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
             )}
@@ -968,6 +974,7 @@ export default function App() {
           onToggleGraph={toggleGraphOverlay}
           graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
+          bindings={bindings}
         />
       </TooltipProvider>
       </ExplorerProvider>

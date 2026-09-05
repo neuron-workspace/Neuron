@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { addDbTable, drawableRelations, parseDb, serializeDb, updateDbTable, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type PropType } from '@/lib/db';
+import { Segmented } from '@/components/ui/segmented';
 import { registerSurface, type SurfaceProps } from './index';
 
 // ===========================================================================
@@ -523,11 +524,16 @@ export function DbSurface({ path, content }: SurfaceProps) {
           {tableCount > 1 && <Button variant="ghost" size="sm" onClick={() => selectTable(null)} aria-label="Back to schema overview"><ArrowLeft /> Schema</Button>}
           <h1 className="mr-auto flex items-center gap-2 text-base font-semibold tracking-tight"><Database className="h-4 w-4 text-[var(--accent-strong)]" /> {doc.name}</h1>
           <Button variant="outline" size="sm" onClick={addTable}><Plus /> Table</Button>
-          <div className="mode-switch" aria-label="View mode">
-            <button type="button" aria-pressed={mode === 'table'} className="interactive flex items-center gap-1 text-xs font-medium" onClick={() => setMode('table')}><Table2 className="h-3.5 w-3.5" /> Table</button>
-            <button type="button" aria-pressed={mode === 'board'} className="interactive flex items-center gap-1 text-xs font-medium disabled:opacity-40" disabled={!groupBy} title={groupBy ? undefined : 'Add a Select property to use the board'} onClick={() => setMode('board')}><Columns3 className="h-3.5 w-3.5" /> Board</button>
-            <button type="button" aria-pressed={mode === 'gallery'} className="interactive flex items-center gap-1 text-xs font-medium" onClick={() => setMode('gallery')}><LayoutGrid className="h-3.5 w-3.5" /> Cards</button>
-          </div>
+          <Segmented
+            label="View mode"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'table', label: 'Table', icon: <Table2 className="h-3.5 w-3.5" /> },
+              { value: 'board', label: 'Board', icon: <Columns3 className="h-3.5 w-3.5" />, disabled: !groupBy, title: groupBy ? undefined : 'Add a Select property to use the board' },
+              { value: 'gallery', label: 'Cards', icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+            ]}
+          />
           {mode === 'board' && selectProps.length > 1 && (
             <select className="field h-8 px-2 text-xs" value={groupBy ?? ''} onChange={(e) => write({ ...d(), view: { ...d().view, groupBy: e.target.value } })} aria-label="Group by">
               {selectProps.map((pid) => <option key={pid} value={pid}>{properties[pid].name}</option>)}

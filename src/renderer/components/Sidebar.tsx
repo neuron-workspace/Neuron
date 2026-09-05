@@ -75,7 +75,7 @@ function ToolbarButton({ label, onClick, busy, children }: { label: string; onCl
           aria-label={label}
           aria-busy={busy}
           onClick={onClick}
-          className="interactive grid h-6 w-6 shrink-0 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+          className="tool-button interactive shrink-0"
         >
           {children}
         </button>
@@ -214,22 +214,28 @@ export default function Sidebar(props: SidebarProps) {
       {mode === 'files' && (
         <section aria-label="Explorer" className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between gap-1 border-b divider-color px-3 py-2">
-            <div className="flex min-w-0 items-center gap-1.5">
+            {/* The workspace name is the way back to the explorer, and it stays
+                available while notes are open -- going home does not close
+                anything, so the tabs are still there to return to.
+
+                Icon, name and count are one target rather than three elements
+                with a 16px-tall button in the middle: the folder icon read as
+                part of the control and did nothing when clicked. */}
+            <button
+              type="button"
+              className="interactive flex min-h-[var(--control-sm)] min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left hover:bg-[var(--surface-hover)]"
+              title={`${repositoryName} — workspace home`}
+              data-workspace-home
+              onClick={onGoHome}
+            >
               <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
-              {/* The workspace name is the way back to the explorer, and it
-                  stays available while notes are open -- going home does not
-                  close anything, so the tabs are still there to return to. */}
-              <button
-                type="button"
-                className="interactive truncate rounded px-1 text-left text-xs font-semibold text-[var(--ink)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-                title={`${repositoryName} — workspace home`}
-                data-workspace-home
-                onClick={onGoHome}
-              >
-                {repositoryName}
-              </button>
-              <span className="shrink-0 rounded bg-[var(--surface)] px-1.5 font-mono text-[10px] tabular-nums text-[var(--ink-muted)]">{filtered.length}</span>
-            </div>
+              {/* The note count used to sit here too. Four tool buttons at a
+                  full-size target plus a badge left the workspace name about
+                  seventy pixels, so it truncated to "works…" -- the sidebar
+                  could not say which workspace you were in. The explorer heads
+                  its listing with the same count. */}
+              <span className="truncate text-xs font-semibold text-[var(--ink)]">{repositoryName}</span>
+            </button>
             <div className="flex shrink-0 items-center">
               <ToolbarButton label="New note" onClick={() => onRequestCreate()}><FilePlus2 className="h-3.5 w-3.5" /></ToolbarButton>
               <ToolbarButton label="New section" onClick={onRequestCreateFolder}><FolderPlus className="h-3.5 w-3.5" /></ToolbarButton>
@@ -250,7 +256,7 @@ export default function Sidebar(props: SidebarProps) {
               <span className="sr-only">Search notes</span>
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
               <input autoFocus className="field py-1.5 pl-8 pr-8 text-xs" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" />
-              {search && <button aria-label="Clear search" className="interactive absolute right-1.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[var(--ink-muted)] hover:text-[var(--ink)]" onClick={() => setSearch('')}><X className="h-3.5 w-3.5" /></button>}
+              {search && <button aria-label="Clear search" className="tool-button interactive absolute right-1 top-1/2 -translate-y-1/2" onClick={() => setSearch('')}><X className="h-3.5 w-3.5" /></button>}
             </label>
             <p className="mt-1.5 px-0.5 text-[11px] text-[var(--ink-muted)]">{filtered.length} of {notes.length} notes</p>
           </div>

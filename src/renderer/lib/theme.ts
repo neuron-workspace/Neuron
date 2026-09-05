@@ -52,10 +52,15 @@ export const PRESETS: Record<string, ThemePreset> = {
     '#eceff4', '#d8dee9', '#a6b1c2',
     '#88c0d0', '#a3d4e0', '#a3be8c', '#d9a2a8', '#ebcb8b', '#99b3cd',
   ]),
+  // Chrome and content were 1.5% apart in lightness, so in light mode the
+  // sidebar, title bar and status bar all dissolved into the page and the shell
+  // read as one flat white plane. Nav and surface are pushed down far enough to
+  // be planes; the ink and semantic roles come down with them, which also lifts
+  // the whole preset off the 4.61:1 floor it was scraping against AA.
   light: preset('light', 'Light', 'light', [
-    '#ffffff', '#f6f7f9', '#f0f2f5', '#e6e9ee', 'rgba(0,0,0,0.12)',
-    '#1f2328', '#4a5159', '#666d7a',
-    '#276ace', '#1b5fc4', '#227c4f', '#cd3030', '#946219', '#276ace',
+    '#ffffff', '#eef0f4', '#e9ecf1', '#dde2ea', 'rgba(0,0,0,0.14)',
+    '#1a1d21', '#454b54', '#5c636e',
+    '#1f63c9', '#17539f', '#1c6d45', '#c22626', '#7d5214', '#1f63c9',
   ]),
 };
 
