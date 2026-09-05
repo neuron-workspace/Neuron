@@ -223,6 +223,41 @@ is fixed to the current user's profile and never requests elevation.
 nothing install from. Everything before 0.4.5 was a prerelease, so this gate is
 hit more often than not.
 
+### Where each one stands
+
+Checked 5 September 2026, against 0.4.5.
+
+| | Status | What a user runs |
+|---|---|---|
+| Homebrew | **Live.** `Casks/neuron.rb` is on the tap at 0.4.5. | `brew install --cask neuron-workspace/neuron/neuron` |
+| Chocolatey | **Submitted, awaiting a human moderator.** All three automated checks (validation, verification, virus scan) pass. | `choco install neuron` — see the caveat below |
+| WinGet | **Not submitted.** `NeuronWorkspace.Neuron` does not exist in `microsoft/winget-pkgs` yet, and the action cannot create it. | nothing yet |
+
+Homebrew matters more on macOS than the table makes it look. `updater.ts` turns
+in-app updates off entirely on darwin without a Developer ID signature, because
+Squirrel.Mac would download every update, fail at the install step, and do it
+again on the next launch. So `brew upgrade` is not a convenience there — it is
+the only way a macOS install ever moves to a new version. The cask deliberately
+does *not* declare `auto_updates true`, and that is correct: the app genuinely
+does not update itself on that platform.
+
+Windows is the other way round: a Chocolatey install self-updates, so the
+version Chocolatey has recorded drifts behind the installed one until the next
+`choco upgrade`. That is the normal situation for a self-updating app in a
+package manager and nothing here tries to prevent it.
+
+The Chocolatey caveat is worth knowing before pointing anyone at it: an
+unapproved package is excluded from the package feed, so a bare
+`choco install neuron` cannot resolve it, while
+`choco install neuron --version 0.4.5` downloads fine because that addresses the
+version directly. Both become equivalent the moment a moderator approves it.
+Nothing to do but wait; the site already carries the plain command.
+
+The published cask still names `https://neuron-workspace.github.io/Neuron/` as
+its homepage, which is now the redirect stub rather than the site. The generator
+was corrected in the organisation move, after 0.4.5 was cut, so the next release
+rewrites it — do not hand-edit the tap for this.
+
 **It is triggered by `workflow_run`, not `release: published`.** The obvious
 trigger does not work and does not say so: `release.yml` creates the release
 using `GITHUB_TOKEN`, and GitHub refuses to start workflow runs from events a

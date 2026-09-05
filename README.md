@@ -38,13 +38,21 @@ Neuron treats your notes as durable files, not records trapped in a hosted datab
 
 ## Download
 
-Installers are published on the repository's **Releases** page. The companion GitHub Pages site always links to the newest release.
+```bash
+brew install --cask neuron-workspace/neuron/neuron   # macOS
+choco install neuron                                 # Windows
+```
+
+Installers are also published on the repository's **Releases** page, and the
+companion GitHub Pages site always links to the newest one.
 
 | Platform | Release formats |
 | --- | --- |
 | Windows | NSIS installer and portable executable |
 | macOS | DMG and ZIP for Intel and Apple silicon |
 | Linux | AppImage and Debian package |
+
+Linux has no package-manager entry yet; use the AppImage or the `.deb`.
 
 > Release builds are currently unsigned. Windows SmartScreen and macOS Gatekeeper may display a warning until signing certificates and notarization are configured. Do not disable operating-system protections globally.
 
