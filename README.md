@@ -42,9 +42,12 @@ Neuron treats your notes as durable files, not records trapped in a hosted datab
 Signed by Microsoft after certification, so there is no SmartScreen prompt, and
 the Store keeps it updated.
 
+Or with a package manager:
+
 ```bash
+winget install NeuronWorkspace.Neuron                # Windows
+choco install neuron                                 # Windows
 brew install --cask neuron-workspace/neuron/neuron   # macOS
-choco install neuron                                 # Windows, if you prefer a package manager
 ```
 
 Installers are also published on the repository's **Releases** page, and the

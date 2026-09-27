@@ -239,14 +239,26 @@ hit more often than not.
 
 ### Where each one stands
 
-Checked 5 September 2026, against 0.4.5.
+Checked 27 September 2026, against 0.4.5. All four are live.
 
 | | Status | What a user runs |
 |---|---|---|
 | Microsoft Store | **Live.** Certified and signed by Microsoft, so no SmartScreen prompt; updates come from the Store. | [apps.microsoft.com/detail/9pfc0xc16c1g](https://apps.microsoft.com/detail/9pfc0xc16c1g) |
+| WinGet | **Live.** `NeuronWorkspace.Neuron` 0.4.5, from microsoft/winget-pkgs#428143. | `winget install NeuronWorkspace.Neuron` |
+| Chocolatey | **Live.** Approved by a moderator. | `choco install neuron` |
 | Homebrew | **Live.** `Casks/neuron.rb` is on the tap at 0.4.5. | `brew install --cask neuron-workspace/neuron/neuron` |
-| Chocolatey | **Submitted, awaiting a human moderator.** All three automated checks (validation, verification, virus scan) pass. | `choco install neuron` — see the caveat below |
-| WinGet | **Not submitted.** `NeuronWorkspace.Neuron` does not exist in `microsoft/winget-pkgs` yet, and the action cannot create it. | nothing yet |
+
+Every one of these now updates itself on release. WinGet was the last to need a
+human: `winget-releaser` can only update a package that already exists, so the
+first version had to be submitted by hand. With 0.4.5 in, and `WINGET_TOKEN` set
+since 2 September, the next stable release opens its WinGet pull request on its
+own. The same is true of the other two — nothing below needs doing again unless
+a token expires.
+
+To confirm a WinGet version is really there, check
+`manifests/n/NeuronWorkspace/Neuron/` in microsoft/winget-pkgs directly. GitHub's
+code search returned zero hits for the package on the day it merged; the index
+is not a reliable witness for a repository that size.
 
 Homebrew matters more on macOS than the table makes it look. `updater.ts` turns
 in-app updates off entirely on darwin without a Developer ID signature, because
@@ -261,12 +273,16 @@ version Chocolatey has recorded drifts behind the installed one until the next
 `choco upgrade`. That is the normal situation for a self-updating app in a
 package manager and nothing here tries to prevent it.
 
-The Chocolatey caveat is worth knowing before pointing anyone at it: an
-unapproved package is excluded from the package feed, so a bare
-`choco install neuron` cannot resolve it, while
-`choco install neuron --version 0.4.5` downloads fine because that addresses the
-version directly. Both become equivalent the moment a moderator approves it.
-Nothing to do but wait; the site already carries the plain command.
+Moderation is per version on Chocolatey, not per package: an unapproved version
+is excluded from the feed, so a bare `choco install neuron` cannot resolve it
+while `choco install neuron --version <x>` can. 0.4.5 has cleared, so this only
+matters again if a future version sits in the queue — and if a user reports
+that `choco install` finds nothing right after a release, that is almost
+certainly why.
+
+WinGet has the same shape on a longer clock. A new version is a pull request to
+microsoft/winget-pkgs, which is validated and then merged by Microsoft; until it
+merges, `winget upgrade` does not see it.
 
 The published cask still names `https://neuron-workspace.github.io/Neuron/` as
 its homepage, which is now the redirect stub rather than the site. The generator
@@ -307,7 +323,12 @@ No account is needed for any of this to keep working as it does today: with none
 of the three secrets set, the workflow runs, logs three skips, and the GitHub
 release is unaffected.
 
-### The first WinGet submission has to be manual
+### The first WinGet submission had to be manual
+
+**Done:** 0.4.5 went in by hand as microsoft/winget-pkgs#428143, merged 27
+September 2026. Nothing below needs repeating for this package. It stays here
+because it is the only record of why the first version could not be automated,
+and because the same procedure applies if the package id ever changes.
 
 `winget-releaser` uses [Komac](https://github.com/russellbanks/Komac) to build the
 next version's manifest **from the previous one**, so it cannot create a package
