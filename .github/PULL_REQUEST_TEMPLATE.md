@@ -1,3 +1,8 @@
+<!--
+  Is this pull request targeting `dev`? GitHub offers `main` by default.
+  Change the base branch to `dev` before submitting.
+-->
+
 ## Summary
 
 <!-- What problem does this pull request solve, and why is this change shaped this way? -->
@@ -13,6 +18,7 @@
 - [ ] `npm run typecheck`
 - [ ] `npm test`
 - [ ] `npm run build`
+- [ ] `npm run test:e2e` (needs a desktop session; on headless Linux use `xvfb-run --auto-servernum npm run test:e2e`)
 
 ## Change checklist
 
@@ -23,6 +29,13 @@
 - [ ] I documented any new or changed plugin capability or network behavior, or this is not applicable.
 - [ ] I added or updated tests where behavior changed, or explained why no test is needed.
 - [ ] I did not include personal notes, workspace paths, credentials, API keys, or other sensitive data.
+- [ ] This pull request targets `dev`, not `main`.
+
+## AI assistance
+
+<!-- If an AI tool materially wrote, rewrote, or reviewed part of this change, name the tool and the part. Write "None" otherwise. See the AI-assisted contributions section of CONTRIBUTING.md. -->
+
+None
 
 ## Data and compatibility risk
 

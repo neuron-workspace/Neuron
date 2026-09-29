@@ -1,10 +1,62 @@
 # Contributing to Neuron
 
 Thank you for helping improve Neuron. This guide takes a clean clone through a
-reviewable pull request. Neuron 0.4.3 is licensed under Apache 2.0; contributing
-code means it will be distributed under the repository's license.
+reviewable pull request. Neuron is licensed under Apache 2.0; contributing code
+means it will be distributed under the repository's license.
 
-Before coding, search existing issues and read the
+## Your first contribution
+
+If this is your first time here, this is the whole path:
+
+1. **Pick an issue.** Start with
+   [`good first issue`](https://github.com/neuron-workspace/Neuron/labels/good%20first%20issue).
+   Each one names the files involved, what "done" looks like, and how to test
+   it, so you should not need to ask anyone anything to begin. Once you know
+   your way around, try
+   [`difficulty: intermediate`](https://github.com/neuron-workspace/Neuron/labels/difficulty%3A%20intermediate)
+   and then
+   [`difficulty: advanced`](https://github.com/neuron-workspace/Neuron/labels/difficulty%3A%20advanced).
+2. **Say you are taking it.** Comment on the issue, and **wait for a maintainer
+   to assign it to you before you start writing code.** That is not
+   bureaucracy: it is the only thing that stops two people building the same
+   fix, and it is the worst outcome for whoever loses the race. A comment on its
+   own is not a reservation until it is assigned.
+3. **Set up** as described in [Prerequisites and setup](#prerequisites-and-setup)
+   and run the four [checks](#verify-before-opening-a-pull-request) once
+   *before* changing anything, so you know the baseline is green on your machine.
+4. **Branch from `dev`, and open your pull request against `dev`.** ⚠️ GitHub
+   will offer `main` as the target by default. **Change it to `dev`.** Pull
+   requests aimed at `main` are retargeted rather than rejected, but it slows
+   everything down.
+5. **Stuck?** Ask on the issue. A question asked on day one is far cheaper than
+   a pull request that went the wrong way for a week.
+
+If an assigned issue goes quiet for **seven days** without an update, it is
+released so someone else can pick it up. Tell us on the issue if you need longer;
+that is always fine.
+
+### What to expect from us
+
+Neuron has one maintainer. Issues and pull requests are triaged **weekly**, so a
+reply can take a few days. A pull request is not guaranteed to merge: one that
+changes behaviour nobody agreed to, grows beyond its issue, or skips the checks
+below will be sent back. The fastest route to a merge is a small change, tied to
+an issue, with the checks run and the output described.
+
+Everyone whose pull request is merged is credited in the release notes for the
+version it ships in.
+
+### About Hacktoberfest
+
+**Hacktoberfest 2026 does not count pull requests toward rewards.** Its
+organisers
+[replaced PR counting with other activities](https://hacktoberfest.com/questions/)
+this year, so a pull request here will not earn Hacktoberfest credit. We are
+still glad to have your contribution; we just do not want anyone surprised.
+
+## Before you code
+
+Search existing issues and read the
 [feature guide](../docs/features.md), [architecture](../docs/architecture.md),
 and [development guide](../docs/development.md). For plugin work, also read the
 [Plugin API](../docs/plugin-api.md); for HTMX views, read the
@@ -12,9 +64,11 @@ and [development guide](../docs/development.md). For plugin work, also read the
 
 ## Prerequisites and setup
 
-You need Node.js 20 or newer, npm 10 or newer, Git, and Windows, macOS, or Linux
-with a desktop session. Clone the repository and install exactly the versions
-in the committed lockfile:
+You need **Node.js 22**, npm 10 or newer, Git, and Windows, macOS, or Linux with
+a desktop session. Node 22 is the version CI tests on all three platforms; older
+versions may work but are not tested, so a failure on them is not something we
+can reproduce. Clone the repository and install exactly the versions in the
+committed lockfile:
 
 ```bash
 git clone https://github.com/neuron-workspace/Neuron.git
@@ -31,6 +85,35 @@ npm run dev
 
 The renderer development server uses port 5174. Stop the parent command to stop
 all three development processes.
+
+### Things specific to a desktop app
+
+Neuron is an Electron app, and a few things about that catch people out:
+
+- **`node-pty` is a native module** (it runs the built-in terminal). It ships
+  prebuilt binaries for common platforms, so `npm ci` normally just works. If it
+  fails compiling instead, you need your platform's C++ build tools — Visual
+  Studio Build Tools on Windows, Xcode Command Line Tools on macOS,
+  `build-essential` and Python on Linux. The `postinstall` step that fixes its
+  file permissions is intentional; leave it alone.
+- **The end-to-end tests open real windows.** They need a desktop session. On a
+  headless Linux machine run them under a virtual display, as CI does:
+  `xvfb-run --auto-servernum npm run test:e2e`.
+- **Port 5174 must be free** before `npm run test:e2e`. The suite starts its own
+  renderer and refuses to adopt one that is already running — deliberately, so
+  it never tests code from a different checkout. If it says the port is in use,
+  stop your `npm run dev` first.
+- **Platforms genuinely differ.** File paths, file watching, keyboard shortcuts,
+  window chrome and spawned processes all behave differently on Windows, macOS
+  and Linux. If your change touches any of those, say which platforms you ran
+  it on.
+- **An IPC change touches three processes.** Anything that adds or changes a
+  bridge between the app and the file system needs the main process, the
+  preload script and the renderer tested together — see
+  [the security rules](#preserve-the-security-boundaries) below.
+- **Packaging and signing are maintainer-only.** You never need a certificate,
+  a signing identity or a release secret to contribute, and no one will ask you
+  for one. Unsigned local builds are expected.
 
 ## Choose a focused change
 
@@ -87,11 +170,17 @@ app on the relevant operating system and include screenshots. For a bug fix,
 add or update a test that fails without the fix; verify a failing UI assertion
 against the running product before assuming the product is wrong.
 
-CI runs on Windows for pull requests and pushes to `dev` and `main`. It installs
-with `npm ci`, then enforces the same typecheck, fast tests, build, and Electron
-E2E command. Playwright failure artifacts are uploaded for seven days. A local
-pass is still required: CI is confirmation, not a substitute for describing
-what you tested.
+CI runs on **Windows, macOS and Linux** for every pull request and push to `dev`
+and `main`. It installs with `npm ci`, then enforces the same typecheck, fast
+tests, build, and Electron E2E command on all three. Playwright failure
+artifacts are uploaded for seven days — download them from the failed run to see
+what the app looked like when a test failed. A local pass is still required: CI
+is confirmation, not a substitute for describing what you tested.
+
+A test that passes on your machine and fails on one CI platform is usually a
+real cross-platform difference, not flakiness. Linux CI has no GPU, for example,
+so anything that renders through WebGL runs on a software renderer there. You
+can reproduce that locally with `NEURON_SOFTWARE_GL=1 npm run test:e2e`.
 
 ## Preserve the security boundaries
 
@@ -128,6 +217,29 @@ runtime dependencies require a recorded decision.
 
 If a proposal needs one of those directions, open a focused feature request and
 wait for an explicit architecture decision before implementing it.
+
+## AI-assisted contributions
+
+You may use AI tools. If one **materially** wrote, rewrote or reviewed any part
+of your pull request, say so in the pull request description — which tool, and
+which part. Autocomplete finishing a line does not need mentioning; a tool that
+drafted a function or a test does.
+
+This is not a penalty and it does not lower your chances. It tells the reviewer
+where to look harder, which makes review faster for everyone.
+
+Whatever produced the code, **you** are responsible for it:
+
+- You understand every line you submit and can explain it on review. "The tool
+  wrote it" is not an answer to a review question.
+- It is correct, and you have run the checks rather than trusting that it works.
+- You have the right to contribute it under this repository's licence.
+- You did not paste secrets, API keys, or anyone's personal notes or workspace
+  contents into a third-party tool while making it.
+
+A pull request that looks generated and unreviewed — confidently wrong,
+unrelated to its issue, or touching files it has no reason to — is closed
+without detailed review.
 
 ## Write reviewable commits and a complete pull request
 

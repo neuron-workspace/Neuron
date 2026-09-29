@@ -71,12 +71,12 @@ Linux has no package-manager entry yet; use the AppImage or the `.deb`.
 
 ### Prerequisites
 
-- Node.js 20 or newer
+- Node.js 22
 - npm 10 or newer
 - Git
 
 ```bash
-git clone https://github.com/YOUR_ACCOUNT/Neuron.git
+git clone https://github.com/neuron-workspace/Neuron.git
 cd Neuron
 npm ci
 npm run dev
