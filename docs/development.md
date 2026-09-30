@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 22 (the version CI tests on every platform)
 - npm 10+
 - Git
 - Windows, macOS, or Linux with a desktop session

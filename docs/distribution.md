@@ -108,6 +108,20 @@ notarization credentials. Not currently configured.
 
 ## Microsoft Store
 
+**Published and live**, as of 8 September 2026:
+<https://apps.microsoft.com/detail/9pfc0xc16c1g> — listed as *Neuron Desktop*.
+
+This is now the best way to install on Windows, and the only channel where the
+first launch is not an argument with the operating system. The Store package is
+signed by Microsoft after certification, so SmartScreen has nothing to warn
+about; updates come from the Store rather than the in-app updater, which
+`updater.ts` already knows to stand down for (`windowsStore` → no update check,
+so the two never fight over the same install).
+
+The store identity stays on the personal account rather than the organisation —
+see the table below. Moving the repository did not move the listing, and it
+should not: the certificate and the Partner Center account are tied to it.
+
 The Partner Center identity is filled in, and verified against a real build:
 
 | Partner Center field | `build.appx` key | Value |
@@ -216,10 +230,64 @@ Homebrew when the release build finishes. It is a separate workflow from
 `release.yml` on purpose: nothing in it rebuilds anything. Every package points
 at the artifacts `release.yml` already published, with the checksums of those
 exact files, so a package can never describe a build that was not released.
+The Windows manifest declares `Scope: user` because the one-click NSIS installer
+is fixed to the current user's profile and never requests elevation.
 
 **Prereleases do not publish.** Package managers are where people who opted into
 nothing install from. Everything before 0.4.5 was a prerelease, so this gate is
 hit more often than not.
+
+### Where each one stands
+
+Checked 27 September 2026, against 0.4.5. All four are live.
+
+| | Status | What a user runs |
+|---|---|---|
+| Microsoft Store | **Live.** Certified and signed by Microsoft, so no SmartScreen prompt; updates come from the Store. | [apps.microsoft.com/detail/9pfc0xc16c1g](https://apps.microsoft.com/detail/9pfc0xc16c1g) |
+| WinGet | **Live.** `NeuronWorkspace.Neuron` 0.4.5, from microsoft/winget-pkgs#428143. | `winget install NeuronWorkspace.Neuron` |
+| Chocolatey | **Live.** Approved by a moderator. | `choco install neuron` |
+| Homebrew | **Live.** `Casks/neuron.rb` is on the tap at 0.4.5. | `brew install --cask neuron-workspace/neuron/neuron` |
+
+Every one of these now updates itself on release. WinGet was the last to need a
+human: `winget-releaser` can only update a package that already exists, so the
+first version had to be submitted by hand. With 0.4.5 in, and `WINGET_TOKEN` set
+since 2 September, the next stable release opens its WinGet pull request on its
+own. The same is true of the other two — nothing below needs doing again unless
+a token expires.
+
+To confirm a WinGet version is really there, check
+`manifests/n/NeuronWorkspace/Neuron/` in microsoft/winget-pkgs directly. GitHub's
+code search returned zero hits for the package on the day it merged; the index
+is not a reliable witness for a repository that size.
+
+Homebrew matters more on macOS than the table makes it look. `updater.ts` turns
+in-app updates off entirely on darwin without a Developer ID signature, because
+Squirrel.Mac would download every update, fail at the install step, and do it
+again on the next launch. So `brew upgrade` is not a convenience there — it is
+the only way a macOS install ever moves to a new version. The cask deliberately
+does *not* declare `auto_updates true`, and that is correct: the app genuinely
+does not update itself on that platform.
+
+Windows is the other way round: a Chocolatey install self-updates, so the
+version Chocolatey has recorded drifts behind the installed one until the next
+`choco upgrade`. That is the normal situation for a self-updating app in a
+package manager and nothing here tries to prevent it.
+
+Moderation is per version on Chocolatey, not per package: an unapproved version
+is excluded from the feed, so a bare `choco install neuron` cannot resolve it
+while `choco install neuron --version <x>` can. 0.4.5 has cleared, so this only
+matters again if a future version sits in the queue — and if a user reports
+that `choco install` finds nothing right after a release, that is almost
+certainly why.
+
+WinGet has the same shape on a longer clock. A new version is a pull request to
+microsoft/winget-pkgs, which is validated and then merged by Microsoft; until it
+merges, `winget upgrade` does not see it.
+
+The published cask still names `https://neuron-workspace.github.io/Neuron/` as
+its homepage, which is now the redirect stub rather than the site. The generator
+was corrected in the organisation move, after 0.4.5 was cut, so the next release
+rewrites it — do not hand-edit the tap for this.
 
 **It is triggered by `workflow_run`, not `release: published`.** The obvious
 trigger does not work and does not say so: `release.yml` creates the release
@@ -255,7 +323,12 @@ No account is needed for any of this to keep working as it does today: with none
 of the three secrets set, the workflow runs, logs three skips, and the GitHub
 release is unaffected.
 
-### The first WinGet submission has to be manual
+### The first WinGet submission had to be manual
+
+**Done:** 0.4.5 went in by hand as microsoft/winget-pkgs#428143, merged 27
+September 2026. Nothing below needs repeating for this package. It stays here
+because it is the only record of why the first version could not be automated,
+and because the same procedure applies if the package id ever changes.
 
 `winget-releaser` uses [Komac](https://github.com/russellbanks/Komac) to build the
 next version's manifest **from the previous one**, so it cannot create a package
