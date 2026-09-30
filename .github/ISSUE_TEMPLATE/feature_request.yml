@@ -3,6 +3,7 @@ description: Suggest a focused improvement to Neuron
 title: "[Feature]: "
 labels:
   - enhancement
+  - "status: needs triage"
 body:
   - type: markdown
     attributes:
