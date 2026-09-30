@@ -7,6 +7,9 @@
   "private": false,
   "main": "dist/main/main.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "clean:build": "node tools/clean-build.mjs",
     "dev:renderer": "vite",
