@@ -166,9 +166,40 @@ npm run test:e2e
 
 The E2E suite needs a desktop session and uses throwaway copies of the demo
 workspace. For visible changes, also exercise the affected flow in the running
-app on the relevant operating system and include screenshots. For a bug fix,
-add or update a test that fails without the fix; verify a failing UI assertion
-against the running product before assuming the product is wrong.
+app on the relevant operating system. For a bug fix, add or update a test that
+fails without the fix; verify a failing UI assertion against the running product
+before assuming the product is wrong.
+
+### Show that it ran
+
+A pull request is reviewed only once you have run it yourself. In the
+**Testing** section, give:
+
+- the commands you ran and your operating system, with each one passing. For
+  E2E, paste the Playwright summary line, for example `3 passed (41s)`;
+- for a new or changed test, confirmation that you watched it **fail** without
+  your change, by reverting the fix or breaking the behaviour it guards. A test
+  that cannot fail proves nothing.
+
+"Not run locally, CI will check it" is not accepted. If you really cannot run
+something, such as E2E on a machine with no desktop session, say exactly what you
+did not run and why, and open the pull request as a **draft**. It becomes ready
+for review once the missing check has passed, in CI or locally.
+
+### Screenshots for interface changes
+
+Any change a user can see needs screenshots in the pull request description,
+uploaded to GitHub directly rather than linked from elsewhere:
+
+- **before and after**, at the same window size and in the same state;
+- a **light and a dark theme** when the change touches colour, contrast, borders
+  or icons;
+- a short **GIF or video** when the change is about motion, drag and drop,
+  hover, focus or another interaction a still image cannot show;
+- the demo workspace or throwaway notes only — never your own notes, file paths
+  or account details.
+
+A UI pull request without screenshots is returned to draft.
 
 CI runs on **Windows, macOS and Linux** for every pull request and push to `dev`
 and `main`. It installs with `npm ci`, then enforces the same typecheck, fast
@@ -237,9 +268,9 @@ Whatever produced the code, **you** are responsible for it:
 - You did not paste secrets, API keys, or anyone's personal notes or workspace
   contents into a third-party tool while making it.
 
-A pull request that looks generated and unreviewed — confidently wrong,
-unrelated to its issue, or touching files it has no reason to — is closed
-without detailed review.
+A pull request that looks generated and unreviewed — confidently wrong, never
+run, describing code that does not exist, unrelated to its issue, or touching
+files it has no reason to — is closed without detailed review.
 
 ## Write reviewable commits and a complete pull request
 
@@ -252,10 +283,12 @@ editor, or personal workspace files.
 Complete every applicable section of the pull-request template:
 
 - summarize the problem and user-visible behavior;
-- list the exact checks and desktop scenarios run;
+- list the exact checks and desktop scenarios you ran, and their results (see
+  [Show that it ran](#show-that-it-ran));
 - link the issue;
 - call out data, compatibility, permission, dependency, and network effects;
-- attach screenshots for interface changes; and
+- attach before and after screenshots for interface changes (see
+  [Screenshots for interface changes](#screenshots-for-interface-changes)); and
 - remove note contents, paths, tokens, and other sensitive data from logs and
   images.
 
