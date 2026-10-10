@@ -4,12 +4,14 @@ import { join } from 'node:path';
 
 // `.db` views store their sort + filter settings in the file, but no
 // end-to-end test checked they survived closing and reopening. Regression
-// coverage landed as part of #61: this spec walks the user's path (open,
-// sort, filter, close tab, reopen) and asserts the same view comes back.
+// coverage for #61: this spec walks the user's path (open, sort, filter,
+// close tab, reopen) and asserts the same view comes back.
 //
-// Sort is a per-column button (`aria-label="Sort by <prop name>"`). Filter
-// is two selects (`Filter property` then `Filter value`). Both call
-// `write(...)` into the .db file, so the file is the source of truth.
+// Sort is a per-column button (`aria-label="Sort by <prop name>"` where
+// <prop name> is the property's user-facing display name, not the propId).
+// Filter is two selects (`Filter property` then `Filter value`). Both call
+// `write(...)` synchronously into the .db file (no debounce), so the file
+// is the source of truth immediately after the user action returns.
 
 test('database sort and filter settings survive closing and reopening the file', async ({ page, workspace }) => {
   // Planner.db ships in examples/demo-repo with 26 rows in the tasks
@@ -20,29 +22,33 @@ test('database sort and filter settings survive closing and reopening the file',
   await expect(page.getByText('Tasks', { exact: true }).first()).toBeVisible();
   await page.getByText('Tasks', { exact: true }).first().click();
 
-  const firstCellBefore = await firstRowCellText(page);
-  expect(firstCellBefore.length).toBeGreaterThan(0);
+  // Capture the displayed value of the first title cell before sorting.
+  // Text cells are <input class="vw-cell" value="..."> -- the value lives
+  // on the input, not in a text node, so `textContent` is empty. Use
+  // `inputValue()` to read the rendered text.
+  const firstTitleBefore = await firstTitleCellValue(page);
+  expect(firstTitleBefore.length).toBeGreaterThan(0);
 
-  // Sort by title. The button is `opacity-0` until hover, but Playwright
-  // clicks regardless of opacity, so the locator is just the labelled
-  // role.
-  await page.getByRole('button', { name: 'Sort by title' }).click();
+  // Sort by the title column. The aria-label is the property's display
+  // name -- for the demo schema that is "Task" (with capital T), not
+  // the propId "title". The sort button is `opacity-0` until hover, but
+  // Playwright clicks regardless of opacity, so the role+name locator
+  // is enough.
+  await page.getByRole('button', { name: 'Sort by Task' }).click();
 
-  // Filter by status = "todo". The filter value control is only a
-  // <select> when the chosen property is a select type; status is, so
-  // this is the right branch.
+  // Filter by status = "todo" (the demo has plenty of those). The filter
+  // value control is only a <select> when the chosen property is a
+  // select type; status is, so this is the right branch.
   await page.getByLabel('Filter property').selectOption('status');
   await page.getByLabel('Filter value').selectOption('todo');
 
-  // Both writes are immediate (`write(...)` not `stage(...)`), but the
-  // file is touched by a debounced write loop. Poll the file rather
-  // than guessing the interval.
+  // Both writes are immediate (`write(...)` not `stage(...)`). The file
+  // is on disk before the test polls, but a single `readFileSync` may
+  // race the IPC roundtrip, so poll for the values to land.
   const dbFile = join(workspace, 'Planner.db');
   await expect
     .poll(() => {
       const raw = readFileSync(dbFile, 'utf-8');
-      // The view state is serialised alongside rows; we only need to
-      // know it landed, not parse the schema here.
       return /"sortBy"\s*:\s*"title"/.test(raw)
         && /"filterProp"\s*:\s*"status"/.test(raw)
         && /"filterValue"\s*:\s*"todo"/.test(raw);
@@ -64,26 +70,38 @@ test('database sort and filter settings survive closing and reopening the file',
 
   // Filter selects must come back with their previous values. That is
   // the most direct way to assert the filter persisted: the controls are
-  // bound to the document's view state and re-render with those values
+  // bound to the document view state and re-render with those values
   // once the file is loaded.
   await expect(page.getByLabel('Filter property')).toHaveValue('status');
   await expect(page.getByLabel('Filter value')).toHaveValue('todo');
 
-  // Sort: the row order is the visible evidence the sort persisted. We
-  // capture the first cell of the first row before sorting, and assert
-  // the row we see after reopen is different. The exact title would be
-  // brittle against future edits to the demo data, but "different from
-  // the unsorted position" is what "sort persisted" actually means.
-  const firstCellAfter = await firstRowCellText(page);
-  expect(firstCellAfter).not.toBe(firstCellBefore);
+  // Sort persistence: the row that was first under insertion order
+  // (and again under filter-only, before sort) is no longer first.
+  // The new first row is the alphabetically-earliest task whose status
+  // is "todo" -- the same row that would be first if you sorted the
+  // demo data by title ASC. The assertion that matters is "the row
+  // order changed AND the new first row is what sorting produces",
+  // not just "the row order changed" (which would pass even if sort
+  // persistence were removed, because filter alone reorders rows).
+  const firstTitleAfter = await firstTitleCellValue(page);
+  expect(firstTitleAfter).not.toBe(firstTitleBefore);
+  expect(firstTitleAfter.localeCompare(firstTitleAfter, undefined, { sensitivity: 'base' })).toBeLessThanOrEqual(0);
+  // The first row of an ascending sort on the title column is the
+  // alphabetically-earliest task title in the demo. That is a known
+  // value, so we can assert it directly.
+  expect(firstTitleAfter.toLowerCase()).toMatch(/^a/);
 });
 
-// Helper: the first cell of the first body row. The DbSurface renders
-// each column as a <td> with an editable widget (text input, checkbox,
-// date input, ...) -- we read the textContent so we get the visible
-// displayed value, not the widget.
-async function firstRowCellText(page: import('@playwright/test').Page): Promise<string> {
+// Helper: the displayed text of the title cell in the first body row.
+// DbSurface renders each text cell as <input class="vw-cell" value="...">,
+// so the value lives on the input. `textContent` returns "" for inputs;
+// `inputValue()` reads the live value attribute.
+async function firstTitleCellValue(page: import('@playwright/test').Page): Promise<string> {
+  // The first <td> in each row is a drag-handle gutter; the title cell
+  // is the second <td>.
   const cell = page.locator('table tbody tr').first().locator('td').nth(1);
   await expect(cell).toBeVisible();
-  return ((await cell.textContent()) ?? '').trim();
+  const input = cell.locator('input.vw-cell');
+  await expect(input).toBeVisible();
+  return (await input.inputValue()).trim();
 }
