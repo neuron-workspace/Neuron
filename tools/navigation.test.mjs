@@ -19,8 +19,27 @@ rmSync(tmp);
 // Allowed: the dev server itself, and packaged file:// content.
 assert.equal(isAppContent(DEV_URL), true);
 assert.equal(isAppContent(DEV_URL + '/index.html'), true);
-assert.equal(isAppContent('file:///C:/app/dist/renderer/index.html'), true);
-assert.equal(isAppContent('file:///home/u/app/index.html'), true);
+for (const appRoot of ['file:///C:/app/dist/renderer/', 'file:///home/u/app/dist/renderer/']) {
+  for (const suffix of ['index.html', 'index.html?x=1', 'index.html#/route']) {
+    assert.equal(isAppContent(appRoot + suffix, appRoot), true);
+    assert.equal(isAppContent(appRoot + suffix), false);
+  }
+  for (const bad of [
+    appRoot + '../main/x.html',
+    appRoot.replace(/\/$/, '-evil/index.html'),
+    appRoot + '%2e%2e/main/x.html',
+    appRoot + '..%2fmain/x.html',
+    appRoot + '%ZZ',
+    appRoot.replace('file:///', 'file://remote/'),
+  ]) {
+    assert.equal(isAppContent(bad, appRoot), false);
+  }
+}
+const appRoot = 'file:///C:/app/dist/renderer/';
+assert.equal(isAppContent('file:///C:/tmp/page.html', appRoot), false);
+assert.equal(isAppContent('file:///etc/passwd', 'file:///home/u/app/dist/renderer/'), false);
+assert.equal(isAppContent('file:///c:/APP/dist/renderer/index.html', appRoot), false);
+assert.equal(isAppContent('file:///c:/APP/dist/renderer/index.html', appRoot, true), true);
 
 // Rejected. Every entry here passes a naive startsWith(DEV_URL) test and is the
 // reason this module exists -- see the regression assertion at the bottom.

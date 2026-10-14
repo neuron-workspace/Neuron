@@ -9,6 +9,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
+import { resolveInside, realpathInside } from './repoPath';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
@@ -18,11 +19,13 @@ import { configureCrashReporter } from './crash-reporter';
 import { workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
+import { pathToFileURL } from 'node:url';
 import chokidar from 'chokidar';
 import { exec } from 'child_process';
 import * as pty from 'node-pty';
 
 
+const RENDERER_ROOT = pathToFileURL(path.join(__dirname, '../renderer') + path.sep).href;
 let mainWindow: BrowserWindow | null = null;
 let watcher: chokidar.FSWatcher | null = null;
 const diagnostics = createDiagnosticLogger(app.getPath('logs'));
@@ -541,8 +544,8 @@ ipcMain.handle('repository:reveal', (_event, dir: string) => {
 function resolveInRepo(relativePath: string): { repo: string; fullPath: string } | null {
   const repo = activeRepoPath();
   if (!repo) return null;
-  const fullPath = path.join(repo, path.normalize(relativePath));
-  if (!fullPath.startsWith(repo)) return null; // path traversal guard
+  const fullPath = resolveInside(repo, relativePath);
+  if (!fullPath || !realpathInside(repo, fullPath)) return null;
   return { repo, fullPath };
 }
 
@@ -1047,7 +1050,7 @@ app.on('web-contents-created', (_event, contents) => {
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = isAppContent(url);
+    const allowed = isAppContent(url, RENDERER_ROOT, process.platform === 'win32');
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
