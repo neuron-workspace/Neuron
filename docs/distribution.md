@@ -137,14 +137,37 @@ identity is a public name.
 
 Two ways to get the package:
 
-- **From CI.** Tagging a release builds it and attaches it to the workflow run
-  as the `neuron-store-appx` artifact. It is deliberately *not* attached to the
+- **From CI.** Tagging a release builds it, attaches it to the workflow run
+  as the `neuron-store-appx` artifact, and uploads it as a draft submission
+  (below). It is deliberately *not* attached to the
   GitHub release: it is unsigned by design, and only Partner Center can do
   anything with it.
 - **Locally.** `npm run dist:store` writes it to `release/prod/`.
 
 Then test-install it (see the signing section above), upload it in Partner
 Center, and submit.
+
+### Draft submissions from CI
+
+A stable tag also uploads that package to Partner Center as a **draft**
+submission (the `store` job in `release.yml`, using the
+[Microsoft Store Developer CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/overview)).
+Nothing reaches the Store until you open the draft in Partner Center, add
+release notes, and submit it for certification. Prerelease tags skip this job.
+
+- **Credentials.** A Microsoft Entra application registered in Partner Center
+  (User management → Microsoft Entra applications, **Manager** role) supplies
+  `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_SELLER_ID`,
+  `PARTNER_CENTER_CLIENT_ID` and `PARTNER_CENTER_CLIENT_SECRET`. Keep them as
+  secrets of the `store` environment, which should require your approval, so
+  only this job can read them. The client secret expires; rotate it in Partner
+  Center and update the secret before it does.
+- **Drafts are replaced.** `msstore publish` rebuilds the pending draft from the
+  last published submission, so do not hand-edit an unsubmitted draft and then
+  tag a release: those edits are lost.
+- **Submitting automatically** means removing `--noCommit` from the job and the
+  matching assertion in `tools/publish-gate.test.mjs`. Do it only after several
+  drafts have gone through certification unchanged.
 
 `package.json`'s `build` block is the single source of truth.
 `tools/electron-builder.env.cjs` spreads it and overrides only the test/prod
