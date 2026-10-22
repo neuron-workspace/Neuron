@@ -55,6 +55,25 @@ check('it can still be run by hand', () => {
     'a failed token needs a re-run without cutting a new tag');
 });
 
+// --- the Microsoft Store draft ----------------------------------------------
+// Partner Center is the one destination where a mistake reaches users of a
+// store that signs and auto-updates the app, so its guards are asserted rather
+// than trusted to survive edits to release.yml.
+const store = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf-8')).jobs.store;
+
+check('the Store job only drafts, behind its environment, after the release', () => {
+  assert.ok(store, 'release.yml must have a store job');
+  assert.equal(store.environment, 'store', 'secrets and any approval rule live on the store environment');
+  assert.ok(store.needs.includes('release'), 'a release that failed to publish must not leave a Store draft');
+  assert.match(store.if, /!contains\(github\.ref_name, '-'\)/, 'prereleases must not reach the Store');
+  assert.deepEqual(store.permissions, { contents: 'read' });
+  const publish = store.steps.find((s) => /msstore publish/.test(s.run ?? ''));
+  assert.ok(publish, 'the job must publish with msstore');
+  assert.match(publish.run, /--noCommit/, 'drop --noCommit only deliberately, together with this assertion');
+  const setup = store.steps.find((s) => /microsoft-store-apppublisher/.test(s.uses ?? ''));
+  assert.match(setup.uses, /@[0-9a-f]{40}$/, 'a third-party action holding Partner Center credentials is pinned by commit');
+});
+
 // --- the decision -----------------------------------------------------------
 // Pulled out of the workflow file rather than copied into this test, so the
 // script under test is the one that actually runs.

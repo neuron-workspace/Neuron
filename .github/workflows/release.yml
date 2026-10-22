@@ -239,3 +239,56 @@ jobs:
         # different series from "0.4.4", so shipping a finished release pruned
         # none of its own betas and said it had tidied up.
         run: node tools/prune-releases.mjs '${{ github.ref_name }}'
+
+  # Uploads the Store package to Partner Center as a DRAFT submission. Nothing
+  # reaches the Store until someone opens Partner Center and submits the draft
+  # for certification -- `--noCommit` is what keeps it that way. Drop the flag
+  # only once a few drafts have gone through cleanly.
+  #
+  # After the GitHub release, so a release that failed to publish never leaves
+  # a Store draft behind; stable tags only, because Store users opted into
+  # nothing. The `store` environment is where an approval rule belongs.
+  #
+  # `msstore publish` replaces any pending draft with a new one built from the
+  # last published submission, so edits made by hand to an unsubmitted draft
+  # are lost when this runs.
+  store:
+    name: Draft Microsoft Store submission
+    needs: [build, release]
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: windows-latest
+    environment: store
+    permissions:
+      contents: read
+    env:
+      STORE_APP_ID: 9PFC0XC16C1G
+    steps:
+      # The CLI reads package.json to recognise an Electron project; it does
+      # not build anything when given a directory of packages.
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Download the Store package
+        uses: actions/download-artifact@v7
+        with:
+          name: neuron-store-appx
+          path: store-package
+      - name: Set up the Microsoft Store Developer CLI
+        uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
+        with:
+          version: v0.4.3
+      - name: Configure the Microsoft Store Developer CLI
+        shell: bash
+        env:
+          TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
+          CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+        run: |
+          msstore settings --enableTelemetry false
+          msstore reconfigure --tenantId "$TENANT_ID" --sellerId "$SELLER_ID" --clientId "$CLIENT_ID" --clientSecret "$CLIENT_SECRET"
+      # --inputDirectory, not the --inputFile the published docs still name:
+      # the CLI publishes every .appx at the top of that directory, which is
+      # why the artifact gets a directory of its own.
+      - name: Upload the package as a draft submission
+        shell: bash
+        run: msstore publish . --inputDirectory store-package --appId "$STORE_APP_ID" --noCommit
