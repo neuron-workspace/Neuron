@@ -8,6 +8,7 @@ import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard } from './mdx-layo
 import DocumentProperties from './properties/DocumentProperties';
 import { isFullWidth, parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
+import { safeUrl } from '../lib/view-security';
 import MermaidDiagram from './MermaidDiagram';
 
 // Links read as one object rather than as underlined text: an icon says where
@@ -641,13 +642,14 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
 
         if (external) {
+          const safeHref = safeUrl(href);
           parts.push(
             // A real anchor: main already routes http(s) navigation to the
             // system browser through its own guard, so this needs no bridge of
             // its own and cannot move the app frame.
-            <a
+            safeHref ? <a
               key={key++}
-              href={href}
+              href={safeHref}
               title={href}
               className={LINK_PILL}
               onClick={(event) => event.stopPropagation()}
@@ -655,7 +657,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             >
               <ArrowUpRight className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
               {label}
-            </a>,
+            </a> : <span key={key++} title={href}>{label}</span>,
           );
         } else {
           const resolved = resolveWikiLink(wikiNotes, href.replace(/\.(md|mdx)$/i, ''));
