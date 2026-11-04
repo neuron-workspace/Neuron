@@ -382,6 +382,8 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const renderedIndices = virtual
     ? [...pinnedRows, ...Array.from({ length: windowRows.end - windowRows.start }, (_, index) => windowRows.start + index)].sort((a, b) => a - b)
     : visibleRows.map((_, index) => index);
+  // TEMP CI debug: remove before merge.
+  if (virtual) { const d = ((window as any).__dbDebug ??= []) as string[]; d.push(`render focused=${focusedRow} window=${windowRows.start}-${windowRows.end} pinned=${pinnedRows.join(',')} top=${Math.round(viewport.scrollTop)} vh=${viewport.viewportHeight} rh=${viewport.rowHeight}`); if (d.length > 40) d.shift(); }
 
   // --- Cell renderers ---------------------------------------------------------
   function renderCell(row: DbRow, propId: string, prop: DbProperty) {
@@ -683,8 +685,9 @@ export function DbSurface({ path, content }: SurfaceProps) {
                   )}
                   <tr data-row-id={row.id} aria-rowindex={index + 2} className="group/r"
                     style={virtual ? { height: viewport.rowHeight } : undefined}
-                    onFocusCapture={() => setFocusedRow(row.id)}
+                    onFocusCapture={(event) => { const d = ((window as any).__dbDebug ??= []) as string[]; d.push(`focus ${row.id} ${(event.target as HTMLElement).tagName}`); setFocusedRow(row.id); }}
                     onBlurCapture={(event) => {
+                      { const d = ((window as any).__dbDebug ??= []) as string[]; const r = event.relatedTarget as HTMLElement | null; d.push(`blur ${row.id} -> ${r ? r.tagName + ' ' + (r.closest('tr')?.getAttribute('data-row-id') ?? r.textContent?.trim().slice(0, 12)) : 'null'} contains=${event.currentTarget.contains(r)}`); }
                       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedRow(null);
                     }}
                   >
