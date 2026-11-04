@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Settings2, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { addDbTable, drawableRelations, parseDb, serializeDb, updateDbTable, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type PropType } from '@/lib/db';
+import { rowWindow } from '@/lib/row-window';
 import { Segmented } from '@/components/ui/segmented';
 import { registerSurface, type SurfaceProps } from './index';
 
@@ -333,6 +334,55 @@ export function DbSurface({ path, content }: SurfaceProps) {
     return rows;
   }, [doc, search]);
 
+  const tableScroll = useRef<HTMLDivElement>(null);
+  const measuredHeight = useRef<number | null>(null);
+  const [viewport, setViewport] = useState({ scrollTop: 0, viewportHeight: 0, rowHeight: 36 });
+  const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  const virtual = visibleRows.length >= 200 && (doc?.view.mode ?? 'table') === 'table';
+
+  useLayoutEffect(() => {
+    const container = tableScroll.current;
+    if (!container || !virtual) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const firstRow = container.querySelector<HTMLTableRowElement>('tbody tr[data-row-id]');
+      if (measuredHeight.current === null && firstRow) {
+        measuredHeight.current = firstRow.getBoundingClientRect().height || 36;
+      }
+      const headerHeight = container.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+      setViewport({
+        scrollTop: Math.max(0, container.scrollTop - headerHeight),
+        viewportHeight: container.clientHeight,
+        rowHeight: measuredHeight.current ?? 36,
+      });
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    container.addEventListener('scroll', schedule, { passive: true });
+    const observer = new ResizeObserver(schedule);
+    observer.observe(container);
+    return () => {
+      container.removeEventListener('scroll', schedule);
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [virtual, visibleRows]);
+
+  useLayoutEffect(() => {
+    if (tableScroll.current) tableScroll.current.scrollTop = 0;
+    setViewport((current) => ({ ...current, scrollTop: 0 }));
+  }, [search, doc?.view.filterProp, doc?.view.filterValue, selectedTable, path]);
+
+  const windowRows = rowWindow({ ...viewport, count: visibleRows.length, overscan: 10 });
+  const focusedIndex = focusedRow === null ? -1 : visibleRows.findIndex((row) => row.id === focusedRow);
+  // Keep the editor and its Tab neighbours mounted without filling a distant gap.
+  const pinnedRows = focusedIndex < 0 ? [] : [focusedIndex - 1, focusedIndex, focusedIndex + 1]
+    .filter((index) => index >= 0 && index < visibleRows.length && (index < windowRows.start || index >= windowRows.end));
+  const renderedIndices = virtual
+    ? [...pinnedRows, ...Array.from({ length: windowRows.end - windowRows.start }, (_, index) => windowRows.start + index)].sort((a, b) => a - b)
+    : visibleRows.map((_, index) => index);
+
   // --- Cell renderers ---------------------------------------------------------
   function renderCell(row: DbRow, propId: string, prop: DbProperty) {
     const v = row.values[propId];
@@ -462,7 +512,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
     return null;
   });
 
-  const board = groupBy && (
+  const board = mode === 'board' && groupBy && (
     <div className="flex items-start gap-3 overflow-x-auto pb-2">
       {[...(properties[groupBy].options ?? []), null].map((option) => {
         const colId = option?.id ?? '';
@@ -500,7 +550,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
     </div>
   );
 
-  const gallery = (
+  const gallery = mode === 'gallery' && (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
       {visibleRows.map((row) => (
         <div key={row.id} className="rounded-lg bg-[var(--surface)] p-3">
@@ -518,8 +568,8 @@ export function DbSurface({ path, content }: SurfaceProps) {
   };
 
   return (
-    <main className="font-sans h-full overflow-auto bg-[var(--canvas)] text-[var(--ink)]">
-      <div className="mx-auto max-w-6xl px-6 py-6 vw-content space-y-3">
+    <main className={`font-sans h-full ${virtual ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--canvas)] text-[var(--ink)]`}>
+      <div className={`mx-auto max-w-6xl px-6 py-6 vw-content space-y-3 ${virtual ? 'flex h-full min-h-0 flex-col' : ''}`}>
         <div className="flex flex-wrap items-center gap-2">
           {tableCount > 1 && <Button variant="ghost" size="sm" onClick={() => selectTable(null)} aria-label="Back to schema overview"><ArrowLeft /> Schema</Button>}
           <h1 className="mr-auto flex items-center gap-2 text-base font-semibold tracking-tight"><Database className="h-4 w-4 text-[var(--accent-strong)]" /> {doc.name}</h1>
@@ -598,10 +648,10 @@ export function DbSurface({ path, content }: SurfaceProps) {
         )}
 
         {mode === 'board' ? board : mode === 'gallery' ? gallery : (
-        <div className="overflow-auto">
-          <table className="vw-db">
+        <div ref={tableScroll} data-db-scroll className={`overflow-auto ${virtual ? 'min-h-0 flex-1' : ''}`} style={virtual ? { overflowAnchor: 'none' } : undefined}>
+          <table className="vw-db" aria-rowcount={visibleRows.length + 1}>
             <thead>
-              <tr>
+              <tr aria-rowindex={1}>
                 <th className="vw-db-gutter" />
                 {order.map((pid) => (
                   <th key={pid} className="group/h min-w-[8rem]">
@@ -622,15 +672,36 @@ export function DbSurface({ path, content }: SurfaceProps) {
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((row) => (
-                <tr key={row.id} className="group/r">
-                  <td className="vw-db-gutter">
-                    <button type="button" className="vw-icon-btn opacity-0 group-hover/r:opacity-100 hover:text-[var(--danger)]" onClick={() => deleteRow(row.id)} title="Delete row" aria-label="Delete row"><Trash2 className="h-3.5 w-3.5" /></button>
-                  </td>
-                  {order.map((pid) => <td key={pid}>{renderCell(row, pid, properties[pid])}</td>)}
-                  <td className="vw-db-gutter" />
-                </tr>
-              ))}
+              {renderedIndices.map((index, position) => {
+                const row = visibleRows[index];
+                const previous = position === 0 ? -1 : renderedIndices[position - 1];
+                const padding = (index - previous - 1) * viewport.rowHeight;
+                return (
+                  <Fragment key={row.id}>
+                  {virtual && (position === 0 || padding > 0) && (
+                    <tr aria-hidden="true" style={{ border: 0 }}><td colSpan={order.length + 2} style={{ height: padding, padding: 0, border: 0 }} /></tr>
+                  )}
+                  <tr data-row-id={row.id} aria-rowindex={index + 2} className="group/r"
+                    style={virtual ? { height: viewport.rowHeight } : undefined}
+                    onFocusCapture={() => setFocusedRow(row.id)}
+                    onBlurCapture={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedRow(null);
+                    }}
+                  >
+                    <td className="vw-db-gutter">
+                      <button type="button" className="vw-icon-btn opacity-0 group-hover/r:opacity-100 hover:text-[var(--danger)]" onClick={() => deleteRow(row.id)} title="Delete row" aria-label="Delete row"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </td>
+                    {order.map((pid) => <td key={pid}>{virtual
+                      ? <div style={{ height: viewport.rowHeight - 5, overflow: 'hidden' }}>{renderCell(row, pid, properties[pid])}</div>
+                      : renderCell(row, pid, properties[pid])}</td>)}
+                    <td className="vw-db-gutter" />
+                  </tr>
+                  </Fragment>
+                );
+              })}
+              {virtual && (
+                <tr aria-hidden="true" style={{ border: 0 }}><td colSpan={order.length + 2} style={{ height: (visibleRows.length - (renderedIndices.at(-1) ?? -1) - 1) * viewport.rowHeight, padding: 0, border: 0 }} /></tr>
+              )}
             </tbody>
           </table>
           <button type="button" className="vw-newrow" onClick={addRow}><Plus className="h-3.5 w-3.5" /> New row</button>
