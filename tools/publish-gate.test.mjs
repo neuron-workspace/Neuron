@@ -173,7 +173,14 @@ check('the tag comes from head_branch, which is where it survives', () => {
   // On a tag push workflow_run.head_branch is the tag name. It is the only
   // place the tag reaches this workflow -- github.ref here is the default
   // branch, because that is the ref workflow_run workflows run from.
-  assert.match(source, /TAG:\s*\$\{\{\s*github\.event\.workflow_run\.head_branch\s*\|\|\s*inputs\.tag\s*\}\}/);
+  // Every TAG, not just one: manifest generation read github.event.release,
+  // which a workflow_run never carries, while the gate beside it was correct
+  // and kept a single-match check green.
+  const tags = source.match(/^\s*TAG:.*$/gm) ?? [];
+  assert.ok(tags.length >= 2, 'the gate and manifest generation both read the tag');
+  for (const line of tags) {
+    assert.match(line, /TAG:\s*\$\{\{\s*github\.event\.workflow_run\.head_branch\s*\|\|\s*inputs\.tag\s*\}\}/, line.trim());
+  }
 });
 
 rmSync(out, { recursive: true, force: true });

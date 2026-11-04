@@ -25,11 +25,21 @@ export function isSameOrigin(url: string, origin: string | null | undefined): bo
  * True for the app's own bundled content: packaged `file://` pages, or the dev
  * server in development. Anything else navigates the app frame off-origin.
  */
-export function isAppContent(url: string): boolean {
+export function isAppContent(url: string, appRoot?: string, caseInsensitive = false): boolean {
   try {
     const parsed = new URL(url);
-    // file:// URLs have an opaque ("null") origin, so match the scheme itself.
-    return parsed.protocol === 'file:' || parsed.origin === DEV_URL;
+    if (parsed.protocol !== 'file:') return parsed.origin === DEV_URL;
+    if (!appRoot) return false;
+    const root = new URL(appRoot);
+    if (root.protocol !== 'file:' || parsed.host !== root.host) return false;
+    let pathname = decodeURIComponent(parsed.pathname);
+    let rootPath = decodeURIComponent(root.pathname);
+    if (!rootPath.endsWith('/') || pathname.split(/[\\/]/).includes('..')) return false;
+    if (caseInsensitive) {
+      pathname = pathname.toLowerCase();
+      rootPath = rootPath.toLowerCase();
+    }
+    return pathname.startsWith(rootPath);
   } catch {
     return false;
   }
