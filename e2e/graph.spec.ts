@@ -204,25 +204,13 @@ test('nodes can be dragged and the layout stops after reheating', async ({ page 
   expect(await canvas.evaluate((el: any) => el.sigma.getGraph().export())).toEqual(before);
 });
 
-test('file changes update relationships and resolve missing targets', async ({ app, page, workspace }) => {
+test('file changes update relationships and resolve missing targets', async ({ page, workspace }) => {
   const { writeFileSync, unlinkSync } = await import('node:fs');
   const { join } = await import('node:path');
   const canvas = page.locator('[data-graph-canvas]').first();
   await expect.poll(() => canvas.evaluate((el: any) => el.sigma?.getGraph().order ?? 0)).toBeGreaterThan(5);
   writeFileSync(join(workspace, 'graph-source.md'), '[[graph-target]]');
-  // TEMP CI debug: remove before merge.
-  try {
-    await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getGraph().hasNode('unresolved:graph-target'))).toBe(true);
-  } catch (error) {
-    const log = await app.evaluate(() => (globalThis as any).__neuronWatchLog ?? 'no log');
-    const seen = await page.evaluate(async () => ({
-      read: (await window.electronAPI.readNote('graph-source.md')).slice(0, 40),
-      listed: (await window.electronAPI.listNotes()).includes('graph-source.md'),
-      shown: !!document.querySelector('[data-file$="graph-source.md"]'),
-      nodes: (document.querySelector('[data-graph-canvas]') as any)?.sigma?.getGraph().nodes().filter((id: string) => id.includes('graph')),
-    }));
-    throw new Error(`workspace ${workspace}\nrenderer ${JSON.stringify(seen)}\nwatch log:\n${Array.isArray(log) ? log.join('\n') : log}\n${(error as Error).message}`);
-  }
+  await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getGraph().hasNode('unresolved:graph-target'))).toBe(true);
   writeFileSync(join(workspace, 'graph-target.md'), '# Target');
   await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getGraph().hasDirectedEdge('graph-source.md', 'graph-target.md'))).toBe(true);
   await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getGraph().hasNode('unresolved:graph-target'))).toBe(false);
