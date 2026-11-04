@@ -225,11 +225,6 @@ function setupWatcher() {
     ignored: /(^|[\/\\])\.(?!neuron([\/\\]|$))/,
     persistent: true,
     ignoreInitial: true,
-    // Sync clients and editors that do not write atomically (OneDrive,
-    // Dropbox, a large `git checkout`) report a file while it is still being
-    // written. Reading then shows a truncated note, and a save made from that
-    // view would write the truncation back. Wait until the size stops changing.
-    awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 30 },
   });
 
   watcher.on('all', (event, filePath) => {
