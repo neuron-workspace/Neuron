@@ -53,10 +53,9 @@ test('large database windows rows and preserves focused edits', async ({ page, w
   });
   for (let index = 3; index <= 42; index++) {
     await page.keyboard.press('Tab');
-    const afterFirst = await focusReport();
     await page.keyboard.press('Tab');
     const cell = table.locator('tr[data-row-id="row-' + index + '"] input.vw-cell');
-    await expect(cell, `row ${index}: after the first Tab, ${afterFirst}; after the second, ${await focusReport()}`).toBeFocused();
+    await expect(cell, `row ${index}: after the second Tab, ${await focusReport()}`).toBeFocused();
   }
   await page.getByLabel('Search rows').fill('Entry 4999');
   await expect(table).toHaveAttribute('aria-rowcount', '2');
