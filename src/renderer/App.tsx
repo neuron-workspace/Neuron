@@ -355,10 +355,14 @@ export default function App() {
       const version = (versions.get(path) ?? 0) + 1;
       versions.set(path, version);
       if (event === 'unlink') {
-        setNotes(current => current.filter(n => n !== path));
-        setNotesData(current => current.filter(n => n.path !== path));
-        setOpenTabs(current => current.filter(n => n !== path));
-        setSelectedNote(current => current === path ? null : current);
+        const removed = (candidate: string) => candidate === path || candidate.startsWith(path + '/');
+        for (const [candidate, pendingVersion] of versions) {
+          if (removed(candidate)) versions.set(candidate, pendingVersion + 1);
+        }
+        setNotes(current => current.filter(n => !removed(n)));
+        setNotesData(current => current.filter(n => !removed(n.path)));
+        setOpenTabs(current => current.filter(n => !removed(n)));
+        setSelectedNote(current => current !== null && removed(current) ? null : current);
       } else {
         void window.electronAPI.readNote(path).then(content => {
           if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;

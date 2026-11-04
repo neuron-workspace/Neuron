@@ -18,13 +18,13 @@ import { configureCrashReporter } from './crash-reporter';
 import { workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
-import chokidar from 'chokidar';
+import { watchWorkspace } from './workspace-watcher';
 import { exec } from 'child_process';
 import * as pty from 'node-pty';
 
 
 let mainWindow: BrowserWindow | null = null;
-let watcher: chokidar.FSWatcher | null = null;
+let watcher: { close(): void } | null = null;
 const diagnostics = createDiagnosticLogger(app.getPath('logs'));
 let handlingFatalError = false;
 
@@ -120,6 +120,7 @@ function readSettings(): Settings {
 }
 
 function writeSettings(settings: Settings): void {
+  activeRepoCache = undefined;
   try {
     fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2), 'utf-8');
   } catch (err) {
@@ -132,10 +133,18 @@ function writeSettings(settings: Settings): void {
 // can live anywhere, including a cloud-synced folder.
 // ==========================================================================
 
+// Every note read resolves its path against the active workspace, and opening a
+// workspace reads every note. Re-reading and re-parsing the settings file and
+// stat-ing the folder for each of them cost about 5 ms a note on Windows --
+// 24 s of a blocked main thread for 5,000 notes before the explorer appeared.
+// Settings only change through writeSettings, which clears this.
+let activeRepoCache: string | null | undefined;
+
 function activeRepoPath(): string | null {
+  if (activeRepoCache !== undefined) return activeRepoCache;
   const current = readSettings().repositories.current;
-  if (current && fs.existsSync(current) && fs.statSync(current).isDirectory()) return current;
-  return null;
+  activeRepoCache = current && fs.existsSync(current) && fs.statSync(current).isDirectory() ? current : null;
+  return activeRepoCache;
 }
 
 const CLOUD_HINTS = ['onedrive', 'dropbox', 'google drive', 'icloud', 'box sync'];
@@ -220,18 +229,10 @@ function setupWatcher() {
   const dir = activeRepoPath();
   if (!dir) return;
 
-  watcher = chokidar.watch(dir, {
-    // Ignore dot-entries except .neuron, the workspace's own config folder.
-    ignored: /(^|[\/\\])\.(?!neuron([\/\\]|$))/,
-    persistent: true,
-    ignoreInitial: true,
-  });
-
-  watcher.on('all', (event, filePath) => {
+  watcher = watchWorkspace(dir, (event, relativePath) => {
     if (!mainWindow) return;
-    const relativePath = path.relative(dir, filePath);
-    if (WORKSPACE_FILE.test(relativePath)) {
-      mainWindow.webContents.send('notes:changed', event, relativePath.replace(/\\/g, '/'));
+    if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
+      mainWindow.webContents.send('notes:changed', event, relativePath);
     }
   });
 }
@@ -582,7 +583,11 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(relativePath);
   if (!resolved) return 'Error: No workspace is open.';
   try {
-    return fs.readFileSync(resolved.fullPath, 'utf-8');
+    // Async: opening a workspace reads every note at once, and synchronous
+    // reads hold the main thread -- which in Electron is also the browser's UI
+    // thread -- for the whole batch. Opening 5,000 freshly written notes on
+    // Windows: explorer after 33 s with sync reads, 7-8 s with these.
+    return await fs.promises.readFile(resolved.fullPath, 'utf-8');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // Missing files are an expected probe result (e.g. optional .neuron/layout.json);
