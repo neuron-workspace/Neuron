@@ -46,7 +46,8 @@ test(`measure a ${NOTES}-note workspace`, async ({ page, launchTiming }) => {
   // The row counter, not the number of <tr>s: a virtualised table renders only
   // the rows in view, and the benchmark has to measure both versions.
   await expect(page.getByText('10000 / 10000 rows')).toBeVisible({ timeout: 90_000 });
-  await expect(page.locator('table tbody tr').first().locator('input.vw-cell').first()).toHaveValue('Review milestone 0');
+  // Skip spacer rows, which a virtualised table puts around the rendered ones.
+  await expect(page.locator('table tbody tr:not([aria-hidden])').first().locator('input.vw-cell').first()).toHaveValue('Review milestone 0');
   await painted(page);
   const dbOpenMs = performance.now() - dbStart;
 
