@@ -42,10 +42,21 @@ test('large database windows rows and preserves focused edits', async ({ page, w
 
   // Tab can advance beyond the initial window without skipping rows.
   await title.focus();
+  // Where focus actually is, for the failure message.
+  const focusReport = () => page.evaluate(() => {
+    const active = document.activeElement;
+    const rows = [...document.querySelectorAll('table.vw-db tbody tr[data-row-id]')].map((row) => row.getAttribute('data-row-id'));
+    return `focus on ${active?.tagName ?? 'none'} "${active?.getAttribute('aria-label') ?? active?.textContent?.trim().slice(0, 30)}"`
+      + ` in ${active?.closest('tr')?.getAttribute('data-row-id') ?? 'no row'};`
+      + ` scrollTop ${document.querySelector('[data-db-scroll]')?.scrollTop};`
+      + ` rendered ${rows[0]}..${rows.at(-1)} (${rows.length})`;
+  });
   for (let index = 3; index <= 42; index++) {
     await page.keyboard.press('Tab');
+    const afterFirst = await focusReport();
     await page.keyboard.press('Tab');
-    await expect(table.locator('tr[data-row-id="row-' + index + '"] input.vw-cell')).toBeFocused();
+    const cell = table.locator('tr[data-row-id="row-' + index + '"] input.vw-cell');
+    await expect(cell, `row ${index}: after the first Tab, ${afterFirst}; after the second, ${await focusReport()}`).toBeFocused();
   }
   await page.getByLabel('Search rows').fill('Entry 4999');
   await expect(table).toHaveAttribute('aria-rowcount', '2');
