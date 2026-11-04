@@ -377,13 +377,13 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const windowRows = rowWindow({ ...viewport, count: visibleRows.length, overscan: 10 });
   const focusedIndex = focusedRow === null ? -1 : visibleRows.findIndex((row) => row.id === focusedRow);
   // Keep the editor and its Tab neighbours mounted without filling a distant gap.
+  // The last focused row stays pinned after focus leaves the table: at most three
+  // extra rows, and Tab into the next row never finds it unmounted.
   const pinnedRows = focusedIndex < 0 ? [] : [focusedIndex - 1, focusedIndex, focusedIndex + 1]
     .filter((index) => index >= 0 && index < visibleRows.length && (index < windowRows.start || index >= windowRows.end));
   const renderedIndices = virtual
     ? [...pinnedRows, ...Array.from({ length: windowRows.end - windowRows.start }, (_, index) => windowRows.start + index)].sort((a, b) => a - b)
     : visibleRows.map((_, index) => index);
-  // TEMP CI debug: remove before merge.
-  if (virtual) { const d = ((window as any).__dbDebug ??= []) as string[]; d.push(`render focused=${focusedRow} window=${windowRows.start}-${windowRows.end} pinned=${pinnedRows.join(',')} top=${Math.round(viewport.scrollTop)} vh=${viewport.viewportHeight} rh=${viewport.rowHeight}`); if (d.length > 40) d.shift(); }
 
   // --- Cell renderers ---------------------------------------------------------
   function renderCell(row: DbRow, propId: string, prop: DbProperty) {
@@ -685,11 +685,9 @@ export function DbSurface({ path, content }: SurfaceProps) {
                   )}
                   <tr data-row-id={row.id} aria-rowindex={index + 2} className="group/r"
                     style={virtual ? { height: viewport.rowHeight } : undefined}
-                    onFocusCapture={(event) => { const d = ((window as any).__dbDebug ??= []) as string[]; d.push(`focus ${row.id} ${(event.target as HTMLElement).tagName}`); setFocusedRow(row.id); }}
-                    onBlurCapture={(event) => {
-                      { const d = ((window as any).__dbDebug ??= []) as string[]; const r = event.relatedTarget as HTMLElement | null; d.push(`blur ${row.id} -> ${r ? r.tagName + ' ' + (r.closest('tr')?.getAttribute('data-row-id') ?? r.textContent?.trim().slice(0, 12)) : 'null'} contains=${event.currentTarget.contains(r)}`); }
-                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedRow(null);
-                    }}
+                    // Never cleared on blur: moving to the next row fires blur first,
+                    // and a render in between unmounted that row before it got focus.
+                    onFocusCapture={() => setFocusedRow(row.id)}
                   >
                     <td className="vw-db-gutter">
                       <button type="button" className="vw-icon-btn opacity-0 group-hover/r:opacity-100 hover:text-[var(--danger)]" onClick={() => deleteRow(row.id)} title="Delete row" aria-label="Delete row"><Trash2 className="h-3.5 w-3.5" /></button>

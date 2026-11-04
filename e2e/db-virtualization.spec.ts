@@ -49,9 +49,7 @@ test('large database windows rows and preserves focused edits', async ({ page, w
     return `focus on ${active?.tagName ?? 'none'} "${active?.getAttribute('aria-label') ?? active?.textContent?.trim().slice(0, 30)}"`
       + ` in ${active?.closest('tr')?.getAttribute('data-row-id') ?? 'no row'};`
       + ` scrollTop ${document.querySelector('[data-db-scroll]')?.scrollTop};`
-      + ` rendered ${rows[0]}..${rows.at(-1)} (${rows.length})`
-      // TEMP CI debug: remove before merge.
-      + `\n${(((window as any).__dbDebug ?? []) as string[]).slice(-30).join('\n')}`;
+      + ` rendered ${rows[0]}..${rows.at(-1)} (${rows.length})`;
   });
   for (let index = 3; index <= 42; index++) {
     await page.keyboard.press('Tab');
