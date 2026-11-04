@@ -1,5 +1,6 @@
 import { Blocks, Chrome, FileCode2, FolderPlus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
+import type { WorkbenchLayout } from '../lib/layout';
 import { usePlugins } from '../plugins/host';
 import { formatChord, type Bindings } from '../lib/keybindings';
 
@@ -20,6 +21,9 @@ function Shortcut({ chord }: { chord?: string }) {
 }
 
 interface CommandPaletteProps {
+  layout: WorkbenchLayout;
+  onLayoutChange: (patch: Partial<WorkbenchLayout>) => void;
+  onResetLayout: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   notes: string[];
@@ -39,7 +43,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, onLayoutChange, onResetLayout, open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -59,6 +63,17 @@ export default function CommandPalette({ open, onOpenChange, notes, onSelectNote
           <CommandItem onSelect={() => { onOpenMarketplace(); close(); }}><Blocks /> Plugins & integrations</CommandItem>
           <CommandItem onSelect={() => { onOpenGallery(); close(); }}><Shapes /> Component gallery</CommandItem>
           <CommandItem onSelect={() => { onOpenSettings(); close(); }}><Settings /> Open settings</CommandItem>
+        </CommandGroup>
+
+        <CommandGroup heading="Layout">
+          {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
+            <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
+              <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}
+            </CommandItem>
+          ))}
+          <CommandItem disabled={layout.sidebarSide === 'left'} onSelect={() => { onLayoutChange({ sidebarSide: 'left' }); close(); }}><PanelsTopLeft /> Move sidebar to the left</CommandItem>
+          <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
+          <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
         </CommandGroup>
 
         {commands.length > 0 && (

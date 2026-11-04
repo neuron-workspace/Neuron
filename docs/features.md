@@ -340,8 +340,7 @@ links/wiki-links, inline code, code backgrounds, and quote text/borders. These
 choices are local settings and apply to the Live editor and Reading view; HTMX
 views receive the current light/dark scheme.
 
-The title-bar layout controls toggle the Explorer, side panel, bottom panel,
-status bar, and zen mode. Panels are resizable. A workspace may also store a
+Drag panel tabs to the left, right, or bottom edge to move them, drop onto a tab strip to reorder, and drag the sidebar grip to either side; placement and divider sizes persist across restarts. Use **Panel options** (or a tab’s context menu) for keyboard-accessible moves and reordering, and **Customize layout** or the command palette to move the sidebar, toggle docks, or **Reset layout** with the sidebar visible. A workspace may also store a
 JSON shell layout in `.neuron/layout.json`; open the command palette and choose
 **Use workspace layout**. See [File surfaces](custom-views.md) for the layout
 surface and [Design system](design-system.md) for the visual tokens.
