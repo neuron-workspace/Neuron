@@ -65,6 +65,7 @@
     "smoke": "node tools/smoke-packaged.mjs",
     "test:deps": "node tools/deps.test.mjs",
     "test:graph": "node tools/knowledge-graph.test.mjs",
+    "bench:scale": "node tools/scale-benchmark.mjs",
     "bench:graph": "node tools/graph-benchmark.mjs",
     "bench:graph:browser": "node tools/graph-benchmark-run.mjs"
   },
