@@ -9,8 +9,51 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that only touches documentation cannot break the app, so it
+  # need not wait on three platforms of install, build and Electron tests.
+  #
+  # This is not `paths-ignore`: Windows, macOS and Linux are required checks,
+  # and a workflow that never starts never reports them, so a docs-only pull
+  # request would sit blocked forever. The platform jobs below always run and
+  # report; they just skip their steps when this job says nothing needs testing.
+  # Pushes to main and dev always run everything.
+  changes:
+    name: Detect docs-only change
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Check out repository
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          changed=$(git diff --name-only "$BASE...$HEAD")
+          echo "$changed"
+          # Nothing under docs/, no top-level Markdown file and none of the
+          # GitHub community files is read by the build or by any test. Markdown
+          # anywhere else (examples/, src/) is fixture or app content and counts.
+          docs='^(docs/|[^/]+\.md$|LICENSE$|NOTICE$|\.github/(ISSUE_TEMPLATE/|[^/]+\.md$))'
+          if [ -n "$changed" ] && ! echo "$changed" | grep -qvE "$docs"; then
+            echo "Documentation only; the platform jobs will skip their steps."
+            echo code=false >> "$GITHUB_OUTPUT"
+          else
+            echo code=true >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: ${{ matrix.name }}
+    needs: changes
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
     # One platform is not cross-platform testing. Neuron leans on node-pty, a
     # filesystem watcher, spawned processes, keyboard chords, path handling and
     # Electron window behaviour -- every one of which diverges between Windows,
@@ -35,9 +78,14 @@ jobs:
             wrap: 'xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24"'
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Skip for a documentation-only change
+        if: env.RUN != 'true'
+        run: echo "Only documentation changed, so there is nothing to build or test."
       - name: Check out repository
+        if: env.RUN == 'true'
         uses: actions/checkout@v5
       - name: Set up Node.js
+        if: env.RUN == 'true'
         uses: actions/setup-node@v5
         with:
           # Matches release.yml. Testing on 20 while shipping from 22 means the
@@ -46,15 +94,20 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
+        if: env.RUN == 'true'
         run: npm ci
       - name: Type-check main and renderer
+        if: env.RUN == 'true'
         run: npm run typecheck
       - name: Run test suites
+        if: env.RUN == 'true'
         run: npm test
       - name: Build application
+        if: env.RUN == 'true'
         run: npm run build
 
       - name: Run Electron end-to-end tests
+        if: env.RUN == 'true'
         run: ${{ matrix.wrap }} npm run test:e2e
 
       # Launch what a user would actually download.
@@ -65,6 +118,7 @@ jobs:
       # which holds only what electron-builder can reach from `dependencies`.
       # Building successfully says nothing about starting.
       - name: Smoke-test the packaged application
+        if: env.RUN == 'true'
         run: ${{ matrix.wrap }} npm run smoke
 
       - name: Upload end-to-end failure artifacts
