@@ -16,10 +16,16 @@ export function watchWorkspace(
   const timers = new Map<string, { timer: ReturnType<typeof setTimeout>; renamed: boolean }>();
   let closed = false;
   let watcher: { close(): void } | undefined;
+  // TEMP CI debug: remove before merge.
+  const debug = ((globalThis as any).__neuronWatchLog ??= []) as string[];
+  const note = (line: string) => { debug.push(`${Date.now() % 100000} ${line}`); if (debug.length > 80) debug.shift(); };
+  note(`start ${dir} native=${useNative}`);
   const emit = (event: WatchEvent, relativePath: string) => {
+    note(`emit ${event} ${relativePath} closed=${closed}`);
     if (!closed) onEvent(event, relativePath);
   };
   const close = () => {
+    note(`close ${dir}`);
     if (closed) return;
     closed = true;
     for (const pending of timers.values()) clearTimeout(pending.timer);
@@ -27,6 +33,7 @@ export function watchWorkspace(
     watcher?.close();
   };
   const onError = (error: Error) => {
+    note(`error ${error?.message}`);
     if (closed) return;
     console.warn('Workspace watcher stopped:', error);
     close();
@@ -56,6 +63,7 @@ export function watchWorkspace(
       stat = await fs.promises.stat(path.join(dir, relativePath));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      note(`stat ${relativePath} ${code}`);
       if (code === 'ENOENT' || code === 'ENOTDIR') emit('unlink', relativePath);
       return;
     }
@@ -67,6 +75,7 @@ export function watchWorkspace(
   if (useNative) {
     try {
       watcher = fs.watch(dir, { recursive: true }, (event, filename) => {
+        note(`raw ${event} ${filename} closed=${closed}`);
         if (closed || filename == null) return;
         const relativePath = filename.toString().replace(/\\/g, '/');
         if (ignored.test(relativePath)) return;
@@ -82,7 +91,8 @@ export function watchWorkspace(
         });
       }).on('error', onError);
       return { close };
-    } catch {
+    } catch (error) {
+      note(`native failed ${(error as Error).message}`);
       // Recursive watching is unavailable; use chokidar.
     }
   }
