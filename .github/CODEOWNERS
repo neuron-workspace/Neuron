@@ -1,0 +1,3 @@
+# Requests a review from the maintainer on every pull request. This only asks
+# for a review: the branch rules do not require code-owner approval.
+* @shiv-khetan
