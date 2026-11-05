@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppWindow, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderGit2, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
+import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderGit2, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
 import type { SidebarMode } from './ActivityRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
 import { searchNotes } from '../lib/search';
 
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
 
 interface SidebarProps {
+  sidebarSide: 'left' | 'right';
+  onMoveSidebar: (side: 'left' | 'right') => void;
   notes: string[];
   /** Note bodies, so search can look inside them and not only at filenames. */
   notesData?: { path: string; content: string }[];
@@ -86,6 +89,14 @@ function ToolbarButton({ label, onClick, busy, children }: { label: string; onCl
 }
 
 export default function Sidebar(props: SidebarProps) {
+  const dragHandle = (
+    <button aria-label="Move sidebar" title={props.sidebarSide === 'left' ? 'Move sidebar to the right' : 'Move sidebar to the left'}
+      draggable className="interactive grid h-7 w-7 shrink-0 cursor-grab place-items-center rounded-md text-[var(--ink-muted)] hover:bg-[var(--surface-hover)]"
+      onClick={() => props.onMoveSidebar(props.sidebarSide === 'left' ? 'right' : 'left')}
+      onDragStart={(event) => { event.dataTransfer.setData(SIDEBAR_MIME, 'sidebar'); event.dataTransfer.effectAllowed = 'move'; }}>
+      <GripVertical className="h-4 w-4" />
+    </button>
+  );
   const { notes, notesData, selectedNote, onSelectNote, onDeleteNote, onRequestCreate, onRequestCreateFolder, onRefresh, view, mode, repositoryName, onGoHome, tags, onSelectTag, selectedTag } = props;
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -210,10 +221,11 @@ export default function Sidebar(props: SidebarProps) {
   );
 
   return (
-    <aside className="nav-surface flex h-full w-full shrink-0 select-none flex-col border-r">
+    <aside aria-label="Workspace sidebar" className="nav-surface flex h-full w-full shrink-0 select-none flex-col border-r">
       {mode === 'files' && (
         <section aria-label="Explorer" className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between gap-1 border-b divider-color px-3 py-2">
+            {dragHandle}
             {/* The workspace name is the way back to the explorer, and it stays
                 available while notes are open -- going home does not close
                 anything, so the tabs are still there to return to.
@@ -252,6 +264,7 @@ export default function Sidebar(props: SidebarProps) {
       {mode === 'search' && (
         <section aria-label="Search notes" className="flex min-h-0 flex-1 flex-col">
           <div className="border-b divider-color p-3">
+            {dragHandle}
             <label className="relative block">
               <span className="sr-only">Search notes</span>
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
@@ -296,6 +309,7 @@ export default function Sidebar(props: SidebarProps) {
       {mode === 'tags' && (
         <section aria-label="Tag filters" className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b divider-color px-3 py-2 text-xs text-[var(--ink-muted)]">
+            {dragHandle}
             <span className="flex items-center gap-1.5 font-semibold text-[var(--ink)]"><Tag className="h-3.5 w-3.5 text-[var(--ink-muted)]" />Tags</span>
             {selectedTag && <button className="interactive text-[var(--accent-strong)] hover:text-[var(--ink)]" onClick={() => onSelectTag(null)}>Clear filter</button>}
           </div>
