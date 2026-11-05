@@ -2,58 +2,88 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, test, dev]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  # A pull request that only touches documentation cannot break the app, so it
-  # need not wait on three platforms of install, build and Electron tests.
+  # Code moves dev -> test -> main.
+  #
+  # - test and main (pushes, and pull requests into them): everything, on all
+  #   three platforms.
+  # - dev: typecheck, unit tests and build on all three platforms. Only the
+  #   e2e specs for the changed area run (tools/affected-e2e.mjs), and there is
+  #   no packaged smoke test. A change to shared code still runs every spec.
+  # - A documentation-only pull request skips every step.
   #
   # This is not `paths-ignore`: Windows, macOS and Linux are required checks,
-  # and a workflow that never starts never reports them, so a docs-only pull
-  # request would sit blocked forever. The platform jobs below always run and
-  # report; they just skip their steps when this job says nothing needs testing.
-  # Pushes to main and dev always run everything.
+  # and a workflow that never starts never reports them, so the pull request
+  # would sit blocked forever. The platform jobs always run and report; they
+  # skip steps when this job says nothing needs them.
   changes:
-    name: Detect docs-only change
+    name: Detect changes
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      scope: ${{ steps.filter.outputs.scope }}
+      specs: ${{ steps.filter.outputs.specs }}
     steps:
       - name: Check out repository
-        if: github.event_name == 'pull_request'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - name: Classify changed files
         id: filter
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
         run: |
-          if [ "$EVENT" != pull_request ]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
-          changed=$(git diff --name-only "$BASE...$HEAD")
+          scope=affected
+          if { [ "$EVENT" = push ] && { [ "$REF" = refs/heads/main ] || [ "$REF" = refs/heads/test ]; }; } ||
+             { [ "$EVENT" = pull_request ] && { [ "$BASE_REF" = main ] || [ "$BASE_REF" = test ]; }; } ||
+             { [ "$EVENT" = push ] && [ "$REF" = refs/heads/dev ] && [[ "$BEFORE" =~ ^0+$ ]]; }; then
+            scope=full
+          fi
+          changed=
+          if [ "$EVENT" = pull_request ]; then
+            changed=$(git diff --name-only "$BASE...$HEAD")
+          elif [ "$scope" = affected ]; then
+            # A force-push can leave BEFORE unreachable; test everything then.
+            changed=$(git diff --name-only "$BEFORE..$AFTER") || scope=full
+          fi
           echo "$changed"
-          # Nothing under docs/, no top-level Markdown file and none of the
-          # GitHub community files is read by the build or by any test. Markdown
-          # anywhere else (examples/, src/) is fixture or app content and counts.
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          # A documentation-only pull request skips every step, into any
+          # branch: nothing under docs/, no top-level Markdown file and none of
+          # the GitHub community files is read by the build or by any test.
+          # Markdown anywhere else (examples/, src/) is fixture or app content.
           docs='^(docs/|[^/]+\.md$|LICENSE$|NOTICE$|\.github/(ISSUE_TEMPLATE/|[^/]+\.md$))'
-          if [ -n "$changed" ] && ! echo "$changed" | grep -qvE "$docs"; then
+          if [ "$EVENT" = pull_request ] && [ -n "$changed" ] && ! echo "$changed" | grep -qvE "$docs"; then
             echo "Documentation only; the platform jobs will skip their steps."
             echo code=false >> "$GITHUB_OUTPUT"
           else
             echo code=true >> "$GITHUB_OUTPUT"
           fi
+          if [ "$scope" = full ]; then
+            echo specs=all >> "$GITHUB_OUTPUT"
+          else
+            echo "specs=$(printf '%s\n' "$changed" | node tools/affected-e2e.mjs)" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     name: ${{ matrix.name }}
     needs: changes
-    env:
-      RUN: ${{ needs.changes.outputs.code }}
     # One platform is not cross-platform testing. Neuron leans on node-pty, a
     # filesystem watcher, spawned processes, keyboard chords, path handling and
     # Electron window behaviour -- every one of which diverges between Windows,
@@ -77,6 +107,10 @@ jobs:
             os: ubuntu-latest
             wrap: 'xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24"'
     runs-on: ${{ matrix.os }}
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
+      SCOPE: ${{ needs.changes.outputs.scope }}
+      SPECS: ${{ needs.changes.outputs.specs }}
     steps:
       - name: Skip for a documentation-only change
         if: env.RUN != 'true'
@@ -107,8 +141,18 @@ jobs:
         run: npm run build
 
       - name: Run Electron end-to-end tests
-        if: env.RUN == 'true'
+        if: env.RUN == 'true' && env.SPECS == 'all'
         run: ${{ matrix.wrap }} npm run test:e2e
+      - name: Run affected Electron end-to-end tests
+        if: env.RUN == 'true' && env.SPECS != 'all' && env.SPECS != ''
+        shell: bash
+        run: |
+          echo "Affected specs: $SPECS"
+          read -r -a specs <<< "$SPECS"
+          npm run build:main && ${{ matrix.wrap }} npx playwright test "${specs[@]}"
+      - name: No affected end-to-end specs
+        if: env.RUN == 'true' && env.SPECS == ''
+        run: echo "Nothing this change touches has an end-to-end spec."
 
       # Launch what a user would actually download.
       #
@@ -118,7 +162,7 @@ jobs:
       # which holds only what electron-builder can reach from `dependencies`.
       # Building successfully says nothing about starting.
       - name: Smoke-test the packaged application
-        if: env.RUN == 'true'
+        if: env.RUN == 'true' && env.SCOPE == 'full'
         run: ${{ matrix.wrap }} npm run smoke
 
       - name: Upload end-to-end failure artifacts

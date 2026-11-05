@@ -28,6 +28,11 @@ on:
       tag:
         description: 'Release tag to publish, e.g. v0.4.5'
         required: true
+      channel:
+        description: 'Channel to redeliver'
+        type: choice
+        default: all
+        options: [all, winget, chocolatey, homebrew]
 
 permissions:
   contents: read
@@ -63,11 +68,15 @@ jobs:
         env:
           TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
           UPSTREAM: ${{ github.event.workflow_run.conclusion }}
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
         run: |
           publish=false
           version=
 
-          if [ -n "$UPSTREAM" ] && [ "$UPSTREAM" != "success" ]; then
+          if [ "$EVENT" = workflow_dispatch ] && [ "$REF" != refs/heads/test ]; then
+            echo "::error::Manual redelivery runs from test."
+          elif [ -n "$UPSTREAM" ] && [ "$UPSTREAM" != "success" ]; then
             echo "The release build concluded '$UPSTREAM'; not publishing packages from it."
           elif ! printf '%s' "$TAG" | grep -qE '^v[0-9]'; then
             echo "'$TAG' is not a release tag; nothing to publish."
@@ -107,7 +116,7 @@ jobs:
   winget:
     name: WinGet
     needs: manifests
-    if: needs.manifests.outputs.publish == 'true'
+    if: needs.manifests.outputs.publish == 'true' && (github.event_name != 'workflow_dispatch' || inputs.channel == 'all' || inputs.channel == 'winget')
     runs-on: windows-latest
     steps:
       # Decided in a script, not in an `if:` expression. Whether a step's own
@@ -144,13 +153,17 @@ jobs:
         with:
           identifier: NeuronWorkspace.Neuron
           version: ${{ needs.manifests.outputs.version }}
+          # Its default is the release event's tag or github.ref_name, and on
+          # workflow_run and workflow_dispatch alike that is `main`: v0.5.0's
+          # run looked up a release called "main" and got a 404.
+          release-tag: v${{ needs.manifests.outputs.version }}
           installers-regex: '-win-x64\.exe$'
           token: ${{ secrets.WINGET_TOKEN }}
 
   chocolatey:
     name: Chocolatey
     needs: manifests
-    if: needs.manifests.outputs.publish == 'true'
+    if: needs.manifests.outputs.publish == 'true' && (github.event_name != 'workflow_dispatch' || inputs.channel == 'all' || inputs.channel == 'chocolatey')
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v7
@@ -187,7 +200,7 @@ jobs:
   homebrew:
     name: Homebrew
     needs: manifests
-    if: needs.manifests.outputs.publish == 'true'
+    if: needs.manifests.outputs.publish == 'true' && (github.event_name != 'workflow_dispatch' || inputs.channel == 'all' || inputs.channel == 'homebrew')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v7
