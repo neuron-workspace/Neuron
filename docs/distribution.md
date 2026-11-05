@@ -2,6 +2,19 @@
 
 GitHub Pages cannot execute or install an Electron application. It hosts the public download page, while GitHub Releases stores the actual installers. Neuron's Pages button resolves the repository owner and name from the Pages URL and links to the newest release.
 
+## Branches and releases
+
+Features merge into `dev`, then move through `test` to `main`. Beta tags
+(`vX.Y.Z-beta.N`) are cut on `test`; stable tags (`vX.Y.Z`) are cut on `main`.
+CI on `dev` runs affected e2e specs without packaged smoke; `test` and `main`
+run all e2e specs and packaged smoke on Windows, macOS and Linux.
+
+To redeliver an existing stable release without rebuilding, open Actions →
+*Microsoft Store* or *Publish to package managers* → Run workflow, select
+`test`, and enter the tag. For package managers, select `winget`, `chocolatey`,
+`homebrew`, or `all` as the channel. Store redelivery uses the retained build
+artifact, available for 90 days, and still creates only a draft submission.
+
 ## First GitHub publication
 
 1. Create an empty GitHub repository named `Neuron`.
@@ -150,7 +163,7 @@ Center, and submit.
 ### Draft submissions from CI
 
 A stable tag also uploads that package to Partner Center as a **draft**
-submission (the `store` job in `release.yml`, using the
+submission (the `store` job in `store.yml`, called by `release.yml`, using the
 [Microsoft Store Developer CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/overview)).
 Nothing reaches the Store until you open the draft in Partner Center, add
 release notes, and submit it for certification. Prerelease tags skip this job.
@@ -409,8 +422,8 @@ cannot:
 | Packaged | `npm run smoke` | What only appears once packaged: native modules, `asarUnpack`, path assumptions | ~2 min |
 | Clean machine | `tools/clean-room.wsb` | Missing OS runtimes, installer behaviour, first run on a profile that has never seen the app | manual |
 
-CI runs typecheck, the unit suites, the build, the Playwright end-to-end suite
-and the packaged smoke test on **Windows, macOS and Linux**. One platform is not
+CI always runs typecheck, the unit suites and the build on **Windows, macOS
+and Linux**; e2e and packaged smoke follow the branch rules above. One platform is not
 cross-platform testing: node-pty, the filesystem watcher, spawned processes,
 keyboard chords and path handling all diverge between them.
 

@@ -14,7 +14,26 @@ permissions:
   attestations: write
 
 jobs:
+  check-tag:
+    name: Check tag branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Verify tag ancestry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          branch=main
+          if [[ "$TAG" == *-* ]]; then branch=test; fi
+          if ! git merge-base --is-ancestor HEAD "origin/$branch"; then
+            echo "::error::Tag $TAG must be on $branch (an ancestor of origin/$branch)."
+            exit 1
+          fi
+
   build:
+    needs: check-tag
     name: Build ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -137,7 +156,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: neuron-store-appx
-          retention-days: 14
+          retention-days: 90
           if-no-files-found: error
           path: release/*.appx
 
@@ -256,47 +275,10 @@ jobs:
     name: Draft Microsoft Store submission
     needs: [build, release]
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-latest
-    environment: store
-    # A Store failure (an expired client secret, a Partner Center outage) must
-    # not fail the run: package-managers.yml publishes only from a successful
-    # run, so v0.5.0's Store failure also held back WinGet, Chocolatey and
-    # Homebrew. The job still shows as failed.
-    continue-on-error: true
+    uses: ./.github/workflows/store.yml
     permissions:
       contents: read
-    env:
-      STORE_APP_ID: 9PFC0XC16C1G
-    steps:
-      # The CLI reads package.json to recognise an Electron project; it does
-      # not build anything when given a directory of packages.
-      - name: Check out repository
-        uses: actions/checkout@v5
-      - name: Download the Store package
-        uses: actions/download-artifact@v7
-        with:
-          name: neuron-store-appx
-          path: store-package
-      - name: Set up the Microsoft Store Developer CLI
-        uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
-        with:
-          version: v0.4.3
-      - name: Configure the Microsoft Store Developer CLI
-        shell: bash
-        env:
-          TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
-          SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
-          CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
-        # reconfigure first: every other command, settings included, exits with
-        # "SellerId is not set" until the CLI has a configuration. v0.5.0's
-        # Store job failed on exactly that.
-        run: |
-          msstore reconfigure --tenantId "$TENANT_ID" --sellerId "$SELLER_ID" --clientId "$CLIENT_ID" --clientSecret "$CLIENT_SECRET"
-          msstore settings --enableTelemetry false
-      # --inputDirectory, not the --inputFile the published docs still name:
-      # the CLI publishes every .appx at the top of that directory, which is
-      # why the artifact gets a directory of its own.
-      - name: Upload the package as a draft submission
-        shell: bash
-        run: msstore publish . --inputDirectory store-package --appId "$STORE_APP_ID" --noCommit
+      actions: read
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
