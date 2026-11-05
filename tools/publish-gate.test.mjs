@@ -140,6 +140,14 @@ check('manual package redelivery selects a channel', () => {
   }
 });
 
+check('WinGet syncs the fork before submitting', () => {
+  const steps = workflow.jobs.winget.steps;
+  const sync = steps.findIndex((s) => /merge-upstream/.test(s.run ?? ''));
+  const submit = steps.findIndex((s) => /winget-releaser/.test(s.uses ?? ''));
+  assert.ok(sync >= 0 && sync < submit, 'a fork far behind upstream fails CreateRef');
+  assert.match(steps[sync].env.GH_TOKEN, /WINGET_TOKEN/, 'the fork belongs to the account behind WINGET_TOKEN');
+});
+
 check('WinGet is told the release tag', () => {
   const winget = workflow.jobs.winget.steps.find((s) => /winget-releaser/.test(s.uses ?? ''));
   assert.match(winget.with['release-tag'] ?? '', /^v\$\{\{ needs\.manifests\.outputs\.version \}\}$/,
