@@ -13,6 +13,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { shutdown } from './procs.mjs';
+import { icon, markSvg, markBoxFor } from './icons/icon-source.mjs';
+
+/** Matches `coverage` in tools/appx-assets.py, so one logo is one size. */
+const TILE_COVERAGE = 0.60;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'store-assets', 'logos');
@@ -22,22 +26,16 @@ const fontsDir = join(root, 'docs', 'fonts').replace(/\\/g, '/');
 const serif = `file:///${fontsDir}/source-serif-4-400-3.woff2`;
 const sans = `file:///${fontsDir}/archivo-600-2.woff2`;
 
-/** The app icon, as markup so it scales to any size without a raster step. */
-const MARK = (size) => `
-  <svg width="${size}" height="${size}" viewBox="0 0 512 512" aria-hidden="true">
-    <g transform="translate(256,256)" fill="#ffffff">
-      <polygon points="-24,-136 24,-136 16,6 -16,6" />
-      <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(72)" />
-      <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(144)" />
-      <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(216)" />
-      <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(288)" />
-    </g>
-  </svg>`;
-
 /**
- * One brand surface for every asset: the site's blue, the app's asterisk.
- * `wordmark` is off for the small tiles -- at 150px the name is unreadable and
- * the Store prints it beside the tile anyway.
+ * The same plate and mark as the application icon.
+ *
+ * These used to be their own thing: the asterisk was written out again below,
+ * on a blue gradient, under the heading "the site's blue, the app's asterisk".
+ * The result was a Store listing whose icon did not match the icon on the user's
+ * taskbar -- and nothing anywhere that would fail when they disagreed.
+ *
+ * `wordmark` is off for the small tiles: at 150px the name is unreadable and the
+ * Store prints it beside the tile anyway.
  */
 function page({ width, height, mark, wordmark, tagline }) {
   return `<!doctype html><html><head><meta charset="utf-8" /><style>
@@ -50,26 +48,20 @@ function page({ width, height, mark, wordmark, tagline }) {
       place-content: center;
       justify-items: center;
       gap: ${Math.round(height * 0.045)}px;
-      background:
-        radial-gradient(120% 90% at 18% 12%, #7aa2ff 0%, transparent 55%),
-        radial-gradient(90% 80% at 82% 78%, #1230a8 0%, transparent 60%),
-        linear-gradient(150deg, #4b78ff 0%, #2b5cf6 45%, #163ec9 100%);
+      background: ${icon.plate};
       position: relative;
+      /* Grayscale antialiasing. Subpixel AA writes red and blue fringes into
+         the glyph edges, and against a black plate they are visible in the PNG
+         -- these are uploaded as-is to a Store listing, not composited later. */
+      -webkit-font-smoothing: antialiased;
     }
-    /* The wordmark's own motif, faint, so a flat gradient is not the whole idea. */
-    body::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background-image:
-        linear-gradient(rgba(255,255,255,.10) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px);
-      background-size: ${Math.round(width / 9)}px ${Math.round(width / 9)}px;
-      -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 72%);
-    }
-    .mark { position: relative; z-index: 1; display: block; filter: drop-shadow(0 ${Math.round(height * 0.01)}px ${Math.round(height * 0.03)}px rgba(6,20,70,.45)); }
+    /* No drop shadow on the mark. It was tuned for a blue plate (rgba(6,20,70))
+       and on black it is either invisible or a grey smear around white edges. */
+    .mark { position: relative; z-index: 1; display: block; }
     .word { position: relative; z-index: 1; font-family: SS, Georgia, serif; color: #fff; letter-spacing: -.02em; line-height: 1; }
     .tag { position: relative; z-index: 1; font-family: AR, system-ui, sans-serif; color: rgba(255,255,255,.82); letter-spacing: .16em; text-transform: uppercase; line-height: 1; }
   </style></head><body>
-    <span class="mark">${MARK(mark)}</span>
+    <span class="mark">${markSvg(mark)}</span>
     ${wordmark ? `<div class="word" style="font-size:${wordmark}px">Neuron</div>` : ''}
     ${tagline ? `<div class="tag" style="font-size:${tagline}px">Local-first notes</div>` : ''}
   </body></html>`;
@@ -82,8 +74,13 @@ const ASSETS = [
   { file: 'poster-1440x2160.png', width: 1440, height: 2160, mark: 600,  wordmark: 168, tagline: 40 },
   { file: 'box-1080x1080.png',    width: 1080, height: 1080, mark: 420,  wordmark: 112, tagline: 26 },
   { file: 'box-2160x2160.png',    width: 2160, height: 2160, mark: 840,  wordmark: 224, tagline: 52 },
-  { file: 'tile-300x300.png',     width: 300,  height: 300,  mark: 168,  wordmark: 0,   tagline: 0 },
-  { file: 'tile-150x150.png',     width: 150,  height: 150,  mark: 88,   wordmark: 0,   tagline: 0 },
+  // These two are Store *display images*: they override the tiles inside the
+  // package, so they sit beside build/appx output in the Start menu. Sized by
+  // the same coverage those tiles use -- at the old flat 168px the visible
+  // asterisk spanned 30% of the tile against their 60%, which read as a
+  // different, smaller logo rather than the same one.
+  { file: 'tile-300x300.png',     width: 300,  height: 300,  mark: markBoxFor(300, TILE_COVERAGE), wordmark: 0, tagline: 0 },
+  { file: 'tile-150x150.png',     width: 150,  height: 150,  mark: markBoxFor(150, TILE_COVERAGE), wordmark: 0, tagline: 0 },
 ];
 
 const work = mkdtempSync(join(tmpdir(), 'neuron-logos-'));

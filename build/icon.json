@@ -1,0 +1,32 @@
+{
+  "_": [
+    "The Neuron mark, defined once. A white five-branch asterisk on a rounded",
+    "black plate.",
+    "",
+    "This file exists because the mark used to be written out three times: by",
+    "hand in build/icon.svg, again as Python constants in tools/appx-assets.py,",
+    "and a third time as inline SVG in tools/store-logos.mjs -- which had drifted",
+    "onto a blue gradient, so the Microsoft Store listing showed a different icon",
+    "from the application. Three copies, and nothing that would fail if they",
+    "disagreed.",
+    "",
+    "JSON rather than the SVG itself because the readers are a Node script and a",
+    "Python script. Both parse JSON with their standard library; making Python",
+    "read SVG would mean either a dependency or a regex over markup.",
+    "",
+    "Geometry is in the 512-unit viewBox the mark was drawn in. Everything else",
+    "scales from it.",
+    "",
+    "Change the mark here, then run: npm run icon:svg && npm run icon:generate",
+    "tools/icon-source.test.mjs fails if a generated file falls out of step."
+  ],
+
+  "viewBox": 512,
+  "cornerRadius": 112,
+
+  "plate": "#000000",
+  "mark": "#ffffff",
+
+  "branch": [[-24, -136], [24, -136], [16, 6], [-16, 6]],
+  "branches": 5
+}

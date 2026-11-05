@@ -67,7 +67,8 @@ export default function DbView({ path, view, table }: DbViewProps) {
     void load();
     const off = window.electronAPI.onNotesChanged((event, changed) => {
       if (changed === rel && event !== 'unlink') void load();
-      if (changed === rel && event === 'unlink') { setState('missing'); setDb(null); setParseError(null); }
+      // A deleted folder arrives as one unlink for the folder itself.
+      if (event === 'unlink' && (changed === rel || rel.startsWith(changed + '/'))) { setState('missing'); setDb(null); setParseError(null); }
     });
     return () => { alive = false; off(); };
   }, [rel]);

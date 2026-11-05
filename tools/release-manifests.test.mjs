@@ -101,10 +101,7 @@ check('the WinGet hash is upper-case, as the schema requires', () => {
 check('WinGet describes the installer that actually ships', () => {
   const installer = winget[`${IDENTIFIER}.installer.yaml`];
   assert.match(installer, /InstallerType: nullsoft/);
-  // No Scope claim. The NSIS build still lets the user choose a directory, so
-  // it is neither reliably per-user nor per-machine; asserting the absence
-  // stops a later edit quietly promising behaviour the installer lacks.
-  assert.doesNotMatch(installer, /^Scope:/m);
+  assert.match(installer, /^Scope: user$/m);
 });
 
 // --- Chocolatey ----------------------------------------------------------------

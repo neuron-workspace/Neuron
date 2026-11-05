@@ -76,6 +76,12 @@
   --space-6: 2rem;
   --space-7: 3rem;
   --space-8: 4rem;
+  /* Interactive target heights. --control-sm is dense chrome (title bar,
+     sidebar tools, segmented switches); --control is anything a user aims at
+     without already being in the toolbar. Both clear the WCAG 2.2 AA minimum
+     of 24px; the point of the tokens is that they are the only two sizes. */
+  --control-sm: 28px;
+  --control: 34px;
   --text-xs: 0.6875rem;
   --text-sm: 0.75rem;
   --text-base: 0.8125rem;
@@ -218,26 +224,66 @@ body.platform-darwin.window-fullscreen .titlebar {
 .interactive:active { transform: translateY(1px); }
 .interactive:disabled { cursor: not-allowed; opacity: 0.45; transform: none; }
 
-.mode-switch {
+/* Dense chrome control height. The title bar's icon buttons have always been
+   28px; the sidebar's were 24, the editor's mode buttons 21 and the workspace
+   title 16, so the same class of control came in four sizes. One token, so a
+   new control cannot invent a fifth. */
+.tool-button {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--divider);
+  place-items: center;
+  min-height: var(--control-sm);
+  min-width: var(--control-sm);
   border-radius: 6px;
-  background: var(--canvas);
-}
-
-.mode-switch button {
-  min-height: 30px;
-  border: 0;
-  border-radius: 4px;
   color: var(--ink-muted);
   background: transparent;
 }
 
-.mode-switch button:hover { color: var(--ink); background: var(--surface); }
-.mode-switch button[aria-pressed="true"] { color: var(--ink); background: var(--surface-hover); }
+.tool-button:hover { color: var(--ink); background: var(--surface-hover); }
+.tool-button[aria-pressed="true"] { color: var(--ink); background: var(--surface-hover); }
+
+/* One segmented control for every this-or-that switch in the app: editor view
+   modes, surface preview/source, database table/board/cards. `mode-switch` was
+   hard-coded to two columns, so the database's three views wrapped onto a
+   second row inside the same 34px frame. */
+.mode-switch,
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--divider);
+  border-radius: 7px;
+  background: var(--canvas);
+}
+
+.mode-switch button,
+.segmented button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: var(--control-sm);
+  padding: 0 0.625rem;
+  border: 0;
+  border-radius: 5px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--ink-muted);
+  background: transparent;
+}
+
+.mode-switch button:hover:not(:disabled),
+.segmented button:hover:not(:disabled) { color: var(--ink); background: var(--surface); }
+.mode-switch button[aria-pressed="true"],
+.segmented button[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--divider);
+}
+.mode-switch button:disabled,
+.segmented button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .field {
   min-height: 34px;
@@ -304,6 +350,13 @@ body.platform-darwin.window-fullscreen .titlebar {
 }
 
 .preview-prose { max-width: 720px; }
+
+/* `fullWidth: true` in a note's frontmatter. The measure is capped for prose,
+   which is wrong for the documents people open a wide window for -- a nine
+   column table, a diagram, a dashboard of layout components. The flag sits on
+   the scroll container, so the properties panel and the article widen together.
+   Only the cap is lifted: the page keeps its padding and its rhythm. */
+[data-full-width] .preview-prose { max-width: none; }
 .preview-prose h1,
 .preview-prose h2,
 .preview-prose h3 { text-wrap: balance; letter-spacing: -0.02em; }
@@ -338,6 +391,9 @@ body.platform-darwin.window-fullscreen .titlebar {
 
 /* Live editor */
 .cm-live-editor .cm-content { padding: 2rem 1.5rem; max-width: 768px; margin: 0 auto; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 16px; color: var(--md-text); }
+/* Same note, same flag, so switching between reading and live does not change
+   the width the document is written at. */
+.cm-live-editor[data-full-width] .cm-content { max-width: none; }
 .cm-live-editor .cm-line { line-height: 1.7; }
 .cm-live-editor .cm-lp-prose { color: var(--md-text); }
 .cm-live-editor .cm-lp-prose > span { color: inherit !important; }
@@ -425,17 +481,17 @@ body.platform-darwin.window-fullscreen .titlebar {
   background: var(--ink-muted);
 }
 
-/* HTML Table Styling in Preview */
+/* HTML Table Styling in Preview.
+   The frame -- border, radius, clipping and vertical rhythm -- belongs to the
+   scroll wrapper MDXPreview draws around the table, not to the table itself.
+   Setting both put a 20px margin inside that wrapper's border, which read as an
+   empty band above every header row, and drew two borders one pixel apart. */
 .preview-prose table {
   width: 100%;
   border-collapse: collapse;
   font-family: inherit;
   font-size: 13px;
   color: var(--md-text);
-  margin: 1.25rem 0;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  overflow: hidden;
 }
 
 .preview-prose th {
@@ -534,3 +590,38 @@ html[data-theme='light'] .neuron-logo {
 .cnv-md-code { font-family: var(--font-mono, monospace); font-size: 0.85em; background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 0.05rem 0.25rem; border-radius: 4px; }
 .cnv-md-pre { font-family: var(--font-mono, monospace); font-size: 0.78rem; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 6px; padding: 0.4rem 0.5rem; margin: 0.2rem 0; overflow-x: auto; white-space: pre; }
 .cnv-md-quote { border-left: 2px solid var(--divider); padding-left: 0.5rem; color: var(--ink-secondary); margin: 0.15rem 0; }
+
+/* Edge targets while a panel or the sidebar is dragged. Opaque, so a label
+   never sits on top of file names, and above the floating graph (an overlay)
+   so the right-hand target is never hidden; still below modals. The top inset
+   keeps tab strips reachable for drops between tabs. */
+.workbench-drop-zone {
+  position: absolute;
+  z-index: calc(var(--z-overlay) + 1);
+  display: grid;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--ink-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+}
+.workbench-drop-zone[data-visible="true"] { opacity: 1; pointer-events: auto; }
+.workbench-drop-zone[data-hover="true"] {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  color: var(--ink);
+}
+.workbench-drop-zone-left { left: 6px; top: 46px; bottom: 84px; width: 72px; }
+.workbench-drop-zone-right { right: 6px; top: 46px; bottom: 84px; width: 72px; }
+.workbench-drop-zone-bottom { left: 6px; right: 6px; bottom: 6px; height: 72px; }
+.workbench-drop-zone-left, .workbench-drop-zone-right { writing-mode: vertical-rl; }
+@media (prefers-reduced-motion: reduce) {
+  .workbench-drop-zone { transition: none; }
+}

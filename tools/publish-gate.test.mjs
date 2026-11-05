@@ -11,7 +11,7 @@
 // failed and nothing logged. So the trigger is asserted here too, not just the
 // decision it feeds.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,25 @@ check('it can still be run by hand', () => {
     'a failed token needs a re-run without cutting a new tag');
 });
 
+// --- the Microsoft Store draft ----------------------------------------------
+// Partner Center is the one destination where a mistake reaches users of a
+// store that signs and auto-updates the app, so its guards are asserted rather
+// than trusted to survive edits to release.yml.
+const store = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf-8')).jobs.store;
+
+check('the Store job only drafts, behind its environment, after the release', () => {
+  assert.ok(store, 'release.yml must have a store job');
+  assert.equal(store.environment, 'store', 'secrets and any approval rule live on the store environment');
+  assert.ok(store.needs.includes('release'), 'a release that failed to publish must not leave a Store draft');
+  assert.match(store.if, /!contains\(github\.ref_name, '-'\)/, 'prereleases must not reach the Store');
+  assert.deepEqual(store.permissions, { contents: 'read' });
+  const publish = store.steps.find((s) => /msstore publish/.test(s.run ?? ''));
+  assert.ok(publish, 'the job must publish with msstore');
+  assert.match(publish.run, /--noCommit/, 'drop --noCommit only deliberately, together with this assertion');
+  const setup = store.steps.find((s) => /microsoft-store-apppublisher/.test(s.uses ?? ''));
+  assert.match(setup.uses, /@[0-9a-f]{40}$/, 'a third-party action holding Partner Center credentials is pinned by commit');
+});
+
 // --- the decision -----------------------------------------------------------
 // Pulled out of the workflow file rather than copied into this test, so the
 // script under test is the one that actually runs.
@@ -65,11 +84,39 @@ const out = mkdtempSync(join(tmpdir(), 'neuron-gate-'));
 const script = join(out, 'gate.sh');
 writeFileSync(script, step.run, 'utf-8');
 
+/**
+ * A bash that can run a script living at a Windows path.
+ *
+ * On Windows `bash` on PATH is usually WSL's shim in WindowsApps, which has a
+ * different filesystem view: it cannot execute C:\...\gate.sh, and cannot write
+ * the $GITHUB_OUTPUT file beside it. So this test passed from Git Bash and from
+ * CI, and failed from PowerShell -- the default Windows shell -- with nothing
+ * more useful than "Command failed".
+ *
+ * Git ships a bash that does understand those paths, and this is a git
+ * repository, so it is present by definition.
+ */
+function bashExe() {
+  if (process.platform !== 'win32') return 'bash';
+  const candidates = [
+    join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
+    join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'bin', 'bash.exe'),
+    join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'bin', 'bash.exe'),
+  ];
+  const found = candidates.find((p) => p && existsSync(p));
+  assert.ok(found,
+    'no Git Bash found. The bash on PATH may be WSL, which cannot run a script ' +
+    `at a Windows path. Looked in:\n  ${candidates.join('\n  ')}`);
+  return found;
+}
+
+const BASH = bashExe();
+
 /** Run the real gate script and read back what it wrote to $GITHUB_OUTPUT. */
 const gate = ({ tag, upstream = '' }) => {
   const outputs = join(out, 'outputs.txt');
   writeFileSync(outputs, '');
-  const log = execFileSync('bash', [script], {
+  const log = execFileSync(BASH, [script], {
     env: { ...process.env, TAG: tag, UPSTREAM: upstream, GITHUB_OUTPUT: outputs },
     encoding: 'utf-8',
   });
@@ -131,7 +178,7 @@ check('both outputs are always written, exactly once', () => {
   ]) {
     const outputs = join(out, 'outputs.txt');
     writeFileSync(outputs, '');
-    execFileSync('bash', [script], {
+    execFileSync(BASH, [script], {
       env: { ...process.env, TAG: c.tag, UPSTREAM: c.upstream, GITHUB_OUTPUT: outputs },
       encoding: 'utf-8',
     });
@@ -145,7 +192,14 @@ check('the tag comes from head_branch, which is where it survives', () => {
   // On a tag push workflow_run.head_branch is the tag name. It is the only
   // place the tag reaches this workflow -- github.ref here is the default
   // branch, because that is the ref workflow_run workflows run from.
-  assert.match(source, /TAG:\s*\$\{\{\s*github\.event\.workflow_run\.head_branch\s*\|\|\s*inputs\.tag\s*\}\}/);
+  // Every TAG, not just one: manifest generation read github.event.release,
+  // which a workflow_run never carries, while the gate beside it was correct
+  // and kept a single-match check green.
+  const tags = source.match(/^\s*TAG:.*$/gm) ?? [];
+  assert.ok(tags.length >= 2, 'the gate and manifest generation both read the tag');
+  for (const line of tags) {
+    assert.match(line, /TAG:\s*\$\{\{\s*github\.event\.workflow_run\.head_branch\s*\|\|\s*inputs\.tag\s*\}\}/, line.trim());
+  }
 });
 
 rmSync(out, { recursive: true, force: true });

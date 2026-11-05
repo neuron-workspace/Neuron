@@ -37,7 +37,7 @@ import { TypographyH3, TypographyMuted, TypographyP } from '@/components/ui/typo
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">{title}</h2>
+      <h2 className="text-xs font-semibold text-[var(--ink-secondary)]">{title}</h2>
       <div className="flex flex-wrap items-start gap-3 rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-4">{children}</div>
     </section>
   );

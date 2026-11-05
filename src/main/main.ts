@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -9,24 +9,81 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
+import { resolveInside, realpathInside } from './repoPath';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import { configureUpdater } from './updater';
+import { createDiagnosticLogger, errorDetails } from './diagnostic-logger';
+import { configureCrashReporter } from './crash-reporter';
+import { workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
-import chokidar from 'chokidar';
+import { pathToFileURL } from 'node:url';
+import { watchWorkspace } from './workspace-watcher';
 import { exec } from 'child_process';
 import * as pty from 'node-pty';
 
 
+const RENDERER_ROOT = pathToFileURL(path.join(__dirname, '../renderer') + path.sep).href;
 let mainWindow: BrowserWindow | null = null;
-let watcher: chokidar.FSWatcher | null = null;
+let watcher: { close(): void } | null = null;
+const diagnostics = createDiagnosticLogger(app.getPath('logs'));
+let handlingFatalError = false;
+
+// Before anything else, including the handlers below.
+//
+// Those catch what JavaScript can catch. They cannot catch a crash beneath it:
+// a Chromium CHECK() failure calls __debugbreak(), which terminates the process
+// with EXCEPTION_BREAKPOINT before any handler runs -- Windows shows its own
+// "a breakpoint has been reached" dialog and the log file stays empty. Crashpad
+// records those because it runs out-of-process and outlives the crash.
+//
+// Started here rather than in `ready` because a crash during startup is the one
+// most worth having, and Crashpad only sees what happens after it starts.
+// Nothing is uploaded; see ./crash-reporter.
+const crashDumps = configureCrashReporter(app, crashReporter, app.getPath('logs'));
+
+process.on('uncaughtException', async (error) => {
+  if (handlingFatalError) return;
+  handlingFatalError = true;
+  const details = errorDetails(error);
+  await diagnostics.write({ level: 'error', category: 'main.uncaught-exception', ...details });
+  // Main-process state is unknown after an uncaught exception. Continuing could
+  // corrupt an open workspace, so record it first, explain where the log is,
+  // then terminate instead of silently swallowing the failure.
+  dialog.showErrorBox(
+    'Neuron encountered a fatal error',
+    `Neuron must close to protect your workspace. Diagnostic details were saved locally in:\n\n${diagnostics.filePath}`,
+  );
+  app.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const details = errorDetails(reason);
+  void diagnostics.write({ level: 'error', category: 'main.unhandled-rejection', ...details });
+});
+
+app.on('render-process-gone', (_event, contents, details) => {
+  void diagnostics.write({
+    level: 'error',
+    category: 'renderer.gone',
+    message: `reason=${details.reason}; exitCode=${details.exitCode}; url=${contents.getURL()}`,
+  });
+});
+
+app.on('child-process-gone', (_event, details) => {
+  void diagnostics.write({
+    level: 'error',
+    category: 'child-process.gone',
+    message: `type=${details.type}; reason=${details.reason}; exitCode=${details.exitCode}; name=${details.name ?? 'unknown'}`,
+  });
+});
 
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, folder mini-apps (neuron.app + neuron.app.json), the internal shell
+// canvases, Mermaid diagrams, folder mini-apps (neuron.app + neuron.app.json), the internal shell
 // config, and .neuron configuration/assets.
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas)$)/;
+const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid)$)/;
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent
@@ -66,6 +123,7 @@ function readSettings(): Settings {
 }
 
 function writeSettings(settings: Settings): void {
+  activeRepoCache = undefined;
   try {
     fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2), 'utf-8');
   } catch (err) {
@@ -78,10 +136,18 @@ function writeSettings(settings: Settings): void {
 // can live anywhere, including a cloud-synced folder.
 // ==========================================================================
 
+// Every note read resolves its path against the active workspace, and opening a
+// workspace reads every note. Re-reading and re-parsing the settings file and
+// stat-ing the folder for each of them cost about 5 ms a note on Windows --
+// 24 s of a blocked main thread for 5,000 notes before the explorer appeared.
+// Settings only change through writeSettings, which clears this.
+let activeRepoCache: string | null | undefined;
+
 function activeRepoPath(): string | null {
+  if (activeRepoCache !== undefined) return activeRepoCache;
   const current = readSettings().repositories.current;
-  if (current && fs.existsSync(current) && fs.statSync(current).isDirectory()) return current;
-  return null;
+  activeRepoCache = current && fs.existsSync(current) && fs.statSync(current).isDirectory() ? current : null;
+  return activeRepoCache;
 }
 
 const CLOUD_HINTS = ['onedrive', 'dropbox', 'google drive', 'icloud', 'box sync'];
@@ -166,18 +232,10 @@ function setupWatcher() {
   const dir = activeRepoPath();
   if (!dir) return;
 
-  watcher = chokidar.watch(dir, {
-    // Ignore dot-entries except .neuron, the workspace's own config folder.
-    ignored: /(^|[\/\\])\.(?!neuron([\/\\]|$))/,
-    persistent: true,
-    ignoreInitial: true,
-  });
-
-  watcher.on('all', (event, filePath) => {
+  watcher = watchWorkspace(dir, (event, relativePath) => {
     if (!mainWindow) return;
-    const relativePath = path.relative(dir, filePath);
-    if (WORKSPACE_FILE.test(relativePath)) {
-      mainWindow.webContents.send('notes:changed', event, relativePath.replace(/\\/g, '/'));
+    if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
+      mainWindow.webContents.send('notes:changed', event, relativePath);
     }
   });
 }
@@ -487,8 +545,8 @@ ipcMain.handle('repository:reveal', (_event, dir: string) => {
 function resolveInRepo(relativePath: string): { repo: string; fullPath: string } | null {
   const repo = activeRepoPath();
   if (!repo) return null;
-  const fullPath = path.join(repo, path.normalize(relativePath));
-  if (!fullPath.startsWith(repo)) return null; // path traversal guard
+  const fullPath = resolveInside(repo, relativePath);
+  if (!fullPath || !realpathInside(repo, fullPath)) return null;
   return { repo, fullPath };
 }
 
@@ -528,7 +586,11 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(relativePath);
   if (!resolved) return 'Error: No workspace is open.';
   try {
-    return fs.readFileSync(resolved.fullPath, 'utf-8');
+    // Async: opening a workspace reads every note at once, and synchronous
+    // reads hold the main thread -- which in Electron is also the browser's UI
+    // thread -- for the whole batch. Opening 5,000 freshly written notes on
+    // Windows: explorer after 33 s with sync reads, 7-8 s with these.
+    return await fs.promises.readFile(resolved.fullPath, 'utf-8');
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // Missing files are an expected probe result (e.g. optional .neuron/layout.json);
@@ -916,29 +978,26 @@ ipcMain.handle(
 );
 
 // ==========================================================================
-// IPC — error ledger (.agents/errors.json)
+// IPC — renderer-reported errors join the same local diagnostic log.
 // ==========================================================================
 
 ipcMain.handle(
   'notes:log-error',
   async (_event, errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) => {
-    try {
-      const errorFile = path.join(process.cwd(), '.agents', 'errors.json');
-      let errors: unknown[] = [];
-      if (fs.existsSync(errorFile)) {
-        const content = fs.readFileSync(errorFile, 'utf-8').trim();
-        if (content) errors = JSON.parse(content);
-      }
-      errors.push({ timestamp: new Date().toISOString(), ...errorData });
-      fs.writeFileSync(errorFile, JSON.stringify(errors, null, 2), 'utf-8');
-      return { success: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('Failed to log error to ledger:', err);
-      return { success: false, error: message };
-    }
+    const success = await diagnostics.write({
+      level: 'error',
+      category: `renderer.${errorData.phase || 'unknown'}`,
+      message: errorData.error_message,
+      stack: errorData.stack_trace,
+    });
+    return success ? { success: true } : { success: false, error: 'Could not write diagnostic log' };
   },
 );
+
+ipcMain.handle('diagnostics:open-logs', async () => {
+  const error = await shell.openPath(diagnostics.directory);
+  return error ? { success: false, error } : { success: true };
+});
 
 // ==========================================================================
 // Security — harden every web-contents, especially the in-app browser
@@ -947,6 +1006,22 @@ ipcMain.handle(
 // ==========================================================================
 
 app.on('web-contents-created', (_event, contents) => {
+  contents.on('preload-error', (_preloadEvent, preloadPath, error) => {
+    void diagnostics.write({
+      level: 'error',
+      category: 'renderer.preload-error',
+      message: `Preload failed: ${preloadPath}; ${error.message}`,
+      stack: error.stack,
+    });
+  });
+  contents.on('unresponsive', () => {
+    void diagnostics.write({
+      level: 'warn',
+      category: 'renderer.unresponsive',
+      message: `Renderer became unresponsive; url=${contents.getURL()}`,
+    });
+  });
+
   // 1. Force-safe options on any <webview> before it attaches: no preload, no
   //    Node, context isolation + sandbox on. (Electron security checklist #17.)
   contents.on('will-attach-webview', (_e, webPreferences) => {
@@ -980,7 +1055,7 @@ app.on('web-contents-created', (_event, contents) => {
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = isAppContent(url);
+    const allowed = isAppContent(url, RENDERER_ROOT, process.platform === 'win32');
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
@@ -1001,7 +1076,9 @@ app.on('web-contents-created', (_event, contents) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
-app.on('second-instance', () => {
+app.on('second-instance', (_event, commandLine) => {
+  const workspace = workspacePathFromArgv(commandLine, app.isPackaged);
+  if (workspace) setActiveRepo(workspace);
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -1043,8 +1120,24 @@ function hasCodeSignature(): boolean {
 }
 
 app.on('ready', () => {
+  void diagnostics.startSession({
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+  });
+  // Recorded so the log says where the dumps are. A native crash writes a dump
+  // and nothing else -- if the two are not findable together, whoever reads the
+  // log later has no reason to think a dump exists at all.
+  void diagnostics.write({
+    level: 'info',
+    category: 'app.crash-dumps',
+    message: `Native crash dumps (local only, never uploaded): ${crashDumps}`,
+  });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
+  const workspace = workspacePathFromArgv(process.argv, app.isPackaged);
+  if (workspace) setActiveRepo(workspace);
   createWindow();
   // GitHub-backed in-app updates. What counts as an update, and whether to look
   // at all, lives in ./updater so the rules are testable without Electron --

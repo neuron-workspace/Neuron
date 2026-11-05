@@ -99,7 +99,7 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
       <header className="flex items-center gap-1.5 px-2.5 py-1.5">
         <button
           type="button"
-          className="interactive flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ink-muted)] hover:text-[var(--ink)]"
+          className="interactive flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((c) => !c)}
           disabled={!showCollapse}

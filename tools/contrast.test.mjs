@@ -32,13 +32,18 @@ function contrast(a, b) {
 
 const AA = 4.5;
 
-// Roles that carry text. Checked against both backgrounds text actually sits
-// on: --canvas for the page, --surface for panels, cards and rows.
+// Roles that carry text. Checked against every background text actually sits
+// on: --canvas for the page, --surface for panels, cards and rows, and --nav
+// for the sidebar, title bar, status bar and pane headers.
+//
+// --nav was missing here, which is why the light preset could ship a chrome
+// colour chosen purely to look separate from the canvas with nothing checking
+// that the file names written on it stayed readable.
 const TEXT_ROLES = [
   '--ink', '--ink-secondary', '--ink-muted',
   '--accent', '--accent-strong', '--positive', '--danger', '--warning', '--info',
 ];
-const BACKGROUNDS = ['--canvas', '--surface'];
+const BACKGROUNDS = ['--canvas', '--surface', '--nav'];
 
 const presets = [...src.matchAll(/preset\('(\w+)', '([^']+)', '(\w+)', \[([\s\S]*?)\]\)/g)];
 assert.ok(presets.length >= 4, 'expected at least four theme presets');

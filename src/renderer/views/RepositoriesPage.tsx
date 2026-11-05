@@ -57,7 +57,10 @@ export default function RepositoriesPage({ current, recents, onCreate, onOpen, o
           ) : (
             <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
               <table className="w-full text-left text-sm">
-                <thead className="bg-[var(--nav)] text-[11px] uppercase tracking-wide text-[var(--ink-muted)]">
+                {/* Sentence case, like the tables in the preview and like the
+                    design system asks. Uppercase is for genuinely abbreviated
+                    status text, not for every column heading. */}
+                <thead className="bg-[var(--nav)] text-[11px] text-[var(--ink-muted)]">
                   <tr>
                     <th className="px-4 py-2.5 font-medium">Name</th>
                     <th className="px-4 py-2.5 font-medium">Location</th>

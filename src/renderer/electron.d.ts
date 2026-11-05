@@ -77,6 +77,9 @@ export interface WindowChromeState {
 export interface ElectronAPI {
   /** The host main is running on, straight from `process.platform`. */
   platform: NodeJS.Platform;
+  diagnostics: {
+    openLogs(): Promise<{ success: boolean; error?: string }>;
+  };
 
   // Notes
   listNotes: () => Promise<string[]>;

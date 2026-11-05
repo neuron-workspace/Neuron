@@ -80,7 +80,7 @@ export default function RepositoryOnboarding({ recents, onCreate, onOpen, onSwit
 
         {templates.length > 0 && (
           <div className="mt-7">
-            <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[var(--ink-muted)]">
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-[var(--ink-muted)]">
               <Sparkles className="h-3 w-3" /> Start from a template
             </div>
             <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
@@ -119,7 +119,7 @@ export default function RepositoryOnboarding({ recents, onCreate, onOpen, onSwit
 
         {recents.length > 0 && (
           <div className="mt-7">
-            <div className="mb-2 text-[11px] uppercase tracking-wide text-[var(--ink-muted)]">Recent</div>
+            <div className="mb-2 text-[11px] font-medium text-[var(--ink-muted)]">Recent</div>
             <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
               {recents.map((repo, index) => (
                 <button

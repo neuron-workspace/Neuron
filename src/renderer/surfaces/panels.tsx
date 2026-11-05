@@ -1,10 +1,14 @@
 import { useState } from 'react';
+import { Eye, PenLine, SplitSquareHorizontal } from 'lucide-react';
+import { Segmented, type SegmentedOption } from '../components/ui/segmented';
 import Editor from '../components/Editor';
 import LiveEditor from '../components/LiveEditor';
 import GraphCanvas from '../components/GraphCanvas';
 import MDXPreview from '../components/MDXPreview';
 import XtermTerminal from '../components/XtermTerminal';
-import type { NoteData, SurfaceProps } from './index';
+import WorkspaceExplorer from '../views/WorkspaceExplorer';
+import { useExplorer, type ExplorerState } from '../lib/explorer-state';
+import type { SurfaceProps } from './index';
 import type { PanelSpec } from './layout';
 
 /**
@@ -46,31 +50,6 @@ function folderOf(path: string): string {
   return i >= 0 ? path.slice(0, i + 1) : '';
 }
 
-function scopeNotes(surface: SurfaceProps, spec: PanelSpec): NoteData[] {
-  const scope = typeof spec.scope === 'string' ? spec.scope : 'repo';
-  if (scope === 'active' && surface.selectedNote) {
-    const active = surface.notesData.find((note) => note.path === surface.selectedNote);
-    if (!active) return [];
-    const links = new Set<string>();
-    const re = /\[\[(.*?)\]\]/g;
-    let match;
-    while ((match = re.exec(active.content)) !== null) {
-      const target = match[1].trim().toLowerCase();
-      for (const note of surface.notesData) {
-        const label = note.path.replace(/\.(md|mdx)$/, '').toLowerCase();
-        const base = label.split('/').pop();
-        if (label === target || base === target) links.add(note.path);
-      }
-    }
-    return surface.notesData.filter((note) => note.path === active.path || links.has(note.path));
-  }
-  if (scope === 'folder') {
-    const root = typeof spec.root === 'string' ? spec.root : folderOf(surface.selectedNote ?? surface.path);
-    return surface.notesData.filter((note) => note.path.startsWith(root));
-  }
-  return surface.notesData;
-}
-
 function GraphPanel({ spec, surface }: PanelContext) {
   // Default to the whole workspace. scope:'active' filtered to the current note
   // and its links, which in practice drew one node in a full-height column --
@@ -79,7 +58,9 @@ function GraphPanel({ spec, surface }: PanelContext) {
   return (
     <div className="h-full">
       <GraphCanvas
-        notesData={spec.scope ? scopeNotes(surface, spec) : surface.notesData}
+        notesData={surface.notesData}
+        scope={spec.scope === 'active' || spec.scope === 'folder' ? spec.scope : 'repo'}
+        folder={typeof spec.root === 'string' ? spec.root : folderOf(surface.selectedNote ?? surface.path)}
         onSelectNote={surface.onSelectNote}
         selectedNote={surface.selectedNote}
         emptyHint="Links between notes appear here."
@@ -88,13 +69,38 @@ function GraphPanel({ spec, surface }: PanelContext) {
   );
 }
 
-type EditMode = 'reading' | 'live' | 'split';
+export type EditMode = 'reading' | 'live' | 'split';
+
+/** The one place the three view modes are named, shared with App's own switch
+    so a note does not offer "Reading view" in one shell and "reading" in the
+    other. */
+export const EDIT_MODES: SegmentedOption<EditMode>[] = [
+  { value: 'reading', label: 'Reading', icon: <Eye className="h-3.5 w-3.5" /> },
+  { value: 'live', label: 'Live', icon: <PenLine className="h-3.5 w-3.5" /> },
+  { value: 'split', label: 'Split', icon: <SplitSquareHorizontal className="h-3.5 w-3.5" /> },
+];
 
 // The main slot in a neuron.config shell. Three views like the standalone editor:
 // reading (default), live editor (double-click to enter), and split source+preview.
+/** The explorer, given the shared state. Two callers, one spelling. */
+function ExplorerPane({ explorer }: { explorer: ExplorerState }) {
+  return (
+    <WorkspaceExplorer
+      repositoryName={explorer.repositoryName}
+      paths={explorer.paths}
+      folder={explorer.folder}
+      onNavigate={explorer.navigate}
+      onOpenFile={explorer.openFile}
+      recents={explorer.recents}
+      onClearRecents={explorer.clearRecents}
+    />
+  );
+}
+
 function EditorPanel({ surface }: PanelContext) {
   const { selectedNote, noteContent, onChangeNote, colorScheme } = surface;
   const [modes, setModes] = useState<Record<string, EditMode>>({});
+  const explorer = useExplorer();
 
   const isNote = !!selectedNote && /\.(md|mdx)$/.test(selectedNote);
   // Plain-text workspace files -- .neuron/layout.json above all -- are editable
@@ -102,7 +108,16 @@ function EditorPanel({ surface }: PanelContext) {
   // editor rather than being turned away as "not a note".
   const isText = !!selectedNote && /\.(json|css|txt|ya?ml)$/i.test(selectedNote);
 
+  // Home wins over the open note here as well as in the plain shell, or
+  // clicking the workspace title while a note is open would appear to do
+  // nothing at all in a workspace that has a layout.
+  if (explorer?.atHome) return <ExplorerPane explorer={explorer} />;
+
   if (!selectedNote || (!isNote && !isText) || noteContent === undefined || !onChangeNote) {
+    // An empty editor panel is the workspace explorer, the same as an empty
+    // editor pane in the plain shell. Shared state, so navigating here and
+    // returning through the other lands in the same folder.
+    if (explorer && !selectedNote) return <ExplorerPane explorer={explorer} />;
     return <div className="grid h-full place-items-center px-6 text-center text-xs text-[var(--ink-muted)]">Select a note from the sidebar or graph to edit it here.</div>;
   }
 
@@ -129,18 +144,8 @@ function EditorPanel({ surface }: PanelContext) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-0.5 border-b border-[var(--divider)] px-2 py-1">
-        {(['reading', 'live', 'split'] as EditMode[]).map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={mode === m}
-            onClick={() => setMode(m)}
-            className={`interactive rounded px-2 py-0.5 text-[11px] font-medium capitalize ${mode === m ? 'bg-[var(--surface-hover)] text-[var(--ink)]' : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'}`}
-          >
-            {m}
-          </button>
-        ))}
+      <div className="flex items-center border-b border-[var(--divider)] px-2 py-1.5">
+        <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />
       </div>
       <div className="min-h-0 flex-1">
         {mode === 'reading' && (

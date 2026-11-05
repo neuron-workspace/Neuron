@@ -37,6 +37,7 @@ export interface HostRuntime {
   activeNote: string | null;
   noteContent: string;
   notes: string[];
+  notesData: { path: string; content: string }[];
   openNote: (path: string) => void;
   createNote: (relativePath: string, content?: string) => Promise<boolean>;
   refreshNotes: () => Promise<void>;
@@ -55,7 +56,7 @@ export interface PanelView {
   id: string;
   title: string;
   icon?: ComponentType<{ className?: string }>;
-  /** Dock where this panel opens. Existing plugins default to the side peek. */
+  /** Default dock; saved workbench placement overrides it. Omitted means the right dock. */
   location?: 'side' | 'bottom';
   render: (host: HostRuntime) => ReactNode;
 }

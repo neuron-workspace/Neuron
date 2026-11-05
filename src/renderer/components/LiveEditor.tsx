@@ -11,9 +11,10 @@ import { createRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
 import { Badge, Callout, parseSemanticType, MarkdownTable, parseMarkdownTable } from './mdx-components';
 import { Run } from './RunButton';
+import { Flashcard } from './mdx-layout';
 import { buildWikiIndex, resolveWikiLink, type WikiIndex } from '../lib/wikilinks';
 import DocumentProperties from './properties/DocumentProperties';
-import { parseFrontmatter } from '../lib/frontmatter';
+import { isFullWidth, parseFrontmatter } from '../lib/frontmatter';
 
 interface LiveEditorProps {
   value: string;
@@ -345,6 +346,15 @@ function buildDecorations(state: EditorState): DecorationSet {
     return <Callout type={type} title={title}>{children}</Callout>;
   });
 
+  // A flashcard is only a flashcard if the answer is hidden, so it has to render
+  // as a widget here too. Left as raw text, the editing view would be the one
+  // place the answer is always on show.
+  blockComponent(/<Flashcard\b[^>]*>[\s\S]*?<\/Flashcard>/g, (m) => {
+    const front = m.match(/front="([^"]*)"/)?.[1];
+    const answer = m.match(/>([\s\S]*?)<\/Flashcard>/)?.[1]?.trim() ?? '';
+    return <Flashcard front={front}>{answer}</Flashcard>;
+  });
+
   // Inline Badge: replace just the tag span (single line → inline is fine).
   const badgeRe = /<Badge\b[^>]*\/>/g;
   let bm: RegExpExecArray | null;
@@ -517,6 +527,10 @@ export default function LiveEditor({ value, onChange, colorScheme = 'dark', tagS
   // Keep the frontmatter widget's config current without re-creating editor
   // extensions (which would reset editor state).
   fmConfig = { tagSuggestions, onTagClick, onRequestRawMode, removeEmpty: removeEmptyFrontmatter, defaultCollapsed: defaultPropertiesCollapsed };
+  // Only the leading frontmatter block is read, and parse is bounded by
+  // LIMITS.maxBytes, so this stays cheap on a document being typed into.
+  const fullWidth = useMemo(() => isFullWidth(parseFrontmatter(value).data), [value]);
+
   const wikiNotes = useMemo(() => buildWikiIndex(notes), [notes]);
   wikiConfig = { index: wikiNotes, onOpen: onWikiLinkClick };
 
@@ -567,7 +581,7 @@ export default function LiveEditor({ value, onChange, colorScheme = 'dark', tagS
   }, []);
 
   return (
-    <div className="cm-live-editor h-full w-full overflow-hidden">
+    <div className="cm-live-editor h-full w-full overflow-hidden" data-full-width={fullWidth || undefined}>
       <CodeMirror
         ref={editorRef}
         aria-label="Live editor"

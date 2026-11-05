@@ -132,6 +132,51 @@ collapsed, or remove the frontmatter block when its final property is deleted.
 Invalid YAML is never silently rewritten: Neuron shows a diagnostic and offers
 **Edit as YAML**.
 
+## Give one note the full width of the window
+
+Reading view and the Live editor cap their measure so prose stays readable.
+That is the wrong shape for a table with nine columns, a wide diagram, or a
+dashboard built from layout components. Add `fullWidth` to the note's
+frontmatter and that one note uses the whole pane instead:
+
+```yaml
+---
+title: Quarterly review
+fullWidth: true
+---
+```
+
+It applies to Reading view, the Live editor, and the preview half of Split, so
+switching views never changes the width the document is written at. Every other
+note is unaffected — this is a property of the file, not an app setting, so it
+travels with the note into any other editor.
+
+Once the property exists, the properties panel shows it as a **Full Width**
+checkbox, which is the easiest way to turn it back off. Adding it from the panel
+works too: create a property called `fullWidth` and give it the value `true`.
+The panel stores that as text rather than a YAML boolean, and Neuron accepts
+either — a page that refused to widen because of a pair of quotes would be
+worse than no setting at all.
+
+## Quiz yourself with flashcards
+
+`<Flashcard>` is a question you answer before you are shown the answer. The
+prompt is the `front` attribute; everything inside is the answer:
+
+```mdx
+<Flashcard front="Where do Neuron notes live?">
+As plain files in a folder you already own.
+</Flashcard>
+```
+
+The answer is not in the document until you press **Show answer**, so it cannot
+be read by scrolling past or by searching the page. Cards behave the same way in
+Reading view and in the Live editor, and each card reveals on its own.
+
+The prompt is plain text — attributes are never parsed as Markdown — while the
+answer goes through the usual parser, so it can hold a list, `code`, or
+emphasis.
+
 ## Connect notes with wiki-links and tags
 
 Write `[[Note name]]` in a `.md` or `.mdx` note. Wiki-links are styled in the
@@ -295,8 +340,7 @@ links/wiki-links, inline code, code backgrounds, and quote text/borders. These
 choices are local settings and apply to the Live editor and Reading view; HTMX
 views receive the current light/dark scheme.
 
-The title-bar layout controls toggle the Explorer, side panel, bottom panel,
-status bar, and zen mode. Panels are resizable. A workspace may also store a
+Drag panel tabs to the left, right, or bottom edge to move them, drop onto a tab strip to reorder, and drag the sidebar grip to either side; placement and divider sizes persist across restarts. Use **Panel options** (or a tab’s context menu) for keyboard-accessible moves and reordering, and **Customize layout** or the command palette to move the sidebar, toggle docks, or **Reset layout** with the sidebar visible. A workspace may also store a
 JSON shell layout in `.neuron/layout.json`; open the command palette and choose
 **Use workspace layout**. See [File surfaces](custom-views.md) for the layout
 surface and [Design system](design-system.md) for the visual tokens.

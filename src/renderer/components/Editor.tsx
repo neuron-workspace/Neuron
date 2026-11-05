@@ -2,6 +2,7 @@ import React, { forwardRef } from 'react';
 import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
+import { EditorView } from '@codemirror/view';
 
 interface EditorProps {
   value: string;
@@ -50,6 +51,10 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
             base: markdownLanguage,
             codeLanguages: languages,
           }),
+          // Markdown paragraphs are one long line each. Without wrapping, the
+          // split view cut every sentence off at the pane edge and asked the
+          // writer to scroll sideways through their own prose.
+          EditorView.lineWrapping,
         ]}
         onChange={(val) => onChange(val)}
         readOnly={readOnly}

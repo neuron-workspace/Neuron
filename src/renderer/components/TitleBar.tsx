@@ -131,7 +131,7 @@ export default function TitleBar(props: TitleBarProps) {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="titlebar-no-drag interactive flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
+            <button className="titlebar-no-drag interactive flex min-h-[var(--control-sm)] min-w-0 items-center gap-1.5 rounded-md px-2 text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
               <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
               <span className="max-w-[160px] truncate text-xs font-medium">{repository?.name ?? 'No workspace'}</span>
               {repository?.cloud && <Cloud className="h-3 w-3 shrink-0 text-[var(--ink-muted)]" />}
@@ -209,7 +209,8 @@ export default function TitleBar(props: TitleBarProps) {
               <DropdownMenuLabel>Customize layout</DropdownMenuLabel>
               <DropdownMenuCheckboxItem checked={props.layout.activityBar} onCheckedChange={(c) => props.onLayoutChange({ activityBar: !!c })}>Activity bar</DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={props.layout.sidebar} onCheckedChange={(c) => props.onLayoutChange({ sidebar: !!c })}>Sidebar</DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={props.layout.rightPanel} onCheckedChange={(c) => props.onLayoutChange({ rightPanel: !!c })}>Side panel</DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={props.layout.leftPanel} onCheckedChange={(c) => props.onLayoutChange({ leftPanel: !!c })}>Left panel</DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={props.layout.rightPanel} onCheckedChange={(c) => props.onLayoutChange({ rightPanel: !!c })}>Right panel</DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={props.layout.bottomPanel} onCheckedChange={(c) => props.onLayoutChange({ bottomPanel: !!c })}>Bottom panel</DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={props.layout.statusBar} onCheckedChange={(c) => props.onLayoutChange({ statusBar: !!c })}>Status bar</DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
@@ -217,6 +218,8 @@ export default function TitleBar(props: TitleBarProps) {
                 <Focus className="h-4 w-4" /> {props.layout.zen ? 'Exit zen mode' : 'Zen mode'}
                 <span className="ml-auto pl-4 font-mono text-[10px] text-[var(--ink-muted)]">Alt+Z</span>
               </DropdownMenuItem>
+              <DropdownMenuItem disabled={props.layout.sidebarSide === 'left'} onSelect={() => props.onLayoutChange({ sidebarSide: 'left' })}>Move sidebar to the left</DropdownMenuItem>
+              <DropdownMenuItem disabled={props.layout.sidebarSide === 'right'} onSelect={() => props.onLayoutChange({ sidebarSide: 'right' })}>Move sidebar to the right</DropdownMenuItem>
               <DropdownMenuItem onClick={props.onResetLayout}><RotateCcw className="h-4 w-4" /> Reset layout</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

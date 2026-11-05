@@ -4,10 +4,12 @@ import { Badge, Callout, parseSemanticType } from './mdx-components';
 import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
 import DbView from './DbView';
-import { Row, Col, Grid, Cell, Card, Stat, Divider } from './mdx-layout';
+import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
-import { parseFrontmatter } from '../lib/frontmatter';
+import { isFullWidth, parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
+import { safeUrl } from '../lib/view-security';
+import MermaidDiagram from './MermaidDiagram';
 
 // Links read as one object rather than as underlined text: an icon says where
 // it goes before you read the label, and the pill gives it an edge to click.
@@ -26,6 +28,7 @@ const BROKEN_PILL =
 
 interface MDXPreviewProps {
   mdxContent: string;
+  colorScheme?: 'light' | 'dark';
   onLineClick?: (lineIndex: number) => void;
   showProperties?: boolean;
   tagSuggestions?: string[];
@@ -91,7 +94,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
+export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
   const [renderedContent, setRenderedContent] = useState<React.ReactNode[]>([]);
   const [compilationError, setCompilationError] = useState<{
     message: string;
@@ -123,7 +126,11 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         remediation: remediation,
       });
 
-      // Log to .agents/errors.json via IPC
+      // To the diagnostic log under the app's logs directory, via IPC. This
+      // used to name .agents/errors.json, which was gitignored tooling that
+      // never shipped and was resolved against the process working directory.
+      // The message embeds the offending block, so the main side redacts style
+      // and code content before it reaches disk.
       if (window.electronAPI && window.electronAPI.logError) {
         window.electronAPI.logError({
           phase: 'COMPILATION',
@@ -133,7 +140,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         });
       }
     }
-  }, [fm.body, wikiNotes, onWikiLinkClick]);
+  }, [colorScheme, fm.body, wikiNotes, onWikiLinkClick]);
 
   // Parsing helper to split and evaluate markdown vs custom components
   function parseMDX(content: string): React.ReactNode[] {
@@ -163,7 +170,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
 
       // Code Block parser (markdown)
       if (line.trim().startsWith('```')) {
-        const lang = line.trim().slice(3);
+        const lang = line.trim().slice(3).trim();
         const codeLines: string[] = [];
         const startLine = i;
         i++;
@@ -172,16 +179,24 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
           i++;
         }
         const codeText = codeLines.join('\n');
-        nodes.push(
+        nodes.push(lang.toLowerCase() === 'mermaid' ? (
+          <div
+            key={`mermaid-${i}`}
+            onClick={() => lineClick(startLine)}
+            className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+          >
+            <MermaidDiagram source={codeText} colorScheme={colorScheme} />
+          </div>
+        ) : (
           <pre
             key={`code-${i}`}
             onClick={() => lineClick(startLine)}
-            className="work-surface my-5 overflow-x-auto rounded-md border p-4 font-mono text-sm text-[var(--md-text)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            className="work-surface my-5 cursor-pointer overflow-x-auto rounded-md border p-4 font-mono text-sm text-[var(--md-text)] transition-colors duration-150 hover:border-[var(--ink-muted)]"
           >
             {lang && <div className="mb-2 text-[10px] font-medium text-muted">{lang}</div>}
             <code>{codeText}</code>
           </pre>
-        );
+        ));
         i++;
         continue;
       }
@@ -203,7 +218,10 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
           <div
             key={`table-${i}`}
             onClick={() => lineClick(startLine)}
-            className="my-5 overflow-x-auto rounded-md border border-[var(--divider)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            // Hovering a block to jump to its source is not selection, focus or
+            // a primary action, so it does not get the accent. It lights the
+            // frame one step, the way every other row in the app does.
+            className="my-5 cursor-pointer overflow-x-auto rounded-md border border-[var(--divider)] transition-colors duration-150 hover:border-[var(--ink-muted)]"
           >
             <table className="w-full min-w-[32rem] border-collapse font-sans text-sm text-[var(--md-text)]">
               <thead className="bg-[var(--surface)] text-[var(--md-heading)]">
@@ -378,6 +396,9 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         Stat: (a) => <Stat {...a} />,
         Run: (a) => <Run {...a} />,
         Divider: (a) => <Divider {...a} />,
+        // Children are the answer, and they arrive already parsed, so a card
+        // can answer with a list or a code span rather than one flat sentence.
+        Flashcard: (a, k) => <Flashcard {...a}>{k}</Flashcard>,
       };
       const layoutMatch = jsxStr.match(/^<([A-Z][A-Za-z0-9]*)\b/);
       if (layoutMatch && layout[layoutMatch[1]]) {
@@ -442,7 +463,11 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         <h1
           key={index}
           onClick={() => lineClick(index)}
-          className="mt-7 mb-3 border-b divider-color pb-3 font-sans text-2xl font-semibold text-[var(--md-heading)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
+          // No rule under the heading. Size and weight already separate an h1
+          // from the paragraph below it; the border added a second, louder
+          // signal saying the same thing, and every document opened with a line
+          // across it.
+          className="-mx-1 mb-3 mt-7 cursor-pointer rounded px-1 font-sans text-2xl font-semibold text-[var(--md-heading)] transition-colors duration-150 hover:bg-[var(--surface)]"
         >
           {text.slice(2)}
         </h1>
@@ -617,13 +642,14 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
         const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
 
         if (external) {
+          const safeHref = safeUrl(href);
           parts.push(
             // A real anchor: main already routes http(s) navigation to the
             // system browser through its own guard, so this needs no bridge of
             // its own and cannot move the app frame.
-            <a
+            safeHref ? <a
               key={key++}
-              href={href}
+              href={safeHref}
               title={href}
               className={LINK_PILL}
               onClick={(event) => event.stopPropagation()}
@@ -631,7 +657,7 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
             >
               <ArrowUpRight className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
               {label}
-            </a>,
+            </a> : <span key={key++} title={href}>{label}</span>,
           );
         } else {
           const resolved = resolveWikiLink(wikiNotes, href.replace(/\.(md|mdx)$/i, ''));
@@ -668,7 +694,13 @@ export default function MDXPreview({ mdxContent, onLineClick, showProperties = t
   }
 
   return (
-    <div className="canvas-surface h-full w-full overflow-y-auto p-7 font-sans select-text">
+    // The flag goes on the scroll container rather than on each block inside
+    // it, so the properties panel and the article widen together and a future
+    // block cannot forget to opt in.
+    <div
+      className="canvas-surface h-full w-full overflow-y-auto p-7 font-sans select-text"
+      data-full-width={isFullWidth(fm.data) || undefined}
+    >
       {showProperties && fm.hasFrontmatter && (
         <div className="preview-prose mx-auto mb-4">
           <DocumentProperties doc={mdxContent} tagSuggestions={tagSuggestions} onTagClick={onTagClick} defaultCollapsed={defaultPropertiesCollapsed} hideWhenEmpty />

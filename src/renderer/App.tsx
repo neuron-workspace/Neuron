@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Notebook, MoreHorizontal, Eye, SplitSquareHorizontal, PenLine } from 'lucide-react';
+import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
 import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
-import RightPanel from './components/RightPanel';
+import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import CreateModal from './components/CreateModal';
@@ -18,19 +18,25 @@ import SettingsPage from './views/SettingsPage';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuCheckboxItem, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import { PluginProvider } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
 import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
+import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
+import { EDIT_MODES, type EditMode } from './surfaces/panels';
+import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
+import WorkspaceExplorer from './views/WorkspaceExplorer';
+import { ExplorerProvider } from './lib/explorer-state';
+import {
+  addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
+} from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
 import ActivityRail, { type SidebarMode } from './components/ActivityRail';
 import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
@@ -48,7 +54,11 @@ import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appe
 interface NoteData { path: string; content: string }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
-type EditorMode = 'live' | 'raw' | 'reading';
+// The same three modes the layout shell offers, under the same names. This was
+// 'raw' here and 'split' there, presented as a dropdown here and a button row
+// there, so the identical choice looked and read like two different features
+// depending on whether the workspace happened to have a layout.json.
+type EditorMode = EditMode;
 
 // Default content for new .html views. Plain HTML + htmx attributes;
 // Neuron serves it from the local view server with the neuron-view stylesheet.
@@ -104,6 +114,18 @@ export default function App() {
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceReady, setAppearanceReady] = useState(false);
 
+  // The workspace explorer.
+  //
+  // `atHome` is deliberately its own flag rather than being inferred from
+  // `selectedNote === null`. Having no file open implies the explorer, but the
+  // reverse is not true: clicking the workspace title must show it WITHOUT
+  // closing anyone's tabs, so home has to be a place you can navigate to while
+  // a note is still open. Conflating the two is how the explorer either refuses
+  // to appear or refuses to go away.
+  const [atHome, setAtHome] = useState(false);
+  const [explorerFolder, setExplorerFolder] = useState('');
+  const [explorerRecents, setExplorerRecents] = useState<RecentEntry[]>([]);
+
   // Workbench layout: which shell regions are visible. Persisted per user.
   const [layout, setLayout] = useState<WorkbenchLayout>(DEFAULT_LAYOUT);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('files');
@@ -113,6 +135,7 @@ export default function App() {
   const lastEscapeRef = useRef(0);
 
   const commitLayout = useCallback((next: WorkbenchLayout) => {
+    layoutRef.current = next;
     setLayout(next);
     void window.electronAPI?.settings.set('layout', next);
   }, []);
@@ -123,7 +146,7 @@ export default function App() {
     if (patch.zen === true && !prev.zen) {
       // Entering zen: hide the chrome, remember what to restore.
       zenPrevRef.current = prev;
-      next = { ...next, activityBar: false, sidebar: false, rightPanel: false, bottomPanel: false };
+      next = { ...next, activityBar: false, sidebar: false, leftPanel: false, rightPanel: false, bottomPanel: false };
     } else if (patch.zen === false && prev.zen) {
       next = { ...(zenPrevRef.current ?? DEFAULT_LAYOUT), zen: false };
     }
@@ -157,7 +180,8 @@ export default function App() {
   // Running a command into a panel the user cannot see would hide the one part
   // of this that makes it reviewable.
   useEffect(() => registerTerminalOpener(() => {
-    if (!layoutRef.current.bottomPanel) patchLayout({ bottomPanel: true });
+    const dock = layoutRef.current.panels['terminal:terminal.panel']?.dock ?? 'bottom';
+    patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -251,8 +275,20 @@ export default function App() {
           .map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })),
       );
       setNotesData(data);
+
+    } catch {
+      setNotice('Could not load the workspace.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!repository) { setNotes([]); setNotesData([]); setTags([]); setSelectedNote(null); return; }
+    loadNotes();
+  }, [repository, loadNotes]);
+
+  useEffect(() => {
       const allTags = new Set<string>();
-      data.forEach((note) => {
+      notesData.forEach((note) => {
         // Body #tags…
         const tagRegex = /(?:^|\s)#([A-Za-z0-9_-]+)(?=\s|$|\.|,)/g;
         let match;
@@ -265,15 +301,35 @@ export default function App() {
         if (fm.valid && fm.data.tags != null) normalizeStringList(fm.data.tags).forEach((t) => allTags.add(t));
       });
       setTags(Array.from(allTags).sort((a, b) => a.localeCompare(b)));
-    } catch {
-      setNotice('Could not load the workspace.');
-    }
-  }, []);
+  }, [notesData]);
+
+  // Recents are per workspace and per machine, so they live in the settings
+  // bridge beside `layout` rather than in a file inside the workspace that
+  // would sync someone's browsing history to every other machine.
+  useEffect(() => {
+    setExplorerFolder('');
+    if (!repository) { setExplorerRecents([]); return; }
+    let cancelled = false;
+    void window.electronAPI?.settings.get<unknown>(recentsKey(repository.path)).then((stored) => {
+      if (!cancelled) setExplorerRecents(resolveRecents(stored));
+    });
+    return () => { cancelled = true; };
+  }, [repository]);
 
   useEffect(() => {
-    if (!repository) { setNotes([]); setNotesData([]); setTags([]); setSelectedNote(null); return; }
-    loadNotes();
-  }, [repository, loadNotes]);
+    if (!repository) return;
+    void window.electronAPI?.settings.set(recentsKey(repository.path), explorerRecents);
+  }, [repository, explorerRecents]);
+
+  // Paths move and vanish outside the app. Prune against the current listing so
+  // a stale entry disappears quietly instead of offering a link that opens
+  // nothing -- and compare before setting, or this loops forever.
+  useEffect(() => {
+    setExplorerRecents((current) => {
+      const pruned = pruneRecents(current, explorerPaths);
+      return pruned.length === current.length ? current : pruned;
+    });
+  }, [notes]);
 
   useEffect(() => {
     if (!repository || !window.electronAPI) { setShellConfig(null); return; }
@@ -294,8 +350,31 @@ export default function App() {
 
   useEffect(() => {
     if (!window.electronAPI?.onNotesChanged) return;
-    return window.electronAPI.onNotesChanged((_event, path) => {
-      void loadNotes();
+    let cancelled = false;
+    const versions = new Map<string, number>();
+    const unsubscribe = window.electronAPI.onNotesChanged((event, path) => {
+      const version = (versions.get(path) ?? 0) + 1;
+      versions.set(path, version);
+      if (event === 'unlink') {
+        const removed = (candidate: string) => candidate === path || candidate.startsWith(path + '/');
+        for (const [candidate, pendingVersion] of versions) {
+          if (removed(candidate)) versions.set(candidate, pendingVersion + 1);
+        }
+        setNotes(current => current.filter(n => !removed(n)));
+        setNotesData(current => current.filter(n => !removed(n.path)));
+        setOpenTabs(current => current.filter(n => !removed(n)));
+        setSelectedNote(current => current !== null && removed(current) ? null : current);
+      } else {
+        void window.electronAPI.readNote(path).then(content => {
+          if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
+          setNotes(current => current.includes(path) ? current : [...current, path].sort());
+          if (!path.startsWith('.neuron/')) setNotesData(current => {
+            const existing = current.find(n => n.path === path);
+            if (existing?.content === content) return current;
+            return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
+          });
+        }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
+      }
       if (path !== SHELL_CONFIG) return;
       void window.electronAPI?.readNote(SHELL_CONFIG).then((content) => {
         if (content.startsWith('Error:')) {
@@ -306,7 +385,8 @@ export default function App() {
         setPendingShellConfig(content);
       });
     });
-  }, [loadNotes]);
+    return () => { cancelled = true; unsubscribe(); };
+  }, [repository]);
 
   useEffect(() => {
     let cancelled = false;
@@ -326,8 +406,65 @@ export default function App() {
     setSelectedNote(note);
     setOpenTabs((current) => current.includes(note) ? current : [...current, note]);
     setView('notes');
+    // Opening a file leaves home, whichever route got here -- sidebar, explorer,
+    // command palette or a wiki-link. One place to clear it, because a second
+    // route that forgot would leave the explorer covering the note it opened.
+    setAtHome(false);
+    if (!isUrl(note)) setExplorerRecents((current) => addRecent(current, { path: note, kind: 'file' }));
     setNotice(null);
   }, []);
+
+  /** Show the workspace explorer without disturbing what is already open. */
+  const goHome = useCallback((folder = '') => {
+    setView('notes');
+    setExplorerFolder(folder);
+    setAtHome(true);
+    setNotice(null);
+  }, []);
+
+  const navigateExplorer = useCallback((folder: string) => {
+    setExplorerFolder(folder);
+    if (folder) setExplorerRecents((current) => addRecent(current, { path: folder, kind: 'folder' }));
+  }, []);
+
+  const clearExplorerRecents = useCallback(() => setExplorerRecents([]), []);
+
+  // The file list, minus the workspace's own configuration.
+  //
+  // Filtered from `notes` rather than taken from `notesData`, for two reasons.
+  // notesData exists to be READ -- it carries every file's contents for the
+  // graph, tags and search -- and an explorer needs names, not bodies. And it
+  // holds only what could be read as text, so sourcing from it would silently
+  // hide binaries: a .png in the workspace would simply not appear.
+  //
+  // `.neuron/` is excluded here and nowhere else, on purpose: the sidebar is
+  // the file tree and still shows it, because editing layout.json by hand is a
+  // real thing to want. The explorer is where you land with nothing open, and
+  // offering the workspace's own configuration there put a row that the app
+  // rewrites as you use it -- churning under the cursor -- ahead of your notes.
+  // (The graph shows only notes with wiki-links, so it never had the question.)
+  const explorerPaths = useMemo(
+    () => notes.filter((path) => !path.startsWith('.neuron/')),
+    [notes],
+  );
+
+  // One state object for both empty editor areas: the plain shell's pane and
+  // the layout shell's `editor` panel. Two consumers, one folder and one Recent
+  // list, so they cannot drift apart.
+  const explorerState = useMemo(() => ({
+    atHome,
+    repositoryName: repository?.name ?? 'Workspace',
+    // notesData, not notes: it is the list already filtered of `.neuron/`, so
+    // the explorer cannot offer to open the workspace's own configuration --
+    // which the sidebar and graph both hide. Using the raw list listed .neuron
+    // as the first folder in the workspace.
+    paths: explorerPaths,
+    folder: explorerFolder,
+    navigate: navigateExplorer,
+    openFile: handleSelectNote,
+    recents: explorerRecents,
+    clearRecents: clearExplorerRecents,
+  }), [atHome, repository, explorerPaths, explorerFolder, navigateExplorer, handleSelectNote, explorerRecents, clearExplorerRecents]);
 
   const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
@@ -483,7 +620,7 @@ export default function App() {
   }, [selectedNote, editorModes]);
 
   // Markdown opens in reading view; other text files (JSON config, CSS, manifests) open as raw source.
-  const defaultEditorMode: EditorMode = selectedNote && /\.(md|mdx)$/i.test(selectedNote) ? 'reading' : 'raw';
+  const defaultEditorMode: EditorMode = selectedNote && /\.(md|mdx)$/i.test(selectedNote) ? 'reading' : 'split';
   const editorMode: EditorMode = (selectedNote && editorModes[selectedNote]) || defaultEditorMode;
   const setEditorMode = (mode: EditorMode) => {
     if (selectedNote) setEditorModes((prev) => ({ ...prev, [selectedNote]: mode }));
@@ -516,10 +653,11 @@ export default function App() {
     activeNote: selectedNote,
     noteContent,
     notes,
+    notesData,
     openNote: handleSelectNote,
     createNote,
     refreshNotes: loadNotes,
-  }), [selectedNote, noteContent, notes, handleSelectNote, createNote, loadNotes]);
+  }), [selectedNote, noteContent, notes, notesData, handleSelectNote, createNote, loadNotes]);
 
   // --- Responsive (raw split collapses to tabs when narrow) -----------------
   // Panels are user-resizable, so responsive mode only needs the viewport width.
@@ -581,14 +719,14 @@ export default function App() {
       </div>
       <div className="flex h-full min-w-0 flex-1 flex-col">
         <div className="pane-header flex items-center border-b px-4 text-[11px] font-medium text-[var(--ink-muted)]">Preview</div>
-        <div className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></div>
+        <div className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></div>
       </div>
     </div>
   ) : (
     <Tabs defaultValue="source" className="flex h-full w-full flex-col">
       <div className="border-b divider-color px-3 py-2"><TabsList><TabsTrigger value="source">Source</TabsTrigger><TabsTrigger value="preview">Preview</TabsTrigger></TabsList></div>
       <TabsContent value="source" className="min-h-0 flex-1"><Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></TabsContent>
-      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></TabsContent>
+      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></TabsContent>
     </Tabs>
   );
 
@@ -602,34 +740,35 @@ export default function App() {
       <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
       {selectedNote && Surface ? (
           <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
-            <div className="mode-switch" aria-label="Surface mode">
-              <button aria-pressed={!surfaceEditing} className="interactive text-xs font-medium" onClick={() => setSurfaceSource(false)}>Preview</button>
-              <button aria-pressed={surfaceEditing} className="interactive text-xs font-medium" onClick={() => setSurfaceSource(true)}>Source</button>
-            </div>
+            <Segmented
+              label="Surface mode"
+              value={surfaceEditing ? 'source' : 'preview'}
+              onChange={(next) => setSurfaceSource(next === 'source')}
+              options={[
+                { value: 'preview', label: 'Preview', icon: <Eye className="h-3.5 w-3.5" /> },
+                { value: 'source', label: 'Source', icon: <FileCode2 className="h-3.5 w-3.5" /> },
+              ]}
+            />
           </div>
       ) : selectedNote && !browsing ? (
           <div className="flex h-full shrink-0 items-center gap-3 border-l border-[var(--divider)] px-3">
             {saveState === 'error' && <span role="status" className="text-[11px] text-[var(--danger)]">{saveLabel}</span>}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button aria-label="View options" className="interactive grid h-7 w-7 place-items-center rounded-md text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>View mode</DropdownMenuLabel>
-                <DropdownMenuCheckboxItem checked={editorMode === 'live'} onCheckedChange={() => setEditorMode('live')}><PenLine className="mr-2 h-4 w-4" /> Live editor</DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem checked={editorMode === 'raw'} onCheckedChange={() => setEditorMode('raw')}><SplitSquareHorizontal className="mr-2 h-4 w-4" /> Edit as raw file (split)</DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem checked={editorMode === 'reading'} onCheckedChange={() => setEditorMode('reading')}><Eye className="mr-2 h-4 w-4" /> Reading view</DropdownMenuCheckboxItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {/* Not in a layout workspace. There the editor is a panel that owns
+                its own view mode, so this switch drove nothing -- two identical
+                controls one above the other, and only the lower one worked. It
+                was invisible while this was a dropdown and the other a row of
+                text; giving them the same shape is what showed it. */}
+            {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
           </div>
       ) : null}
     </header>
   );
 
 
-  const notesView = selectedNote ? (
+  // Home wins over the open note, which is what lets the workspace title show
+  // the explorer without closing tabs -- they stay in `openTabs`, and clicking
+  // one calls handleSelectNote, which clears `atHome` and brings it back.
+  const notesView = selectedNote && !atHome ? (
     <div className="flex h-full w-full flex-col">
       {editorHeader}
       <div className="min-h-0 flex-1">
@@ -638,32 +777,37 @@ export default function App() {
         ) : Surface ? (
           surfaceEditing
             ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
-            : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
+            : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
-            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('raw')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
-            {editorMode === 'raw' && rawSplit}
+            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
+            {editorMode === 'split' && rawSplit}
             {editorMode === 'reading' && (
-              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
+              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
             )}
           </>
         )}
       </div>
     </div>
   ) : (
-    <section className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-      <div className="empty-state-icon"><Notebook className="h-5 w-5" /></div>
-      <h1 className="mt-5 text-base font-semibold text-[var(--ink)]">Choose a note to begin</h1>
-      <p className="mt-2 max-w-sm text-sm leading-6 text-[var(--ink-secondary)]">Open a file from the sidebar, or create a new note or section.</p>
-      <button className="interactive mt-4 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--canvas)]" onClick={() => requestCreate()}>Create note</button>
-    </section>
+    // What used to be a blank "Choose a note to begin" panel. Nothing selected
+    // means the explorer at the workspace root; the tabs, if any, are untouched.
+    <WorkspaceExplorer
+      repositoryName={explorerState.repositoryName}
+      paths={explorerState.paths}
+      folder={explorerState.folder}
+      onNavigate={explorerState.navigate}
+      onOpenFile={explorerState.openFile}
+      recents={explorerState.recents}
+      onClearRecents={explorerState.clearRecents}
+    />
   );
 
   let mainContent: React.ReactNode;
   if (view === 'repositories') {
     mainContent = <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />;
   } else if (view === 'plugins') {
-    mainContent = <PluginsPage onOpenSidePanel={() => setRightPanelOpen(true)} onOpenBottomPanel={() => setBottomPanelOpen(true)} />;
+    mainContent = <PluginsPage layout={layout} onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })} />;
   } else if (view === 'settings') {
     mainContent = <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />;
   } else if (view === 'gallery') {
@@ -694,6 +838,7 @@ export default function App() {
 
   return (
     <PluginProvider catalog={builtinPlugins} bridge={bridge}>
+      <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
         <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}`}>
           <TitleBar
@@ -740,92 +885,64 @@ export default function App() {
                   onNavigate={setView}
                 />
               )}
-            <PanelGroup direction="horizontal" autoSaveId="neuron.shell.h" className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-              {sidebarOpen && (
-                <>
-                  <Panel id="sidebar" order={1} defaultSize={18} minSize={12} maxSize={40} className="min-w-0">
-                    <Sidebar
-                      notes={filteredNotes}
-                      notesData={notesData}
-                      selectedNote={selectedNote}
-                      onSelectNote={handleSelectNote}
-                      onDeleteNote={handleDeleteNote}
-                      onRequestCreate={requestCreate}
-                      onRequestCreateFolder={() => { setCreateTab('section'); setCreateSection(''); setCreateOpen(true); }}
-                      onRefresh={loadNotes}
-                      view={view}
-                      mode={sidebarMode}
-                      repositoryName={repository.name}
-                      tags={tags}
-                      onSelectTag={setSelectedTag}
-                      selectedTag={selectedTag}
-                    />
-                  </Panel>
-                  <PanelResizeHandle className="resize-handle resize-handle-v" />
-                </>
-              )}
-
-              <Panel id="center" order={2} minSize={30} className="min-w-0">
-                <PanelGroup direction="vertical" autoSaveId="neuron.shell.v" className="flex min-h-0 flex-col">
-                  <Panel id="center-row" order={1} minSize={30} className="min-h-0">
-                    <PanelGroup direction="horizontal" autoSaveId="neuron.center.h" className="flex min-h-0">
-                      <Panel id="main" order={1} minSize={30} className="min-w-0">
-                        <main className="canvas-surface relative flex h-full w-full min-w-0 flex-col overflow-hidden">
-                          {notice && (
-                            <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
-                              <span>{notice}</span>
-                              <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
-                            </div>
-                          )}
-                          {pendingShellConfig && (
-                            <div role="status" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
-                              <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
-                              <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { setShellConfig(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
-                              <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Not now</button>
-                            </div>
-                          )}
-                          {mainContent}
-                          {/* Notes only. It is a map of the workspace, so it
-                              has nothing to say over Settings, Plugins or
-                              Repositories -- and it was covering their controls,
-                              which an E2E click timeout caught. Anchored to
-                              <main> rather than the notes view because a
-                              workspace with a shell config renders a layout
-                              instead of notesView, and the map is just as
-                              useful there. Not the window, so it never covers
-                              the sidebar or status bar. Zen mode exists to
-                              remove chrome, so it hides this too. */}
-                          {graphOverlayOpen && !layout.zen && view === 'notes' && (
-                            <FloatingGraph
-                              notesData={notesData}
-                              selectedNote={selectedNote}
-                              onSelectNote={handleSelectNote}
-                              onClose={toggleGraphOverlay}
-                            />
-                          )}
-                        </main>
-                      </Panel>
-                      {rightPanelOpen && (
-                        <>
-                          <PanelResizeHandle className="resize-handle resize-handle-v" />
-                          <Panel id="right" order={2} defaultSize={26} minSize={15} maxSize={50} className="min-w-0">
-                            <RightPanel location="side" onOpenMarketplace={() => setView('plugins')} onClose={() => setRightPanelOpen(false)} />
-                          </Panel>
-                        </>
-                      )}
-                    </PanelGroup>
-                  </Panel>
-                  {bottomPanelOpen && (
-                    <>
-                      <PanelResizeHandle className="resize-handle resize-handle-h" />
-                      <Panel id="bottom" order={2} defaultSize={28} minSize={12} maxSize={70} className="min-h-0">
-                        <RightPanel location="bottom" onOpenMarketplace={() => setView('plugins')} onClose={() => setBottomPanelOpen(false)} />
-                      </Panel>
-                    </>
-                  )}
-                </PanelGroup>
-              </Panel>
-            </PanelGroup>
+            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => setView('plugins')}
+              sidebar={
+                <Sidebar
+                  sidebarSide={layout.sidebarSide}
+                  onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
+                  notes={filteredNotes}
+                  notesData={notesData}
+                  selectedNote={selectedNote}
+                  onSelectNote={handleSelectNote}
+                  onDeleteNote={handleDeleteNote}
+                  onRequestCreate={requestCreate}
+                  onRequestCreateFolder={() => { setCreateTab('section'); setCreateSection(''); setCreateOpen(true); }}
+                  onRefresh={loadNotes}
+                  view={view}
+                  mode={sidebarMode}
+                  repositoryName={repository.name}
+                  onGoHome={() => goHome()}
+                  tags={tags}
+                  onSelectTag={setSelectedTag}
+                  selectedTag={selectedTag}
+                />
+              }>
+              <main className="canvas-surface relative flex h-full w-full min-w-0 flex-col overflow-hidden">
+                {notice && (
+                  <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
+                    <span>{notice}</span>
+                    <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
+                  </div>
+                )}
+                {pendingShellConfig && (
+                  <div role="status" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
+                    <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
+                    <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { setShellConfig(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
+                    <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Not now</button>
+                  </div>
+                )}
+                {mainContent}
+                {/* Notes only. It is a map of the workspace, so it
+                    has nothing to say over Settings, Plugins or
+                    Repositories -- and it was covering their controls,
+                    which an E2E click timeout caught. Anchored to
+                    <main> rather than the notes view because a
+                    workspace with a shell config renders a layout
+                    instead of notesView, and the map is just as
+                    useful there. Not the window, so it never covers
+                    the sidebar or status bar. Zen mode exists to
+                    remove chrome, so it hides this too. */}
+                {graphOverlayOpen && !layout.zen && view === 'notes' && (
+                  <FloatingGraph
+                    key={repository?.path}
+                    notesData={notesData}
+                    selectedNote={selectedNote}
+                    onSelectNote={handleSelectNote}
+                    onClose={toggleGraphOverlay}
+                  />
+                )}
+              </main>
+            </Workbench>
             </div>
           )}
 
@@ -857,8 +974,13 @@ export default function App() {
           onToggleGraph={toggleGraphOverlay}
           graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
+          layout={layout}
+          onLayoutChange={patchLayout}
+          onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}
+          bindings={bindings}
         />
       </TooltipProvider>
+      </ExplorerProvider>
     </PluginProvider>
   );
 }

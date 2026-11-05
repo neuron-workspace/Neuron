@@ -1,8 +1,29 @@
 import { Blocks, Chrome, FileCode2, FolderPlus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
+import type { WorkbenchLayout } from '../lib/layout';
 import { usePlugins } from '../plugins/host';
+import { formatChord, type Bindings } from '../lib/keybindings';
+
+/**
+ * The chord for a command, shown on the right of its row.
+ *
+ * A palette is the keyboard-first surface of the app, and this one listed nine
+ * commands without once mentioning that five of them have a shortcut -- so the
+ * fastest way to work was the one thing the interface never taught.
+ */
+function Shortcut({ chord }: { chord?: string }) {
+  if (!chord) return null;
+  return (
+    <kbd className="ml-auto shrink-0 rounded border border-[var(--divider)] bg-[var(--surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ink-muted)]">
+      {formatChord(chord)}
+    </kbd>
+  );
+}
 
 interface CommandPaletteProps {
+  layout: WorkbenchLayout;
+  onLayoutChange: (patch: Partial<WorkbenchLayout>) => void;
+  onResetLayout: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   notes: string[];
@@ -18,9 +39,11 @@ interface CommandPaletteProps {
   graphActive: boolean;
   shellActive: boolean;
   onImportChromeLogins: () => void;
+  /** The user's resolved chords, so the palette teaches the real ones. */
+  bindings: Bindings;
 }
 
-export default function CommandPalette({ open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins }: CommandPaletteProps) {
+export default function CommandPalette({ layout, onLayoutChange, onResetLayout, open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -31,15 +54,26 @@ export default function CommandPalette({ open, onOpenChange, notes, onSelectNote
         <CommandEmpty>No results found.</CommandEmpty>
 
         <CommandGroup heading="Actions">
-          <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section</CommandItem>
-          <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder</CommandItem>
+          <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section<Shortcut chord={bindings['new-note']} /></CommandItem>
+          <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder<Shortcut chord={bindings['new-view']} /></CommandItem>
           <CommandItem onSelect={() => { onToggleShell(); close(); }}><PanelsTopLeft /> {shellActive ? 'Hide workspace layout' : 'Use workspace layout (.neuron/layout.json)'}</CommandItem>
-          <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}</CommandItem>
-          <CommandItem onSelect={() => { onOpenWebsite(); close(); }}><Globe /> Open website tab</CommandItem>
+          <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}<Shortcut chord={bindings['toggle-graph']} /></CommandItem>
+          <CommandItem onSelect={() => { onOpenWebsite(); close(); }}><Globe /> Open website tab<Shortcut chord={bindings['open-website']} /></CommandItem>
           <CommandItem onSelect={() => { onImportChromeLogins(); close(); }}><Chrome /> Import Chrome logins</CommandItem>
           <CommandItem onSelect={() => { onOpenMarketplace(); close(); }}><Blocks /> Plugins & integrations</CommandItem>
           <CommandItem onSelect={() => { onOpenGallery(); close(); }}><Shapes /> Component gallery</CommandItem>
           <CommandItem onSelect={() => { onOpenSettings(); close(); }}><Settings /> Open settings</CommandItem>
+        </CommandGroup>
+
+        <CommandGroup heading="Layout">
+          {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
+            <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
+              <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}
+            </CommandItem>
+          ))}
+          <CommandItem disabled={layout.sidebarSide === 'left'} onSelect={() => { onLayoutChange({ sidebarSide: 'left' }); close(); }}><PanelsTopLeft /> Move sidebar to the left</CommandItem>
+          <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
+          <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
         </CommandGroup>
 
         {commands.length > 0 && (
