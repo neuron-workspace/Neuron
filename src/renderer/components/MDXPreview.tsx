@@ -63,7 +63,7 @@ function splitTableRow(row: string): string[] {
 
   for (const character of trimmed) {
     if (escaped) {
-      cell += character;
+      cell += character === '|' ? character : '\\' + character;
       escaped = false;
     } else if (character === '\\') {
       escaped = true;
@@ -591,7 +591,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     // Matches bold, italic, code, and wikilinks [[Note Name]]
     // [[wikilink]] must come before [text](url) or the wikilink's own
     // brackets match the inline-link pattern first.
-    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[\[.*?\]\]|\[[^\]]*\]\([^)\s]+\)|<[bB][rR]\s*\/?>)/g;
+    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[\[.*?\]\]|\[[^\]]*\]\(\s*(?:<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"]*"|'[^']*'))?\)|<[bB][rR]\s*\/?>)/g;
     const items = currentText.split(regex);
 
     for (const item of items) {
@@ -632,13 +632,14 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             </span>
           )
         );
-      } else if (/^\[[^\]]*\]\([^)\s]+\)$/.test(item)) {
+      } else if (/^\[[^\]]*\]\(\s*(?:<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"]*"|'[^']*'))?\)$/.test(item)) {
         // A standard Markdown link. These used to fall through to the plain-text
         // branch and render as literal `[label](url)` -- the syntax on screen
         // rather than the link it describes.
-        const split = /^\[([^\]]*)\]\(([^)\s]+)\)$/.exec(item)!;
-        const label = split[1] || split[2];
-        const href = split[2];
+        const split = /^\[([^\]]*)\]\(\s*(<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"([^"]*)"|'([^']*)'))?\)$/.exec(item)!;
+        const href = split[2].replace(/^<|>$/g, '');
+        const label = split[1] || href;
+        const title = split[3] ?? split[4];
         const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
 
         if (external) {
@@ -650,7 +651,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             safeHref ? <a
               key={key++}
               href={safeHref}
-              title={href}
+              title={title ?? href}
               className={LINK_PILL}
               onClick={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
@@ -667,7 +668,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                 key={key++}
                 type="button"
                 aria-label={`Open note ${resolved}`}
-                title={`Open ${resolved}`}
+                title={title ?? `Open ${resolved}`}
                 className={LINK_PILL}
                 onClick={(event) => { event.stopPropagation(); onWikiLinkClick?.(resolved); }}
                 onDoubleClick={(event) => event.stopPropagation()}
