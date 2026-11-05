@@ -309,6 +309,21 @@ body.platform-darwin .status-bar {
   border-color: var(--divider);
 }
 
+.pane-header.editor-tab-header {
+  height: var(--control-sm);
+  min-height: var(--control-sm);
+  flex-shrink: 0;
+  padding-block: 0;
+}
+
+.editor-tab-header .segmented {
+  padding: 0;
+}
+
+.editor-tab-header .segmented button {
+  min-height: 22px;
+}
+
 .status-dot {
   width: 6px;
   height: 6px;

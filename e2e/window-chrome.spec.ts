@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, openNote } from './fixtures';
 import type { ElectronApplication, Page } from '@playwright/test';
 
 const paletteShortcut = process.platform === 'darwin' ? 'Meta+k' : 'Control+k';
@@ -32,6 +32,28 @@ async function paletteCommand(page: Page, command: string) {
   await page.keyboard.press('Enter');
   await expect(dialog).toBeHidden();
 }
+
+test('tab strip stays 28px on workspace home and when opening a note', async ({ page }) => {
+  const tabs = page.getByRole('navigation', { name: 'Open notes' });
+  const row = tabs.locator('..');
+  await expect(tabs).toBeVisible();
+  await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
+  await expect(tabs.getByRole('button', { name: 'Create note', exact: true })).toBeVisible();
+  await expect(tabs.getByRole('button', { name: 'Open website tab' })).toBeVisible();
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  const homeHeight = await tabs.evaluate((node) => node.getBoundingClientRect().height);
+  expect(homeHeight).toBeGreaterThan(0);
+  expect(homeHeight).toBeLessThanOrEqual(28);
+
+  await openNote(page, 'getting-started.mdx');
+  await expect(tabs.getByRole('button', { name: 'Close getting-started' })).toBeVisible();
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => tabs.evaluate((node) => node.getBoundingClientRect().height)).toBe(homeHeight);
+
+  await tabs.getByRole('button', { name: 'Close getting-started' }).click();
+  await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+});
 
 test('native overlay keeps toolbar actions clear of window controls', async ({ page }) => {
   await expect(page.locator('body')).toHaveClass(new RegExp('platform-' + process.platform));
