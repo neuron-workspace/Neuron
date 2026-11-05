@@ -13,7 +13,8 @@ To redeliver an existing stable release without rebuilding, open Actions →
 *Microsoft Store* or *Publish to package managers* → Run workflow, select
 `test`, and enter the tag. For package managers, select `winget`, `chocolatey`,
 `homebrew`, or `all` as the channel. Store redelivery uses the retained build
-artifact, available for 90 days, and still creates only a draft submission.
+artifact, available for 90 days, and submits it for certification once you
+approve the `store` environment.
 
 ## First GitHub publication
 
@@ -151,8 +152,7 @@ identity is a public name.
 Two ways to get the package:
 
 - **From CI.** Tagging a release builds it, attaches it to the workflow run
-  as the `neuron-store-appx` artifact, and uploads it as a draft submission
-  (below). It is deliberately *not* attached to the
+  as the `neuron-store-appx` artifact, and submits it to the Store (below). It is deliberately *not* attached to the
   GitHub release: it is unsigned by design, and only Partner Center can do
   anything with it.
 - **Locally.** `npm run dist:store` writes it to `release/prod/`.
@@ -160,13 +160,18 @@ Two ways to get the package:
 Then test-install it (see the signing section above), upload it in Partner
 Center, and submit.
 
-### Draft submissions from CI
+### Store submissions from CI
 
-A stable tag also uploads that package to Partner Center as a **draft**
-submission (the `store` job in `store.yml`, called by `release.yml`, using the
+A stable tag also submits that package to the Store (the `store` job in
+`store.yml`, called by `release.yml`, using the
 [Microsoft Store Developer CLI](https://learn.microsoft.com/en-us/windows/apps/publish/msstore-dev-cli/overview)).
-Nothing reaches the Store until you open the draft in Partner Center, add
-release notes, and submit it for certification. Prerelease tags skip this job.
+The job waits for you to approve the `store` environment; approving it uploads
+the package and submits it for certification, keeping the previous
+submission's listing and release notes. Prerelease tags skip this job.
+
+It submits rather than leaving a draft because a draft cannot be reviewed:
+Partner Center processes an uploaded package only when the submission is
+committed, so an uncommitted draft still shows the previous version.
 
 - **Credentials.** A Microsoft Entra application registered in Partner Center
   (User management → Microsoft Entra applications, **Manager** role) supplies
@@ -175,12 +180,14 @@ release notes, and submit it for certification. Prerelease tags skip this job.
   secrets of the `store` environment, which should require your approval, so
   only this job can read them. The client secret expires; rotate it in Partner
   Center and update the secret before it does.
-- **Drafts are replaced.** `msstore publish` rebuilds the pending draft from the
-  last published submission, so do not hand-edit an unsubmitted draft and then
-  tag a release: those edits are lost.
-- **Submitting automatically** means removing `--noCommit` from the job and the
-  matching assertion in `tools/publish-gate.test.mjs`. Do it only after several
-  drafts have gone through certification unchanged.
+- **The Entra app must be on the account that owns the app.** If
+  `msstore apps list` says "Your account has no Managed apps", the tenant or
+  the application is linked to a different Partner Center account.
+- **Pending submissions are replaced.** `msstore publish` rebuilds any pending
+  submission from the last published one, so hand edits to an unsubmitted
+  draft are lost. A draft started in the Partner Center website blocks the job
+  outright ("Ingestion API can only update, delete, and commit submissions that
+  are created through the API"); delete it there first.
 
 `package.json`'s `build` block is the single source of truth.
 `tools/electron-builder.env.cjs` spreads it and overrides only the test/prod
