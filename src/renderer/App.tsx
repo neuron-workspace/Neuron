@@ -6,7 +6,7 @@ import MDXPreview from './components/MDXPreview';
 import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
-import RightPanel from './components/RightPanel';
+import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import CreateModal from './components/CreateModal';
@@ -20,7 +20,6 @@ import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { PluginProvider } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
 import './surfaces/HtmxViewSurface'; // registers the .html view surface
@@ -136,6 +135,7 @@ export default function App() {
   const lastEscapeRef = useRef(0);
 
   const commitLayout = useCallback((next: WorkbenchLayout) => {
+    layoutRef.current = next;
     setLayout(next);
     void window.electronAPI?.settings.set('layout', next);
   }, []);
@@ -146,7 +146,7 @@ export default function App() {
     if (patch.zen === true && !prev.zen) {
       // Entering zen: hide the chrome, remember what to restore.
       zenPrevRef.current = prev;
-      next = { ...next, activityBar: false, sidebar: false, rightPanel: false, bottomPanel: false };
+      next = { ...next, activityBar: false, sidebar: false, leftPanel: false, rightPanel: false, bottomPanel: false };
     } else if (patch.zen === false && prev.zen) {
       next = { ...(zenPrevRef.current ?? DEFAULT_LAYOUT), zen: false };
     }
@@ -180,7 +180,8 @@ export default function App() {
   // Running a command into a panel the user cannot see would hide the one part
   // of this that makes it reviewable.
   useEffect(() => registerTerminalOpener(() => {
-    if (!layoutRef.current.bottomPanel) patchLayout({ bottomPanel: true });
+    const dock = layoutRef.current.panels['terminal:terminal.panel']?.dock ?? 'bottom';
+    patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -806,7 +807,7 @@ export default function App() {
   if (view === 'repositories') {
     mainContent = <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />;
   } else if (view === 'plugins') {
-    mainContent = <PluginsPage onOpenSidePanel={() => setRightPanelOpen(true)} onOpenBottomPanel={() => setBottomPanelOpen(true)} />;
+    mainContent = <PluginsPage layout={layout} onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })} />;
   } else if (view === 'settings') {
     mainContent = <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />;
   } else if (view === 'gallery') {
@@ -884,94 +885,64 @@ export default function App() {
                   onNavigate={setView}
                 />
               )}
-            <PanelGroup direction="horizontal" autoSaveId="neuron.shell.h" className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-              {sidebarOpen && (
-                <>
-                  <Panel id="sidebar" order={1} defaultSize={18} minSize={12} maxSize={40} className="min-w-0">
-                    <Sidebar
-                      notes={filteredNotes}
-                      notesData={notesData}
-                      selectedNote={selectedNote}
-                      onSelectNote={handleSelectNote}
-                      onDeleteNote={handleDeleteNote}
-                      onRequestCreate={requestCreate}
-                      onRequestCreateFolder={() => { setCreateTab('section'); setCreateSection(''); setCreateOpen(true); }}
-                      onRefresh={loadNotes}
-                      view={view}
-                      mode={sidebarMode}
-                      repositoryName={repository.name}
-                      onGoHome={() => goHome()}
-                      tags={tags}
-                      onSelectTag={setSelectedTag}
-                      selectedTag={selectedTag}
-                    />
-                  </Panel>
-                  <PanelResizeHandle className="resize-handle resize-handle-v" />
-                </>
-              )}
-
-              <Panel id="center" order={2} minSize={30} className="min-w-0">
-                <PanelGroup direction="vertical" autoSaveId="neuron.shell.v" className="flex min-h-0 flex-col">
-                  <Panel id="center-row" order={1} minSize={30} className="min-h-0">
-                    <PanelGroup direction="horizontal" autoSaveId="neuron.center.h" className="flex min-h-0">
-                      <Panel id="main" order={1} minSize={30} className="min-w-0">
-                        <main className="canvas-surface relative flex h-full w-full min-w-0 flex-col overflow-hidden">
-                          {notice && (
-                            <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
-                              <span>{notice}</span>
-                              <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
-                            </div>
-                          )}
-                          {pendingShellConfig && (
-                            <div role="status" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
-                              <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
-                              <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { setShellConfig(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
-                              <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Not now</button>
-                            </div>
-                          )}
-                          {mainContent}
-                          {/* Notes only. It is a map of the workspace, so it
-                              has nothing to say over Settings, Plugins or
-                              Repositories -- and it was covering their controls,
-                              which an E2E click timeout caught. Anchored to
-                              <main> rather than the notes view because a
-                              workspace with a shell config renders a layout
-                              instead of notesView, and the map is just as
-                              useful there. Not the window, so it never covers
-                              the sidebar or status bar. Zen mode exists to
-                              remove chrome, so it hides this too. */}
-                          {graphOverlayOpen && !layout.zen && view === 'notes' && (
-                            <FloatingGraph
-                              key={repository?.path}
-                              notesData={notesData}
-                              selectedNote={selectedNote}
-                              onSelectNote={handleSelectNote}
-                              onClose={toggleGraphOverlay}
-                            />
-                          )}
-                        </main>
-                      </Panel>
-                      {rightPanelOpen && (
-                        <>
-                          <PanelResizeHandle className="resize-handle resize-handle-v" />
-                          <Panel id="right" order={2} defaultSize={26} minSize={15} maxSize={50} className="min-w-0">
-                            <RightPanel location="side" onOpenMarketplace={() => setView('plugins')} onClose={() => setRightPanelOpen(false)} />
-                          </Panel>
-                        </>
-                      )}
-                    </PanelGroup>
-                  </Panel>
-                  {bottomPanelOpen && (
-                    <>
-                      <PanelResizeHandle className="resize-handle resize-handle-h" />
-                      <Panel id="bottom" order={2} defaultSize={28} minSize={12} maxSize={70} className="min-h-0">
-                        <RightPanel location="bottom" onOpenMarketplace={() => setView('plugins')} onClose={() => setBottomPanelOpen(false)} />
-                      </Panel>
-                    </>
-                  )}
-                </PanelGroup>
-              </Panel>
-            </PanelGroup>
+            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => setView('plugins')}
+              sidebar={
+                <Sidebar
+                  sidebarSide={layout.sidebarSide}
+                  onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
+                  notes={filteredNotes}
+                  notesData={notesData}
+                  selectedNote={selectedNote}
+                  onSelectNote={handleSelectNote}
+                  onDeleteNote={handleDeleteNote}
+                  onRequestCreate={requestCreate}
+                  onRequestCreateFolder={() => { setCreateTab('section'); setCreateSection(''); setCreateOpen(true); }}
+                  onRefresh={loadNotes}
+                  view={view}
+                  mode={sidebarMode}
+                  repositoryName={repository.name}
+                  onGoHome={() => goHome()}
+                  tags={tags}
+                  onSelectTag={setSelectedTag}
+                  selectedTag={selectedTag}
+                />
+              }>
+              <main className="canvas-surface relative flex h-full w-full min-w-0 flex-col overflow-hidden">
+                {notice && (
+                  <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
+                    <span>{notice}</span>
+                    <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
+                  </div>
+                )}
+                {pendingShellConfig && (
+                  <div role="status" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
+                    <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
+                    <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { setShellConfig(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
+                    <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Not now</button>
+                  </div>
+                )}
+                {mainContent}
+                {/* Notes only. It is a map of the workspace, so it
+                    has nothing to say over Settings, Plugins or
+                    Repositories -- and it was covering their controls,
+                    which an E2E click timeout caught. Anchored to
+                    <main> rather than the notes view because a
+                    workspace with a shell config renders a layout
+                    instead of notesView, and the map is just as
+                    useful there. Not the window, so it never covers
+                    the sidebar or status bar. Zen mode exists to
+                    remove chrome, so it hides this too. */}
+                {graphOverlayOpen && !layout.zen && view === 'notes' && (
+                  <FloatingGraph
+                    key={repository?.path}
+                    notesData={notesData}
+                    selectedNote={selectedNote}
+                    onSelectNote={handleSelectNote}
+                    onClose={toggleGraphOverlay}
+                  />
+                )}
+              </main>
+            </Workbench>
             </div>
           )}
 
@@ -1003,6 +974,9 @@ export default function App() {
           onToggleGraph={toggleGraphOverlay}
           graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
+          layout={layout}
+          onLayoutChange={patchLayout}
+          onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}
           bindings={bindings}
         />
       </TooltipProvider>

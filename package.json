@@ -45,7 +45,7 @@
     "test:crash": "node tools/crash-reporter.test.mjs",
     "test:demo-data": "node tools/demo-data.test.mjs",
     "test:e2e": "npm run build:main && playwright test",
-    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:templates && npm run test:contrast && npm run test:terminal-bus && npm run test:terminal-history && npm run test:diagnostics && npm run test:crash && npm run test:demo-data && npm run test:procs && npm run test:prune && npm run test:chrome && npm run test:appx-assets && npm run test:icon-source && npm run test:wikilinks && npm run test:search && npm run test:explorer && npm run test:assistant-context && npm run test:mermaid && npm run test:updater && npm run test:manifests && npm run test:windows-installer && npm run test:publish-gate && npm run test:graph && npm run test:repo-path && npm run test:watcher",
+    "test": "npm run test:deps && npm run test:views && npm run test:frontmatter && npm run test:htmx && npm run test:canvas && npm run test:sanitize && npm run test:navigation && npm run test:journal && npm run test:db && npm run test:templates && npm run test:contrast && npm run test:terminal-bus && npm run test:terminal-history && npm run test:diagnostics && npm run test:crash && npm run test:demo-data && npm run test:procs && npm run test:prune && npm run test:chrome && npm run test:appx-assets && npm run test:icon-source && npm run test:wikilinks && npm run test:search && npm run test:explorer && npm run test:assistant-context && npm run test:mermaid && npm run test:updater && npm run test:manifests && npm run test:windows-installer && npm run test:publish-gate && npm run test:graph && npm run test:repo-path && npm run test:layout && npm run test:watcher",
     "shoot": "node tools/shoot.mjs",
     "test:procs": "node tools/procs.test.mjs",
     "test:prune": "node tools/prune-releases.test.mjs",
@@ -67,8 +67,10 @@
     "smoke": "node tools/smoke-packaged.mjs",
     "test:deps": "node tools/deps.test.mjs",
     "test:graph": "node tools/knowledge-graph.test.mjs",
+    "bench:scale": "node tools/scale-benchmark.mjs",
     "bench:graph": "node tools/graph-benchmark.mjs",
-    "bench:graph:browser": "node tools/graph-benchmark-run.mjs"
+    "bench:graph:browser": "node tools/graph-benchmark-run.mjs",
+    "test:layout": "node tools/layout.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",
@@ -79,8 +81,6 @@
     "@codemirror/language-data": "^6.3.1",
     "@codemirror/state": "^6.4.1",
     "@codemirror/view": "^6.26.0",
-    "@mdx-js/mdx": "^3.0.1",
-    "@mdx-js/react": "^3.0.1",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@radix-ui/react-accordion": "^1.2.14",
     "@radix-ui/react-alert-dialog": "^1.1.17",
@@ -118,7 +118,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",
-    "date-fns": "^4.4.0",
     "electron-updater": "^6.8.9",
     "embla-carousel-react": "^8.6.0",
     "graphology": "^0.26.0",

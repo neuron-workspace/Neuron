@@ -590,3 +590,38 @@ html[data-theme='light'] .neuron-logo {
 .cnv-md-code { font-family: var(--font-mono, monospace); font-size: 0.85em; background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 0.05rem 0.25rem; border-radius: 4px; }
 .cnv-md-pre { font-family: var(--font-mono, monospace); font-size: 0.78rem; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 6px; padding: 0.4rem 0.5rem; margin: 0.2rem 0; overflow-x: auto; white-space: pre; }
 .cnv-md-quote { border-left: 2px solid var(--divider); padding-left: 0.5rem; color: var(--ink-secondary); margin: 0.15rem 0; }
+
+/* Edge targets while a panel or the sidebar is dragged. Opaque, so a label
+   never sits on top of file names, and above the floating graph (an overlay)
+   so the right-hand target is never hidden; still below modals. The top inset
+   keeps tab strips reachable for drops between tabs. */
+.workbench-drop-zone {
+  position: absolute;
+  z-index: calc(var(--z-overlay) + 1);
+  display: grid;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--ink-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+}
+.workbench-drop-zone[data-visible="true"] { opacity: 1; pointer-events: auto; }
+.workbench-drop-zone[data-hover="true"] {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  color: var(--ink);
+}
+.workbench-drop-zone-left { left: 6px; top: 46px; bottom: 84px; width: 72px; }
+.workbench-drop-zone-right { right: 6px; top: 46px; bottom: 84px; width: 72px; }
+.workbench-drop-zone-bottom { left: 6px; right: 6px; bottom: 6px; height: 72px; }
+.workbench-drop-zone-left, .workbench-drop-zone-right { writing-mode: vertical-rl; }
+@media (prefers-reduced-motion: reduce) {
+  .workbench-drop-zone { transition: none; }
+}

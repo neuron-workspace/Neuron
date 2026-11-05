@@ -26,10 +26,14 @@ export interface AppFixture {
   app: ElectronApplication;
   page: Page;
   workspace: string;
+  prepareWorkspace: ((directory: string) => void | Promise<void>) | null;
+  launchTiming: { startedAt: number };
 }
 
 export const test = base.extend<AppFixture>({
-  workspace: async ({}, use) => {
+  prepareWorkspace: [null, { option: true }],
+  launchTiming: async ({}, use) => { await use({ startedAt: 0 }); },
+  workspace: async ({ prepareWorkspace }, use) => {
     // Sweep ONCE per run, not per test. Teardown deletes nothing (below), so
     // leftovers accumulate; sweeping the whole pile before each of 23 tests is
     // slow enough to blow Playwright's worker-teardown budget by itself -- the
@@ -75,7 +79,12 @@ export const test = base.extend<AppFixture>({
 
     const dir = mkdtempSync(join(tmpdir(), 'neuron-e2e-'));
     const workspace = join(dir, 'workspace');
-    cpSync(join(repoRoot, 'examples', 'demo-repo'), workspace, { recursive: true });
+    if (prepareWorkspace) {
+      mkdirSync(workspace, { recursive: true });
+      await prepareWorkspace(workspace);
+    } else {
+      cpSync(join(repoRoot, 'examples', 'demo-repo'), workspace, { recursive: true });
+    }
     await use(workspace);
 
     // Hand the delete to a detached OS process and return immediately.
@@ -96,7 +105,7 @@ export const test = base.extend<AppFixture>({
     } catch { /* the sweep collects it */ }
   },
 
-  app: async ({ workspace }, use) => {
+  app: async ({ workspace, launchTiming }, use) => {
     // Pre-seed settings so the app opens our copy instead of running its
     // first-launch demo-repo discovery, which would reach the real one.
     const userData = join(workspace, '..', 'userData');
@@ -106,6 +115,7 @@ export const test = base.extend<AppFixture>({
       JSON.stringify({ repositories: { current: workspace, recent: [workspace] }, seededDemo: true }, null, 2),
     );
 
+    launchTiming.startedAt = performance.now();
     const app = await electron.launch({
       args: [
         join(repoRoot, 'dist', 'main', 'main.js'),
