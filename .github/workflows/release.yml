@@ -258,6 +258,11 @@ jobs:
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: windows-latest
     environment: store
+    # A Store failure (an expired client secret, a Partner Center outage) must
+    # not fail the run: package-managers.yml publishes only from a successful
+    # run, so v0.5.0's Store failure also held back WinGet, Chocolatey and
+    # Homebrew. The job still shows as failed.
+    continue-on-error: true
     permissions:
       contents: read
     env:
@@ -283,9 +288,12 @@ jobs:
           SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
           CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+        # reconfigure first: every other command, settings included, exits with
+        # "SellerId is not set" until the CLI has a configuration. v0.5.0's
+        # Store job failed on exactly that.
         run: |
-          msstore settings --enableTelemetry false
           msstore reconfigure --tenantId "$TENANT_ID" --sellerId "$SELLER_ID" --clientId "$CLIENT_ID" --clientSecret "$CLIENT_SECRET"
+          msstore settings --enableTelemetry false
       # --inputDirectory, not the --inputFile the published docs still name:
       # the CLI publishes every .appx at the top of that directory, which is
       # why the artifact gets a directory of its own.
