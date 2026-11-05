@@ -703,10 +703,22 @@ export default function App() {
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
         case 'toggle-graph': toggleGraphOverlay(); break;
+        case 'toggle-fullscreen': void window.electronAPI.windowControls.toggleFullScreen(); break;
       }
     };
+    // Capture before terminals/editors consume the palette chord; Settings can
+    // still record shortcuts in its earlier window capture listener.
+    const capturePalette = (event: KeyboardEvent) => {
+      if (!document.body.classList.contains('window-fullscreen') || eventToChord(event) !== bindings.palette) return;
+      event.stopPropagation();
+      handler(event);
+    };
+    document.addEventListener('keydown', capturePalette, true);
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', capturePalette, true);
+      window.removeEventListener('keydown', handler);
+    };
   }, [bindings, requestCreate, createSurfaceFile, openWebsite, patchLayout]);
 
   const saveLabel = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' }[saveState];
@@ -959,6 +971,10 @@ export default function App() {
           onCreateSection={createSectionFolder}
         />
         <CommandPalette
+          recents={recents}
+          onOpenRepo={openRepository}
+          onCreateRepo={createRepository}
+          onSwitchRepo={switchRepository}
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
           notes={notes}

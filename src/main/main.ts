@@ -256,21 +256,14 @@ function createWindow() {
     minHeight: 560,
     title: 'Neuron',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    // Window chrome is the one part of this app that must not be the same
-    // everywhere.
-    //
-    // Windows and Linux keep the frameless window and the title bar Neuron
-    // draws itself. macOS keeps its real frame: `hiddenInset` hides the title
-    // bar but leaves the traffic lights, so the window can be moved, zoomed and
-    // taken full screen the way every other Mac app can. Going frameless there
-    // removed all of that and replaced it with buttons that only look like the
-    // system's.
-    //
-    // trafficLightPosition centres the lights in a 40px bar; the default sits
-    // them for a taller one and they end up clipped against the top edge.
+    // Windows and Linux: the OS draws the frame and the window buttons
+    // (Window Controls Overlay) beside Neuron's 40px toolbar. A frameless window
+    // overhung the screen when maximised and needed a padding hack, which then
+    // left a strip across the top in full screen. 39px leaves the toolbar's
+    // bottom border visible under the buttons. macOS keeps its traffic lights.
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 13 } }
-      : { frame: false }),
+      : { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 39, color: '#121419', symbolColor: '#e6e8ec' } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -294,22 +287,14 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
-  // What the renderer is really being told here is "compensate for the maximise
-  // bleed", not "the window is maximised".
-  //
-  // A frameless Windows window overhangs the screen by 8px when maximised, and
-  // the title bar pads itself to match. Full screen does not overhang, but
-  // entering it from a maximised window fires neither `unmaximize` nor
-  // `maximize` and `isMaximized()` keeps reporting true — so the padding stayed
-  // and showed up as a strip of empty chrome across the top. Reported as a gap
-  // in full screen on Windows, and it was.
-  const emitMaxState = () => {
-    if (mainWindow) mainWindow.webContents.send('window:chrome-state-changed', chromeState(mainWindow));
+  // Full screen hides the toolbar; editors also use these events to remeasure.
+  // The event says which way it went. On Windows isFullScreen() still reports
+  // the old state while enter-full-screen fires, so asking would hide nothing.
+  const emitChromeState = (fullScreen: boolean) => {
+    if (mainWindow) mainWindow.webContents.send('window:chrome-state-changed', { fullScreen });
   };
-  mainWindow.on('maximize', emitMaxState);
-  mainWindow.on('unmaximize', emitMaxState);
-  mainWindow.on('enter-full-screen', emitMaxState);
-  mainWindow.on('leave-full-screen', emitMaxState);
+  mainWindow.on('enter-full-screen', () => emitChromeState(true));
+  mainWindow.on('leave-full-screen', () => emitChromeState(false));
 
   mainWindow.on('closed', () => {
     killAllPtys();
@@ -327,34 +312,22 @@ function createWindow() {
 // IPC — window controls
 // ==========================================================================
 
-/**
- * Whether the renderer should pad its title bar for the maximise bleed.
- *
- * Only a frameless window overhangs the screen when maximised, and only when it
- * is maximised rather than full screen. macOS keeps its native frame, so it
- * never bleeds and never needs the inset; a full-screen window does not bleed
- * either, and treating it as maximised is what put a strip of empty chrome
- * across the top of the window on Windows.
- */
-function needsMaximizeInset(window: BrowserWindow): boolean {
-  if (process.platform === 'darwin') return false;
-  return window.isMaximized() && !window.isFullScreen();
-}
-
 /** What the renderer needs to know to draw its chrome correctly. */
 function chromeState(window: BrowserWindow) {
-  return { inset: needsMaximizeInset(window), fullScreen: window.isFullScreen() };
+  return { fullScreen: window.isFullScreen() };
 }
 
-ipcMain.handle('window:minimize', () => mainWindow?.minimize());
-ipcMain.handle('window:toggle-maximize', () => {
-  if (!mainWindow) return false;
-  if (mainWindow.isMaximized()) mainWindow.unmaximize();
-  else mainWindow.maximize();
-  return mainWindow.isMaximized();
+ipcMain.handle('window:chrome-state', () => (mainWindow ? chromeState(mainWindow) : { fullScreen: false }));
+// Windows and Linux have no application menu, so its togglefullscreen role does
+// not exist there; F11 and the palette reach full screen through this.
+ipcMain.handle('window:toggle-fullscreen', () => mainWindow?.setFullScreen(!mainWindow.isFullScreen()));
+ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
+  if ((process.platform !== 'win32' && process.platform !== 'linux') || !mainWindow || mainWindow.isDestroyed()) return;
+  if (event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return;
+  if (typeof colors?.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.color)
+    || typeof colors?.symbolColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.symbolColor)) return;
+  mainWindow.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor });
 });
-ipcMain.handle('window:close', () => mainWindow?.close());
-ipcMain.handle('window:chrome-state', () => (mainWindow ? chromeState(mainWindow) : { inset: false, fullScreen: false }));
 
 // ==========================================================================
 // IPC — settings (generic key/value; used for plugin config + state)

@@ -175,10 +175,17 @@ try {
 const page = await app.firstWindow({ timeout: 60_000 });
 await page.waitForLoadState('domcontentloaded', { timeout: 60_000 });
 
+// Wait for the toolbar to mount before inspecting the packaged renderer.
+await page.locator('.titlebar').waitFor({ state: 'visible', timeout: 60_000 });
+
 // And the renderer must actually have rendered, not just opened a blank frame.
 const state = await page.evaluate(() => ({
   title: document.title,
   hasRoot: !!document.querySelector('#root')?.childElementCount,
+  hasCustomControls: !!document.querySelector('.titlebar .window-control'),
+  hasToolbarLogo: !!document.querySelector('.titlebar .neuron-logo'),
+  toolbarHeight: document.querySelector('.titlebar')?.getBoundingClientRect().height,
+  overlayVisible: navigator.windowControlsOverlay?.visible ?? false,
   bodyText: (document.body.innerText || '').slice(0, 120),
 }));
 
@@ -191,13 +198,16 @@ const state = await page.evaluate(() => ({
 
 console.log('\n  window title      :', state.title);
 console.log('  renderer mounted  :', state.hasRoot);
+const nativeChrome = !state.hasCustomControls && !state.hasToolbarLogo && state.toolbarHeight === 40
+  && (process.platform === 'darwin' || state.overlayVisible);
+console.log('  native chrome     :', nativeChrome);
 
 await shutdown(app);
 rmSync(userData, { recursive: true, force: true });
 if (temp) { try { rmSync(temp, { recursive: true, force: true }); } catch { /* scanner holds it */ } }
 
-const ok = state.hasRoot;
+const ok = state.hasRoot && nativeChrome;
 console.log(ok
   ? '\nsmoke: the packaged application starts and renders\n'
-  : '\nsmoke: FAILED -- the packaged application did not render\n');
+  : '\nsmoke: FAILED -- packaged rendering or native chrome check failed\n');
 process.exit(ok ? 0 : 1);
