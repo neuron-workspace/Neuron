@@ -204,7 +204,7 @@ export default function PluginsPage({ layout, onOpenDock }: { layout: WorkbenchL
     };
     void load();
     const unsubscribe = window.electronAPI.onNotesChanged((_event, path) => {
-      if (path.startsWith('plugins/')) void load();
+      if (path === 'plugins' || path.startsWith('plugins/')) void load();
     });
     return () => { cancelled = true; unsubscribe(); };
   }, []);

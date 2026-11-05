@@ -101,8 +101,8 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
         || changed === manifestPath
         || changed === legacyManifest
         || changed === appManifest
-        || changed.startsWith('.neuron/fragments/')
-        || changed.startsWith('.neuron/styles/')
+        || /^\.neuron\/(fragments|styles)(\/|$)/.test(changed)
+        || changed === '.neuron'
         || changed === '.neuron/config.json';
       if (mine) void open();
     });
