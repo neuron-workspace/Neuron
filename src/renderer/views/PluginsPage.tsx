@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sparkles, Plug, PencilRuler, LayoutGrid, Search, PackagePlus, ShieldCheck, PanelRight, PanelBottom, TerminalSquare } from 'lucide-react';
+import { DOCKS, placePanels, type Dock, type WorkbenchLayout } from '../lib/layout';
 import { usePlugins } from '../plugins/host';
 import type { PluginCategory, PluginManifest, SandboxedPluginDescriptor } from '../plugins/types';
 import { Input } from '../components/ui/input';
@@ -90,20 +91,21 @@ function ConfigForm({ manifest }: { manifest: PluginManifest }) {
 
 function PluginRow({
   manifest,
-  onOpenSidePanel,
-  onOpenBottomPanel,
+  layout,
+  onOpenDock,
 }: {
   manifest: PluginManifest;
-  onOpenSidePanel: () => void;
-  onOpenBottomPanel: () => void;
+  layout: WorkbenchLayout;
+  onOpenDock: (dock: Dock) => void;
 }) {
   const { isEnabled, setEnabled, getConfig, panels, commands } = usePlugins();
   const enabled = isEnabled(manifest.id);
   const meta = categoryMeta[manifest.category];
   const Icon = meta.icon;
   const myPanels = panels.filter((p) => p.pluginId === manifest.id);
-  const sidePanels = myPanels.filter((p) => (p.view.location ?? 'side') === 'side');
-  const bottomPanels = myPanels.filter((p) => p.view.location === 'bottom');
+  const placed = placePanels(myPanels, layout);
+  const sidePanels = [...placed.left, ...placed.right];
+  const bottomPanels = placed.bottom;
   const myCommands = commands.filter((c) => c.pluginId === manifest.id);
   const needsConfig = enabled && !!manifest.configSchema?.length && Object.keys(getConfig(manifest.id)).length === 0;
 
@@ -134,8 +136,9 @@ function PluginRow({
           )}
           {enabled && (sidePanels.length > 0 || bottomPanels.length > 0) && (
             <div className="mt-3 flex flex-wrap gap-2">
-              {sidePanels.length > 0 && <Button size="sm" variant="outline" onClick={onOpenSidePanel}><PanelRight className="h-3.5 w-3.5" /> Open side peek</Button>}
-              {bottomPanels.length > 0 && <Button size="sm" variant="outline" onClick={onOpenBottomPanel}><PanelBottom className="h-3.5 w-3.5" /> Open bottom peek</Button>}
+              {DOCKS.filter((dock) => placed[dock].length > 0).map((dock) => (
+                <Button key={dock} size="sm" variant="outline" onClick={() => onOpenDock(dock)}>Open {dock} dock</Button>
+              ))}
             </div>
           )}
         </div>
@@ -170,7 +173,7 @@ function SandboxedPluginRow({ plugin, onOpen }: { plugin: SandboxedPluginDescrip
   );
 }
 
-export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { onOpenSidePanel: () => void; onOpenBottomPanel: () => void }) {
+export default function PluginsPage({ layout, onOpenDock }: { layout: WorkbenchLayout; onOpenDock: (dock: Dock) => void }) {
   const { plugins, runtimeFor } = usePlugins();
   const [sandboxedPlugins, setSandboxedPlugins] = useState<SandboxedPluginDescriptor[]>([]);
   const [query, setQuery] = useState('');
@@ -267,7 +270,7 @@ export default function PluginsPage({ onOpenSidePanel, onOpenBottomPanel }: { on
               rules out. */}
           {(filtered.length > 0 || filteredSandboxed.length > 0) && (
             <div className="divide-y divide-[var(--divider)] overflow-hidden rounded-md border border-[var(--divider)]">
-              {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} onOpenSidePanel={onOpenSidePanel} onOpenBottomPanel={onOpenBottomPanel} />)}
+              {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} layout={layout} onOpenDock={onOpenDock} />)}
               {filteredSandboxed.map((plugin) => (
                 <SandboxedPluginRow
                   key={plugin.manifestPath}

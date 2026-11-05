@@ -26,7 +26,7 @@ Neuron treats your notes as durable files, not records trapped in a hosted datab
 
 - Live Markdown editing with source, split-preview, and reading modes.
 - Multiple note tabs, task checkboxes, tables, code blocks, wiki-links, and tags.
-- Resizable, VS Code-style docks — drag any divider; layout persists.
+- Customizable left, right, and bottom docks — drag tabs to move or reorder panels, move the sidebar to either side, or use keyboard-accessible menus; placement and sizes persist.
 - **Sandboxed HTML views (`.html`)** — build custom local dashboards and tools from plain HTML, [htmx](https://htmx.org), CSS, and JavaScript against a capability-scoped workspace API. Bundled htmx works offline; permissions and variables live in an inspectable `.neuron` folder.
 - JSON Canvas (`.canvas`) boards — an infinite spatial whiteboard (Obsidian-compatible) with undo/redo, multi-select, alignment, Markdown cards, and per-node styling.
 - Notion-style `.db` databases — typed properties, colored select tags, filtering and sorting — stored as plain JSON in the workspace with atomic writes and live reload on external changes.
