@@ -72,6 +72,16 @@ check('the Store job only drafts, behind its environment, after the release', ()
   assert.match(publish.run, /--noCommit/, 'drop --noCommit only deliberately, together with this assertion');
   const setup = store.steps.find((s) => /microsoft-store-apppublisher/.test(s.uses ?? ''));
   assert.match(setup.uses, /@[0-9a-f]{40}$/, 'a third-party action holding Partner Center credentials is pinned by commit');
+  const configure = store.steps.find((s) => /msstore reconfigure/.test(s.run ?? ''))?.run ?? '';
+  assert.ok(configure.indexOf('msstore reconfigure') < configure.indexOf('msstore settings'),
+    'every msstore command but reconfigure fails with "SellerId is not set" until the CLI is configured');
+  assert.equal(store['continue-on-error'], true, 'a Store failure must not fail the run and hold back the package managers');
+});
+
+check('WinGet is told the release tag', () => {
+  const winget = workflow.jobs.winget.steps.find((s) => /winget-releaser/.test(s.uses ?? ''));
+  assert.match(winget.with['release-tag'] ?? '', /^v\$\{\{ needs\.manifests\.outputs\.version \}\}$/,
+    'its default is github.ref_name, which is main on workflow_run and workflow_dispatch');
 });
 
 // --- the decision -----------------------------------------------------------

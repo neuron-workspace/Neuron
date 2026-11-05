@@ -144,6 +144,10 @@ jobs:
         with:
           identifier: NeuronWorkspace.Neuron
           version: ${{ needs.manifests.outputs.version }}
+          # Its default is the release event's tag or github.ref_name, and on
+          # workflow_run and workflow_dispatch alike that is `main`: v0.5.0's
+          # run looked up a release called "main" and got a 404.
+          release-tag: v${{ needs.manifests.outputs.version }}
           installers-regex: '-win-x64\.exe$'
           token: ${{ secrets.WINGET_TOKEN }}
 
