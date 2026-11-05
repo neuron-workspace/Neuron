@@ -10,6 +10,63 @@ All notable changes to Neuron are documented here. The format follows
 > release landing at 0.0.1. The dates and the contents are unchanged; only the
 > numbers moved. Nothing was removed, and no released tag was reused.
 
+## [0.5.0] - 2026-11-05
+
+### Security
+- **Note paths are checked against where they really lead.** A note path is
+  resolved relative to the workspace and followed through symlinks and
+  junctions before it is read or written, so neither `..`, an absolute path,
+  another drive nor a link can reach a file outside the workspace.
+- **Only the packaged app counts as app content.** Any `file:` URL used to be
+  treated as trusted; now only the renderer's own directory is. Markdown links
+  with a scheme other than `http`, `https` or `mailto` render as plain text.
+- Takes the dompurify (critical, DOM XSS), undici, zod and js-yaml security
+  releases.
+
+### Added
+- **Panels go where you put them.** Drag a plugin panel's tab to the left, right
+  or bottom dock, or onto another dock's tabs; the sidebar can sit on either
+  side. The layout is remembered, and **Reset layout** is in the command palette.
+- **A workspace home.** With nothing open, the editor shows a file explorer for
+  the workspace, with folders, breadcrumbs and recent notes, instead of an
+  empty panel.
+- **The knowledge graph has physics.** It is drawn with Sigma on WebGL and laid
+  out by ForceAtlas2, so related notes sit near each other. Before, positions
+  were a fixed spiral and said nothing about the notes.
+- **Mermaid files.** `.mmd` and `.mermaid` files open in an editor with a live
+  diagram, and fenced `mermaid` blocks render in Markdown preview.
+- **A `<Flashcard>` component** that shows the answer only after you ask for it.
+- **`fullWidth: true`** in a note's frontmatter lifts the reading width cap for
+  that note alone.
+- **Open in Neuron** in the Windows Explorer menu for a folder, and for the
+  background of an open folder. If Neuron is already running, it switches to
+  that folder.
+- **Crashes are written down.** Fatal errors, and native crashes that happen
+  before any JavaScript handler can run, are recorded in the logs folder
+  (Settings > Open logs folder). Nothing is uploaded.
+
+### Changed
+- **Large workspaces open quickly.** With 5,000 notes on Windows, the explorer
+  now appears in about 7 s, down from 26 s. Windows and macOS watch the
+  workspace with one native watcher instead of one per file. Notes are read
+  without holding the window's thread.
+- **Large tables scroll.** A database table of 200 or more rows renders only the
+  rows in view. A 10,000-row table now opens in 0.2 s rather than 12 s.
+- **The Windows installer installs for you alone, in one click**, with no UAC
+  prompt and no wizard. WinGet installs per-user to match.
+- The assistant uses the app's own search to pick context, and stays within its
+  context budget. Short terms such as "AI" now match.
+- One set of controls, spacing and borders across every surface, in both
+  themes.
+- Notes written in pieces by a sync client are read once complete, not
+  half-written.
+
+### Upgrading on Windows
+- An install made with **All users** chosen in the old installer is not
+  replaced by the new per-user one; you would end up with both. Uninstall the
+  old copy from Settings > Apps first. Installs made with the default choice
+  update in place.
+
 ## [0.4.5] - 2026-09-02
 
 ### Fixed
