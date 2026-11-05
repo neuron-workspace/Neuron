@@ -59,19 +59,91 @@ check('it can still be run by hand', () => {
 // Partner Center is the one destination where a mistake reaches users of a
 // store that signs and auto-updates the app, so its guards are asserted rather
 // than trusted to survive edits to release.yml.
-const store = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf-8')).jobs.store;
+const release = parse(readFileSync(join(root, '.github/workflows/release.yml'), 'utf-8'));
+const storeWorkflow = parse(readFileSync(join(root, '.github/workflows/store.yml'), 'utf-8'));
+const store = storeWorkflow.jobs.store;
+const ci = parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf-8'));
 
 check('the Store job only drafts, behind its environment, after the release', () => {
   assert.ok(store, 'release.yml must have a store job');
   assert.equal(store.environment, 'store', 'secrets and any approval rule live on the store environment');
-  assert.ok(store.needs.includes('release'), 'a release that failed to publish must not leave a Store draft');
-  assert.match(store.if, /!contains\(github\.ref_name, '-'\)/, 'prereleases must not reach the Store');
-  assert.deepEqual(store.permissions, { contents: 'read' });
+  assert.equal(release.jobs.store.uses, './.github/workflows/store.yml');
+  assert.equal(release.jobs.store.secrets, 'inherit');
+  assert.ok(release.jobs.store.needs.includes('release'), 'a release that failed to publish must not leave a Store draft');
+  assert.match(release.jobs.store.if, /!contains\(github\.ref_name, '-'\)/, 'prereleases must not reach the Store');
+  assert.deepEqual(store.permissions, { contents: 'read', actions: 'read' });
   const publish = store.steps.find((s) => /msstore publish/.test(s.run ?? ''));
   assert.ok(publish, 'the job must publish with msstore');
   assert.match(publish.run, /--noCommit/, 'drop --noCommit only deliberately, together with this assertion');
   const setup = store.steps.find((s) => /microsoft-store-apppublisher/.test(s.uses ?? ''));
   assert.match(setup.uses, /@[0-9a-f]{40}$/, 'a third-party action holding Partner Center credentials is pinned by commit');
+  const configure = store.steps.find((s) => /msstore reconfigure/.test(s.run ?? ''))?.run ?? '';
+  assert.ok(configure.indexOf('msstore reconfigure') < configure.indexOf('msstore settings'),
+    'every msstore command but reconfigure fails with "SellerId is not set" until the CLI is configured');
+  assert.equal(store['continue-on-error'], true, 'a Store failure must not fail the run and hold back the package managers');
+});
+
+
+check('Store redelivery is guarded and downloads the retained artifact', () => {
+  assert.equal(storeWorkflow.on.workflow_call.inputs.tag.required, true);
+  assert.equal(storeWorkflow.on.workflow_dispatch.inputs.tag.required, true);
+  const guard = store.steps.find(s => /Guard manual/.test(s.name));
+  assert.match(guard.run, /"\$EVENT" = workflow_dispatch/);
+  assert.match(guard.run, /"\$REF" != refs\/heads\/test/);
+  assert.match(guard.run, /"\$TAG" == \*-\*/);
+  assert.match(guard.run, /::error::/);
+  assert.equal(guard.env.REF, '$' + '{{ github.ref }}');
+  assert.equal(guard.env.EVENT, '$' + '{{ github.event_name }}');
+  const download = store.steps.find(s => s.id === 'retained-package');
+  assert.equal(download.uses, 'actions/download-artifact@v7');
+  assert.ok(download.with['run-id']);
+  assert.ok(download.with['github-token']);
+  const lookup = store.steps.find(s => s.id === 'release-run');
+  assert.match(lookup.run, /gh run list --workflow release.yml --branch "\$TAG" --status completed --limit 1 --json databaseId/);
+  assert.match(lookup.run, /::error::No completed/);
+  assert.ok(store.steps.some(s => /::error::.*expired/.test(s.run ?? '')));
+  const upload = release.jobs.build.steps.find(s => s.with?.name === 'neuron-store-appx');
+  assert.equal(upload.with['retention-days'], 90);
+});
+
+check('CI keeps the three required platform names and pushes on test', () => {
+  assert.deepEqual(ci.jobs.build.strategy.matrix.include.map(p => p.name), ['Windows', 'macOS', 'Linux']);
+  assert.deepEqual(ci.on.push.branches, ['main', 'test', 'dev']);
+  assert.equal(ci.jobs.changes.name, 'Detect changes');
+  for (const output of ['code', 'scope', 'specs']) assert.ok(ci.jobs.changes.outputs[output]);
+  // Only a documentation-only change skips these; dev's narrower scope never does.
+  for (const command of ['npm run typecheck', 'npm test', 'npm run build']) {
+    assert.equal(ci.jobs.build.steps.find(s => s.run === command).if, "env.RUN == 'true'");
+  }
+  assert.equal(ci.jobs.build.steps.find(s => /Smoke-test/.test(s.name)).if, "env.RUN == 'true' && env.SCOPE == 'full'");
+});
+
+check('release jobs are gated by tag ancestry', () => {
+  assert.ok(release.jobs['check-tag']);
+  assert.equal(release.jobs.build.needs, 'check-tag');
+  assert.equal(release.jobs.release.needs, 'build');
+  const steps = release.jobs['check-tag'].steps;
+  assert.equal(steps[0].with['fetch-depth'], 0);
+  assert.match(steps[1].run, /git merge-base --is-ancestor HEAD "origin\/\$branch"/);
+  assert.match(steps[1].run, /branch=main/);
+  assert.match(steps[1].run, /branch=test/);
+});
+
+check('manual package redelivery selects a channel', () => {
+  assert.equal(triggers.workflow_dispatch.inputs.channel.default, 'all');
+  assert.deepEqual(triggers.workflow_dispatch.inputs.channel.options, ['all', 'winget', 'chocolatey', 'homebrew']);
+  for (const channel of ['winget', 'chocolatey', 'homebrew']) {
+    const condition = workflow.jobs[channel].if;
+    assert.ok(condition.includes("github.event_name != 'workflow_dispatch'"));
+    assert.ok(condition.includes("inputs.channel == 'all'"));
+    assert.ok(condition.includes("inputs.channel == '" + channel + "'"));
+  }
+});
+
+check('WinGet is told the release tag', () => {
+  const winget = workflow.jobs.winget.steps.find((s) => /winget-releaser/.test(s.uses ?? ''));
+  assert.match(winget.with['release-tag'] ?? '', /^v\$\{\{ needs\.manifests\.outputs\.version \}\}$/,
+    'its default is github.ref_name, which is main on workflow_run and workflow_dispatch');
 });
 
 // --- the decision -----------------------------------------------------------
@@ -79,6 +151,8 @@ check('the Store job only drafts, behind its environment, after the release', ()
 // script under test is the one that actually runs.
 const step = workflow.jobs.manifests.steps.find((s) => s.id === 'gate');
 assert.ok(step?.run, 'the gate step must exist and have a script');
+assert.equal(step.env.REF, '${{ github.ref }}');
+assert.equal(step.env.EVENT, '${{ github.event_name }}');
 
 const out = mkdtempSync(join(tmpdir(), 'neuron-gate-'));
 const script = join(out, 'gate.sh');
@@ -113,11 +187,11 @@ function bashExe() {
 const BASH = bashExe();
 
 /** Run the real gate script and read back what it wrote to $GITHUB_OUTPUT. */
-const gate = ({ tag, upstream = '' }) => {
+const gate = ({ tag, upstream = '', event = 'workflow_run', ref = 'refs/heads/main' }) => {
   const outputs = join(out, 'outputs.txt');
   writeFileSync(outputs, '');
   const log = execFileSync(BASH, [script], {
-    env: { ...process.env, TAG: tag, UPSTREAM: upstream, GITHUB_OUTPUT: outputs },
+    env: { ...process.env, TAG: tag, UPSTREAM: upstream, EVENT: event, REF: ref, GITHUB_OUTPUT: outputs },
     encoding: 'utf-8',
   });
   const parsed = Object.fromEntries(
@@ -162,9 +236,15 @@ check('release.yml running on a branch publishes nothing', () => {
 check('a hand-run dispatch has no upstream conclusion and still publishes', () => {
   // workflow_dispatch leaves UPSTREAM empty; an empty conclusion must not be
   // read as a failure, or the manual re-run path would never work.
-  const r = gate({ tag: 'v1.2.3', upstream: '' });
+  const r = gate({ tag: 'v1.2.3', event: 'workflow_dispatch', ref: 'refs/heads/test' });
   assert.equal(r.publish, 'true');
   assert.equal(r.version, '1.2.3');
+});
+
+check('manual redelivery from main is rejected', () => {
+  const r = gate({ tag: 'v1.2.3', event: 'workflow_dispatch', ref: 'refs/heads/main' });
+  assert.equal(r.publish, 'false');
+  assert.match(r.log, /::error::Manual redelivery runs from test/);
 });
 
 check('both outputs are always written, exactly once', () => {
@@ -179,7 +259,7 @@ check('both outputs are always written, exactly once', () => {
     const outputs = join(out, 'outputs.txt');
     writeFileSync(outputs, '');
     execFileSync(BASH, [script], {
-      env: { ...process.env, TAG: c.tag, UPSTREAM: c.upstream, GITHUB_OUTPUT: outputs },
+      env: { ...process.env, TAG: c.tag, UPSTREAM: c.upstream, EVENT: 'workflow_run', REF: 'refs/heads/main', GITHUB_OUTPUT: outputs },
       encoding: 'utf-8',
     });
     const lines = readFileSync(outputs, 'utf-8').split('\n').filter(Boolean);

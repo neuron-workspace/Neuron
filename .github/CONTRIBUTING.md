@@ -201,9 +201,10 @@ uploaded to GitHub directly rather than linked from elsewhere:
 
 A UI pull request without screenshots is returned to draft.
 
-CI runs on **Windows, macOS and Linux** for every pull request and push to `dev`
-and `main`. It installs with `npm ci`, then enforces the same typecheck, fast
-tests, build, and Electron E2E command on all three. Playwright failure
+CI runs on **Windows, macOS and Linux** for every pull request and push to `dev`,
+`test` and `main`. It installs with `npm ci`, then enforces the same typecheck, fast
+tests and build on all three. `dev` runs only affected e2e specs; `test` runs
+everything, including packaged smoke. Playwright failure
 artifacts are uploaded for seven days — download them from the failed run to see
 what the app looked like when a test failed. A local pass is still required: CI
 is confirmation, not a substitute for describing what you tested.
