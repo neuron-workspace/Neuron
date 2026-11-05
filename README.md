@@ -38,7 +38,20 @@ Neuron treats your notes as durable files, not records trapped in a hosted datab
 
 ## Download
 
-Installers are published on the repository's **Releases** page. The companion GitHub Pages site always links to the newest release.
+**Windows** — [get it from the Microsoft Store](https://apps.microsoft.com/detail/9pfc0xc16c1g).
+Signed by Microsoft after certification, so there is no SmartScreen prompt, and
+the Store keeps it updated.
+
+Or with a package manager:
+
+```bash
+winget install NeuronWorkspace.Neuron                # Windows
+choco install neuron                                 # Windows
+brew install --cask neuron-workspace/neuron/neuron   # macOS
+```
+
+Installers are also published on the repository's **Releases** page, and the
+companion GitHub Pages site always links to the newest one.
 
 | Platform | Release formats |
 | --- | --- |
@@ -46,18 +59,27 @@ Installers are published on the repository's **Releases** page. The companion Gi
 | macOS | DMG and ZIP for Intel and Apple silicon |
 | Linux | AppImage and Debian package |
 
-> Release builds are currently unsigned. Windows SmartScreen and macOS Gatekeeper may display a warning until signing certificates and notarization are configured. Do not disable operating-system protections globally.
+Linux has no package-manager entry yet; use the AppImage or the `.deb`.
+
+> **On the warnings.** The Microsoft Store build is signed by Microsoft after
+> certification and prompts for nothing. Direct downloads are a different story:
+> Windows builds carry no paid code-signing certificate, so SmartScreen blocks
+> the installer on a reputation check, and macOS builds are signed ad-hoc rather
+> than with a Developer ID, so Gatekeeper asks you to confirm the first launch.
+> Both are expected and both clear permanently —
+> [here is exactly what you will see](https://neuron-workspace.github.io/installing.html).
+> Do not disable operating-system protections globally.
 
 ## Quick start from source
 
 ### Prerequisites
 
-- Node.js 20 or newer
+- Node.js 22
 - npm 10 or newer
 - Git
 
 ```bash
-git clone https://github.com/YOUR_ACCOUNT/Neuron.git
+git clone https://github.com/neuron-workspace/Neuron.git
 cd Neuron
 npm ci
 npm run dev
