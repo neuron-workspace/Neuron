@@ -110,6 +110,9 @@ for (const maximized of [false, true]) {
         if (win.isMaximized()) { resolve(); return; }
         win.once('maximize', () => resolve());
         win.maximize();
+        // Linux CI's xvfb has no window manager, so nothing ever maximises and
+        // no event comes; the full-screen checks below still apply there.
+        setTimeout(resolve, 3000);
       }));
     }
 
