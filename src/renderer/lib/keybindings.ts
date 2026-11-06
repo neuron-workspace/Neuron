@@ -18,6 +18,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: 'toggle-bottom', label: 'Toggle bottom panel', default: 'mod+`' },
   { id: 'toggle-zen', label: 'Toggle zen mode', default: 'alt+z' },
   { id: 'toggle-graph', label: 'Toggle workspace graph', default: 'mod+shift+g' },
+  { id: 'toggle-fullscreen', label: 'Toggle full screen', default: 'f11' },
 ];
 
 export type Bindings = Record<string, string>;

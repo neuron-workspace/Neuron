@@ -154,6 +154,10 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const [search, setSearch] = useState('');
   const [editingProp, setEditingProp] = useState<string | null>(null);
   const lastWritten = useRef<string | null>(null);
+  const pendingWrite = useRef<string | null>(null);
+  const writeSequence = useRef(0);
+  const unsaved = useRef(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const activePath = useRef(path);
   const dbRef = useRef<DbFile | null>(null);
   const selectedTableRef = useRef<string | null>(null);
@@ -179,9 +183,13 @@ export function DbSurface({ path, content }: SurfaceProps) {
     if (activePath.current !== path) {
       activePath.current = path;
       lastWritten.current = null;
+      pendingWrite.current = null;
+      writeSequence.current++;
+      unsaved.current = false;
+      setSaveError(null);
       selectedTableRef.current = null;
     }
-    if (content === lastWritten.current) return;
+    if (unsaved.current || content === pendingWrite.current || content === lastWritten.current) return;
     if (!content.trim()) { adopt(null, null); return; }
     const parsed = parseDb(content, title);
     adopt(parsed.db, parsed.error);
@@ -192,8 +200,10 @@ export function DbSurface({ path, content }: SurfaceProps) {
   useEffect(() => {
     return window.electronAPI.onNotesChanged((event, changed) => {
       if (changed !== path || event === 'unlink') return;
+      const sequence = writeSequence.current;
       void window.electronAPI.readNote(path).then((text) => {
-        if (text.startsWith('Error:') || text === lastWritten.current) return;
+        if (activePath.current !== path || sequence !== writeSequence.current || unsaved.current
+          || text.startsWith('Error:') || text === pendingWrite.current || text === lastWritten.current) return;
         const parsed = parseDb(text, title);
         adopt(parsed.db, parsed.error);
       });
@@ -202,11 +212,30 @@ export function DbSurface({ path, content }: SurfaceProps) {
 
   // stage: update UI while typing; write: serialize the whole doc to disk.
   const stageDb = (next: DbFile) => { dbRef.current = next; setDbState(next); };
-  const writeDb = (next: DbFile) => {
+  const writeDb = async (next: DbFile) => {
     stageDb(next);
     const text = serializeDb(next);
-    lastWritten.current = text;
-    void window.electronAPI.writeNote(path, text);
+    const sequence = ++writeSequence.current;
+    unsaved.current = true;
+    // Watcher IPC can beat the write reply; keep its echo separate from confirmed saves.
+    pendingWrite.current = text;
+    try {
+      const result = await window.electronAPI.writeNote(path, text);
+      if (sequence !== writeSequence.current) return;
+      pendingWrite.current = null;
+      if (result.success) {
+        lastWritten.current = text;
+        // Only a write in flight or a failed one holds off reloads from disk.
+        unsaved.current = false;
+        setSaveError(null);
+      } else {
+        setSaveError(result.error ?? 'Unknown error');
+      }
+    } catch (error) {
+      if (sequence !== writeSequence.current) return;
+      pendingWrite.current = null;
+      setSaveError(error instanceof Error ? error.message : String(error));
+    }
   };
   const replaceTable = (next: DbTable) => updateDbTable(dbRef.current!, selectedTableRef.current!, next);
   const stage = (next: DbTable) => stageDb(replaceTable(next));
@@ -466,6 +495,15 @@ export function DbSurface({ path, content }: SurfaceProps) {
   }
 
   // --- Empty / invalid states -------------------------------------------------
+  const saveNotice = saveError && (
+    <div role="alert" className="flex items-center gap-3 border-b border-[var(--divider)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--danger)]">
+      {/* Retry first: the message carries a full path, and a long one pushed the
+          button under the floating graph. */}
+      <button type="button" className="interactive shrink-0 rounded px-2 py-1 font-medium hover:bg-[var(--surface-hover)]" onClick={() => { if (dbRef.current) void writeDb(dbRef.current); }}>Retry</button>
+      <span className="min-w-0 truncate" title={saveError}>Couldn't save {path.split(/[\\/]/).pop()}: {saveError}</span>
+    </div>
+  );
+
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-xs text-[var(--ink-muted)]" role="alert">
@@ -485,7 +523,12 @@ export function DbSurface({ path, content }: SurfaceProps) {
     );
   }
 
-  if (Object.keys(db.tables).length > 1 && !doc) return <SchemaOverview db={db} onOpen={selectTable} />;
+  if (Object.keys(db.tables).length > 1 && !doc) return (
+    <div className="flex h-full flex-col">
+      {saveNotice}
+      <div className="min-h-0 flex-1"><SchemaOverview db={db} onOpen={selectTable} /></div>
+    </div>
+  );
   if (!doc) return null;
 
   const { order, properties } = doc.schema;
@@ -571,6 +614,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
 
   return (
     <main className={`font-sans h-full ${virtual ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--canvas)] text-[var(--ink)]`}>
+      {saveNotice}
       <div className={`mx-auto max-w-6xl px-6 py-6 vw-content space-y-3 ${virtual ? 'flex h-full min-h-0 flex-col' : ''}`}>
         <div className="flex flex-wrap items-center gap-2">
           {tableCount > 1 && <Button variant="ghost" size="sm" onClick={() => selectTable(null)} aria-label="Back to schema overview"><ArrowLeft /> Schema</Button>}

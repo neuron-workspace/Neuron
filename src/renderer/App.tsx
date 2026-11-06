@@ -27,7 +27,7 @@ import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
-import { EDIT_MODES, type EditMode } from './surfaces/panels';
+import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
@@ -703,10 +703,22 @@ export default function App() {
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
         case 'toggle-graph': toggleGraphOverlay(); break;
+        case 'toggle-fullscreen': void window.electronAPI.windowControls.toggleFullScreen(); break;
       }
     };
+    // Capture before terminals/editors consume the palette chord; Settings can
+    // still record shortcuts in its earlier window capture listener.
+    const capturePalette = (event: KeyboardEvent) => {
+      if (!document.body.classList.contains('window-fullscreen') || eventToChord(event) !== bindings.palette) return;
+      event.stopPropagation();
+      handler(event);
+    };
+    document.addEventListener('keydown', capturePalette, true);
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', capturePalette, true);
+      window.removeEventListener('keydown', handler);
+    };
   }, [bindings, requestCreate, createSurfaceFile, openWebsite, patchLayout]);
 
   const saveLabel = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' }[saveState];
@@ -736,7 +748,7 @@ export default function App() {
   const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
 
   const editorHeader = (
-    <header className="pane-header flex items-center justify-between border-b">
+    <header className="pane-header editor-tab-header flex items-center justify-between border-b">
       <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
       {selectedNote && Surface ? (
           <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
@@ -759,6 +771,10 @@ export default function App() {
                 was invisible while this was a dropdown and the other a row of
                 text; giving them the same shape is what showed it. */}
             {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
+            {/* In a layout workspace the editor panel owns the view mode and
+                renders its switch into this slot, so it shares the tab row
+                instead of taking a row of its own. */}
+            {shellConfig && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
           </div>
       ) : null}
     </header>
@@ -792,15 +808,20 @@ export default function App() {
   ) : (
     // What used to be a blank "Choose a note to begin" panel. Nothing selected
     // means the explorer at the workspace root; the tabs, if any, are untouched.
-    <WorkspaceExplorer
-      repositoryName={explorerState.repositoryName}
-      paths={explorerState.paths}
-      folder={explorerState.folder}
-      onNavigate={explorerState.navigate}
-      onOpenFile={explorerState.openFile}
-      recents={explorerState.recents}
-      onClearRecents={explorerState.clearRecents}
-    />
+    <div className="flex h-full w-full flex-col">
+      {editorHeader}
+      <div className="min-h-0 flex-1">
+        <WorkspaceExplorer
+          repositoryName={explorerState.repositoryName}
+          paths={explorerState.paths}
+          folder={explorerState.folder}
+          onNavigate={explorerState.navigate}
+          onOpenFile={explorerState.openFile}
+          recents={explorerState.recents}
+          onClearRecents={explorerState.clearRecents}
+        />
+      </div>
+    </div>
   );
 
   let mainContent: React.ReactNode;
@@ -959,6 +980,10 @@ export default function App() {
           onCreateSection={createSectionFolder}
         />
         <CommandPalette
+          recents={recents}
+          onOpenRepo={openRepository}
+          onCreateRepo={createRepository}
+          onSwitchRepo={switchRepository}
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
           notes={notes}

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, PenLine, SplitSquareHorizontal } from 'lucide-react';
 import { Segmented, type SegmentedOption } from '../components/ui/segmented';
 import Editor from '../components/Editor';
@@ -74,6 +75,10 @@ export type EditMode = 'reading' | 'live' | 'split';
 /** The one place the three view modes are named, shared with App's own switch
     so a note does not offer "Reading view" in one shell and "reading" in the
     other. */
+/** Element id of the slot in App's tab row that the editor panel's view-mode
+    switch renders into, so it costs no row of its own. */
+export const EDITOR_MODE_SLOT = 'editor-mode-slot';
+
 export const EDIT_MODES: SegmentedOption<EditMode>[] = [
   { value: 'reading', label: 'Reading', icon: <Eye className="h-3.5 w-3.5" /> },
   { value: 'live', label: 'Live', icon: <PenLine className="h-3.5 w-3.5" /> },
@@ -101,6 +106,10 @@ function EditorPanel({ surface }: PanelContext) {
   const { selectedNote, noteContent, onChangeNote, colorScheme } = surface;
   const [modes, setModes] = useState<Record<string, EditMode>>({});
   const explorer = useExplorer();
+  // App renders the slot in the same commit, so it is found after mount; a
+  // layout that places the editor where no tab row exists keeps its own row.
+  const [modeSlot, setModeSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setModeSlot(document.getElementById(EDITOR_MODE_SLOT)); }, [selectedNote]);
 
   const isNote = !!selectedNote && /\.(md|mdx)$/.test(selectedNote);
   // Plain-text workspace files -- .neuron/layout.json above all -- are editable
@@ -142,11 +151,13 @@ function EditorPanel({ surface }: PanelContext) {
   const notePaths = surface.notesData.map((note) => note.path);
   const openNote = surface.onSelectNote;
 
+  const modeSwitch = <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />;
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center border-b border-[var(--divider)] px-2 py-1.5">
-        <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />
-      </div>
+      {modeSlot?.isConnected
+        ? createPortal(modeSwitch, modeSlot)
+        : <div className="flex items-center border-b border-[var(--divider)] px-2 py-1.5">{modeSwitch}</div>}
       <div className="min-h-0 flex-1">
         {mode === 'reading' && (
           <div className="h-full overflow-auto" onDoubleClick={() => setMode('live')}>

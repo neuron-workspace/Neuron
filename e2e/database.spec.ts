@@ -1,5 +1,5 @@
 import { test, expect, openNote } from './fixtures';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 // A .db view stores its sort and filter in the file. This checks they come back
@@ -42,3 +42,35 @@ test('database sort and filter settings survive closing and reopening the file',
 function firstTitleCell(page: import('@playwright/test').Page) {
   return page.locator('table tbody tr').first().locator('td').nth(1).locator('input.vw-cell');
 }
+
+test('database keeps a failed edit and saves it when retried', async ({ page, workspace }) => {
+  await openNote(page, 'Planner.db');
+  await page.getByRole('button', { name: 'Open Tasks table' }).click();
+  const cell = firstTitleCell(page);
+  await expect(cell).toBeVisible();
+
+  const dbFile = join(workspace, 'Planner.db');
+  // Saves go through `<file>.tmp` and a rename. A directory in that spot makes
+  // the save fail on every platform; a read-only file would not, because the
+  // rename replaces it.
+  const blocker = `${dbFile}.tmp`;
+  const before = readFileSync(dbFile, 'utf-8');
+  const edited = 'Save failure retry regression';
+  try {
+    mkdirSync(blocker);
+    await cell.fill(edited);
+    await cell.blur();
+
+    const errorBar = page.getByRole('alert').filter({ hasText: "Couldn't save Planner.db:" });
+    await expect(errorBar).toBeVisible();
+    await expect(cell).toHaveValue(edited);
+    expect(readFileSync(dbFile, 'utf-8')).toBe(before);
+
+    rmSync(blocker, { recursive: true, force: true });
+    await errorBar.getByRole('button', { name: 'Retry' }).click();
+    await expect(errorBar).toBeHidden();
+    await expect.poll(() => readFileSync(dbFile, 'utf-8')).toContain(edited);
+  } finally {
+    rmSync(blocker, { recursive: true, force: true });
+  }
+});

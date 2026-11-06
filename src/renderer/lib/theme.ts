@@ -105,6 +105,14 @@ export function applyTheme(appearance: Appearance): void {
   root.style.setProperty('color-scheme', themePreset.colorScheme);
   root.setAttribute('data-theme', themePreset.colorScheme);
 
+  const api = window.electronAPI;
+  if (api?.platform === 'win32' || api?.platform === 'linux') {
+    void api.windowControls.setOverlayColors({
+      color: themePreset.tokens['--nav'],
+      symbolColor: themePreset.tokens['--ink'],
+    }).catch((error) => console.error('Failed to update window overlay colors:', error));
+  }
+
   for (const field of MARKDOWN_FIELDS) {
     const override = appearance.markdownOverrides[field.key];
     if (override) root.style.setProperty(field.cssVar, override);
