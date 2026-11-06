@@ -3,6 +3,7 @@ import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, C
 import type { WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
+import { parentFolder, sharedName } from './TitleBar';
 import { formatChord, type Bindings } from '../lib/keybindings';
 
 /**
@@ -76,6 +77,7 @@ export default function CommandPalette({ layout, onLayoutChange, onResetLayout, 
           {recents.map((repo) => (
             <CommandItem key={repo.path} value={'Switch workspace: ' + repo.name + ' ' + repo.path} onSelect={() => { close(); onSwitchRepo(repo.path); }}>
               <FolderOpen /> Switch workspace: {repo.name}
+              {sharedName(recents, repo) && <span className="ml-1 truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
             </CommandItem>
           ))}
         </CommandGroup>

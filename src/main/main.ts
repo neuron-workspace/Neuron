@@ -10,6 +10,7 @@ import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
+import { folderKey, uniqueRecents } from './recentRepos';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
@@ -152,10 +153,18 @@ function activeRepoPath(): string | null {
 
 const CLOUD_HINTS = ['onedrive', 'dropbox', 'google drive', 'icloud', 'box sync'];
 
+function demoRepoPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'examples', 'demo-repo')
+    : path.join(process.cwd(), 'examples', 'demo-repo');
+}
+
 function repoInfo(dir: string) {
   const lower = dir.toLowerCase();
   const names = readSettings().repositories.names ?? {};
-  const base = path.basename(dir) || dir;
+  // The bundled demo is always in the list, and a workspace copied from it is
+  // usually a folder called demo-repo too: two rows reading "demo-repo".
+  const base = folderKey(dir) === folderKey(demoRepoPath()) ? 'Demo workspace' : path.basename(dir) || dir;
   return {
     path: dir,
     name: names[dir] || base,
@@ -167,17 +176,16 @@ function repoInfo(dir: string) {
 function ensureDefaultRepo(): void {
   const settings = readSettings();
   const isDir = (p: string) => fs.existsSync(p) && fs.statSync(p).isDirectory();
-  const demo = app.isPackaged
-    ? path.join(process.resourcesPath, 'examples', 'demo-repo')
-    : path.join(process.cwd(), 'examples', 'demo-repo');
+  const demo = demoRepoPath();
   const demoExists = isDir(demo);
 
-  // Prune repositories whose folders no longer exist (e.g. renamed/removed).
-  settings.repositories.recent = settings.repositories.recent.filter(isDir);
+  // Prune repositories whose folders no longer exist (e.g. renamed/removed),
+  // and collapse entries that are the same folder spelled differently.
+  settings.repositories.recent = uniqueRecents(settings.repositories.recent.filter(isDir), null);
 
   // Always keep the bundled demo repository in the recents list so it stays
   // discoverable on the Repositories page, even after other repos are opened.
-  if (demoExists && !settings.repositories.recent.includes(demo)) {
+  if (demoExists && !settings.repositories.recent.some((p) => folderKey(p) === folderKey(demo))) {
     settings.repositories.recent = [...settings.repositories.recent, demo];
   }
 
@@ -195,7 +203,7 @@ function ensureDefaultRepo(): void {
 function setActiveRepo(dir: string): void {
   const settings = readSettings();
   settings.repositories.current = dir;
-  settings.repositories.recent = [dir, ...settings.repositories.recent.filter((p) => p !== dir)].slice(0, 8);
+  settings.repositories.recent = [dir, ...uniqueRecents(settings.repositories.recent, dir)].slice(0, 8);
   writeSettings(settings);
   revokeAllViewSessions(); // HTMX view tokens are workspace-bound
   // The shell's working directory is fixed when it starts, and since the panel
@@ -399,9 +407,11 @@ ipcMain.handle('repository:get-current', () => {
   return dir ? repoInfo(dir) : null;
 });
 
+// The open workspace is not "recent": the switcher already shows it on its
+// button, and listing it again underneath was the name appearing twice.
 ipcMain.handle('repository:list-recent', () => {
   const recent = readSettings().repositories.recent;
-  return recent.filter((p) => fs.existsSync(p)).map(repoInfo);
+  return uniqueRecents(recent.filter((p) => fs.existsSync(p)), activeRepoPath()).map(repoInfo);
 });
 
 ipcMain.handle('repository:create', async () => {

@@ -57,6 +57,16 @@ function IconButton({ label, active, onClick, children }: { label: string; activ
   );
 }
 
+/** Two different folders with the same name need their location to tell them apart. */
+export function sharedName(recents: RepositoryInfo[], repo: RepositoryInfo): boolean {
+  return recents.some((other) => other.path !== repo.path && other.name === repo.name);
+}
+
+export function parentFolder(dir: string): string {
+  const parts = dir.split(/[\\/]+/).filter(Boolean);
+  return parts.slice(-3, -1).join('/');
+}
+
 export default function TitleBar(props: TitleBarProps) {
   const { repository, recents, activeNote } = props;
   // Scope native overlay safe areas and macOS typography to the host.
@@ -131,9 +141,10 @@ export default function TitleBar(props: TitleBarProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Recent</DropdownMenuLabel>
                 {recents.map((repo) => (
-                  <DropdownMenuItem key={repo.path} onClick={() => props.onSwitchRepo(repo.path)}>
+                  <DropdownMenuItem key={repo.path} title={repo.path} onClick={() => props.onSwitchRepo(repo.path)}>
                     <FolderGit2 className="h-4 w-4" />
                     <span className="truncate">{repo.name}</span>
+                    {sharedName(recents, repo) && <span className="truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
                     {repo.cloud && <Cloud className="ml-auto h-3 w-3 text-[var(--ink-muted)]" />}
                   </DropdownMenuItem>
                 ))}
