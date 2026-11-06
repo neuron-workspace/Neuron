@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
+import { realpathSync } from 'node:fs';
 
 // The shell and the terminal must agree on the width. When they did not -- the
 // first fit ran before the panel and its font were ready, and every pixel of a
@@ -38,9 +39,12 @@ async function shellWidth(page: Page, previous: number): Promise<number> {
 // split across two rows. PowerShell's prompt carries the working directory, so
 // the workspace path must sit whole on one row -- after a cold first open in a
 // panel that animates in from nothing, and after a drag of rapid resizes.
-test('the prompt path is never split, on first open and after a drag of resizes', async ({ app, page, workspace }) => {
+test('the prompt path is never split, on first open and after a drag of resizes', async ({ app, page, workspace: given }) => {
   test.skip(!win, 'Only the PowerShell prompt carries the path');
   test.setTimeout(120_000);
+  // CI's temp directory is an 8.3 short path (RUNNER~1); the prompt prints the
+  // long one, so compare against what the shell will actually show.
+  const workspace = realpathSync.native(given);
   await page.getByRole('button', { name: 'Plugins & integrations', exact: true }).first().click();
   await page.getByPlaceholder('Search plugins').fill('Workspace Terminal');
   await page.getByRole('switch', { name: 'Enable Workspace Terminal' }).check();

@@ -19,7 +19,9 @@ async function waitForShortcuts(page: Page) {
   await page.getByRole('button', { name: /Search & commands/ }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await page.keyboard.press('Escape');
+  // At the input, not the page: under Linux's xvfb a page-level Escape did not
+  // reach the dialog and it stayed open.
+  await dialog.getByRole('combobox').press('Escape');
   await expect(dialog).toBeHidden();
 }
 
