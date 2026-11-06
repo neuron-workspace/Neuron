@@ -19,10 +19,14 @@ async function waitForShortcuts(page: Page) {
   await page.getByRole('button', { name: /Search & commands/ }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  // At the input, not the page: under Linux's xvfb a page-level Escape did not
-  // reach the dialog and it stayed open.
-  await dialog.getByRole('combobox').press('Escape');
-  await expect(dialog).toBeHidden();
+  // Close it with the shortcut, which toggles: once that works, the keydown
+  // handler is attached, which is the thing being waited for. (Escape did not
+  // close the dialog under Linux's xvfb, so it proves nothing there.)
+  await expect.poll(async () => {
+    if (await dialog.isVisible()) await page.keyboard.press(paletteShortcut);
+    await page.waitForTimeout(200);
+    return dialog.isVisible();
+  }, { timeout: 15_000 }).toBe(false);
 }
 
 async function paletteCommand(page: Page, command: string) {
