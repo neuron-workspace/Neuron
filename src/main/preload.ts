@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     history: (id: number) => ipcRenderer.invoke('terminal:history', id),
     write: (id: number, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: number, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    windowsPty: () => ipcRenderer.invoke('terminal:windows-pty'),
     kill: (id: number) => ipcRenderer.invoke('terminal:kill', id),
     onData: (callback: (id: number, data: string) => void) => {
       const listener = (_event: unknown, id: number, data: string) => callback(id, data);

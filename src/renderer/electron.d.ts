@@ -142,6 +142,8 @@ export interface ElectronAPI {
     history: (id: number) => Promise<string>;
     write: (id: number, data: string) => Promise<void>;
     resize: (id: number, cols: number, rows: number) => Promise<void>;
+    /** ConPTY details on Windows, for xterm's `windowsPty` option; null elsewhere. */
+    windowsPty: () => Promise<{ backend: 'conpty'; buildNumber: number } | null>;
     kill: (id: number) => Promise<void>;
     onData: (callback: (id: number, data: string) => void) => () => void;
     onExit: (callback: (id: number, exitCode: number) => void) => () => void;

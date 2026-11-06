@@ -20,6 +20,7 @@ import { configureCrashReporter } from './crash-reporter';
 import { workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { watchWorkspace } from './workspace-watcher';
 import { exec } from 'child_process';
@@ -861,6 +862,15 @@ ipcMain.handle('terminal:write', (_event, id: number, data: string) => {
 
 ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: number) => {
   try { ptys.get(id)?.resize(Math.max(1, cols), Math.max(1, rows)); } catch { /* pty closed */ }
+});
+// ConPTY wraps long lines itself. xterm.js reflows them again on resize unless
+// told it is attached to ConPTY -- which is what split a prompt path across two
+// lines after narrowing the panel. node-pty uses ConPTY on every Windows build
+// Electron 42 supports, so the build number is all the renderer needs.
+ipcMain.handle('terminal:windows-pty', () => {
+  if (process.platform !== 'win32') return null;
+  const buildNumber = Number(os.release().split('.')[2]);
+  return Number.isFinite(buildNumber) ? { backend: 'conpty' as const, buildNumber } : null;
 });
 
 ipcMain.handle('terminal:kill', (_event, id: number) => {

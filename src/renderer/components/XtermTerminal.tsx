@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { registerTerminalWriter } from '../lib/terminal-bus';
+import { createResizeSync } from '../lib/terminal-resize';
 
 // Fixed dark terminal palette. The app's theme tokens are oklch, which
 // xterm's color parser doesn't accept — and terminals read fine dark everywhere.
@@ -58,7 +59,25 @@ export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?:
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
-    try { fit.fit(); } catch { /* not laid out yet */ }
+
+    const resizeSync = createResizeSync((cols, rows) => {
+      if (ptyId != null) void window.electronAPI.terminal.resize(ptyId, cols, rows);
+    });
+    // Fit only to a real size. A hidden or collapsing panel measures 0x0, and
+    // fitting to that gives a shell a nonsense width.
+    const fitNow = () => {
+      if (disposed || container.clientWidth === 0 || container.clientHeight === 0) return;
+      try { fit.fit(); } catch { return; }
+      // Read by the e2e tests, which compare it with the width the shell reports.
+      container.dataset.cols = String(term.cols);
+      container.dataset.rows = String(term.rows);
+      resizeSync.request(term.cols, term.rows);
+    };
+    let frame: number | null = null;
+    const scheduleFit = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => { frame = null; fitNow(); });
+    };
 
     const offData = window.electronAPI.terminal.onData((id, data) => {
       if (id !== ptyId) return;
@@ -72,29 +91,55 @@ export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?:
       if (ptyId != null) void window.electronAPI.terminal.write(ptyId, data);
     });
 
-    const attach = () => void window.electronAPI.terminal.spawn({ cols: term.cols, rows: term.rows, key: sessionKey }).then(async (id) => {
-      if (disposed) return;
-      // Fetch and replay BEFORE claiming the id. `onData` ignores anything that
-      // is not for `ptyId`, so until it is set the live stream is dropped --
-      // which is what we want here: main has already folded those same bytes
-      // into the history we are about to write. Claiming the id first would
-      // write them live and then write them a second time as part of the
-      // replay.
-      const history = await window.electronAPI.terminal.history(id);
-      if (disposed) return;
-      if (history) term.write(history);
-      ptyId = id;
-      // A shell with history behind it has already announced itself, so the
-      // queue can drain now. Only a genuinely fresh one waits for its prompt.
-      if (history) publishWriter();
-      else readyTimer = setTimeout(publishWriter, 5000);
-      term.focus();
-    }).catch((error: Error) => {
-      if (disposed) return;
-      term.write(`\x1b[31m${String(error?.message ?? error)}\x1b[0m\r\n`);
-    });
+    const attach = () => {
+      const cols = term.cols;
+      const rows = term.rows;
+      void window.electronAPI.terminal.spawn({ cols, rows, key: sessionKey }).then(async (id) => {
+        if (disposed) return;
+        // The pty starts (or is resized to) this size, so that is already sent;
+        // anything that changed while it was spawning goes through below.
+        resizeSync.markSent(cols, rows);
+        // Fetch and replay BEFORE claiming the id. `onData` ignores anything that
+        // is not for `ptyId`, so until it is set the live stream is dropped --
+        // which is what we want here: main has already folded those same bytes
+        // into the history we are about to write. Claiming the id first would
+        // write them live and then write them a second time as part of the
+        // replay.
+        const history = await window.electronAPI.terminal.history(id);
+        if (disposed) return;
+        if (history) term.write(history);
+        ptyId = id;
+        // A shell with history behind it has already announced itself, so the
+        // queue can drain now. Only a genuinely fresh one waits for its prompt.
+        if (history) publishWriter();
+        else readyTimer = setTimeout(publishWriter, 5000);
+        fitNow();
+        term.focus();
+      }).catch((error: Error) => {
+        if (disposed) return;
+        term.write(`\x1b[31m${String(error?.message ?? error)}\x1b[0m\r\n`);
+      });
+    };
 
-    attach();
+    // The first fit used to run straight after open(), before the panel had its
+    // final size and before JetBrains Mono had loaded, so the shell started at a
+    // width measured with the fallback font -- the first prompt laid out wrong.
+    // Wait for both, briefly, and never for ever.
+    const settle = async () => {
+      const windowsPty = await window.electronAPI.terminal.windowsPty().catch(() => null);
+      if (windowsPty) term.options.windowsPty = windowsPty;
+      await Promise.race([
+        document.fonts.load('13px "JetBrains Mono"').catch(() => undefined),
+        new Promise((resolve) => setTimeout(resolve, 1000)),
+      ]);
+      for (let i = 0; i < 60 && !disposed && (container.clientWidth === 0 || container.clientHeight === 0); i++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      if (disposed) return;
+      fitNow();
+      attach();
+    };
+    void settle();
 
     // Opening a different workspace ends the shell, because a shell cannot
     // change the directory it was started in. Start a fresh one rooted in the
@@ -110,14 +155,15 @@ export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?:
       attach();
     });
 
-    const ro = new ResizeObserver(() => {
-      try { fit.fit(); } catch { /* hidden */ }
-      if (ptyId != null) void window.electronAPI.terminal.resize(ptyId, term.cols, term.rows);
-    });
+    // One fit per frame however often the observer fires; the shell itself
+    // hears only about real changes, once a drag settles (createResizeSync).
+    const ro = new ResizeObserver(scheduleFit);
     ro.observe(container);
 
     return () => {
       disposed = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      resizeSync.dispose();
       if (readyTimer) clearTimeout(readyTimer);
       unregister?.();
       ro.disconnect();
