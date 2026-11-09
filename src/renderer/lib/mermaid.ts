@@ -14,6 +14,10 @@ export async function renderMermaid(id: string, source: string, colorScheme: Mer
     startOnLoad: false,
     securityLevel: 'strict',
     theme: colorScheme === 'dark' ? 'dark' : 'default',
+    // Mermaid 12 made ELK the default layout and changed the default look, so
+    // every existing diagram would re-lay out and recolour. Keep how they drew.
+    layout: 'dagre',
+    look: 'classic',
   });
   return (await mermaid.render(id, source)).svg;
 }
