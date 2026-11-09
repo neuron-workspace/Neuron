@@ -984,7 +984,7 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar repositoryName={repository?.name ?? null} activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
         </div>
 
         <CreateModal
