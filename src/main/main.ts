@@ -274,10 +274,17 @@ function createWindow() {
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
     : path.join(process.cwd(), 'build', 'icon.png');
+  // Set only by e2e/fixtures.ts: a test run opens a hundred windows, and each one
+  // used to land on top of whatever the developer was doing and take the
+  // keyboard. In this mode the window is placed off-screen and shown without
+  // focus. It must still render and run timers at full speed while nobody can
+  // see it, or tests that wait on a frame would stall.
+  const testInBackground = !app.isPackaged && process.env.NEURON_E2E_BACKGROUND === '1';
 
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 860,
+    ...(testInBackground ? { x: -32000, y: -32000, show: false } : {}),
     minWidth: 720,
     minHeight: 560,
     title: 'Neuron',
@@ -295,9 +302,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true, // enables in-app browser tabs (<webview>)
+      ...(testInBackground ? { backgroundThrottling: false } : {}),
     },
     backgroundColor: '#11181c',
   });
+  if (testInBackground) mainWindow.once('ready-to-show', () => mainWindow?.showInactive());
 
   // Windows and Linux hide Electron's default menu bar entirely; the in-app
   // title bar is the menu there. On macOS the menu bar is not part of the
