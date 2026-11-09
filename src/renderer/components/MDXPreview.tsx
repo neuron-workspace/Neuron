@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react';
 import { AlertCircle, ArrowUpRight, Link2, FileWarning } from 'lucide-react';
 import { Badge, Callout, parseSemanticType } from './mdx-components';
 import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
@@ -6,10 +6,12 @@ import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard } from './mdx-layout';
 import DocumentProperties from './properties/DocumentProperties';
-import { isFullWidth, parseFrontmatter } from '../lib/frontmatter';
+import { applyFrontmatter, isFullWidth, parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
 import { safeUrl } from '../lib/view-security';
 import MermaidDiagram from './MermaidDiagram';
+import { LiveBlock, LiveText, type BlockDraft, type LiveEditing, type SourceRange } from './LiveEditing';
+import { replaceLines, splitLinePrefix } from '../lib/live-edit';
 
 // Links read as one object rather than as underlined text: an icon says where
 // it goes before you read the label, and the pill gives it an edge to click.
@@ -28,6 +30,10 @@ const BROKEN_PILL =
 
 interface MDXPreviewProps {
   mdxContent: string;
+  editable?: boolean;
+  onChangeSource?: (next: string) => void;
+  onRequestRawMode?: () => void;
+  removeEmptyFrontmatter?: boolean;
   colorScheme?: 'light' | 'dark';
   onLineClick?: (lineIndex: number) => void;
   showProperties?: boolean;
@@ -94,59 +100,79 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false }: MDXPreviewProps) {
-  const [renderedContent, setRenderedContent] = useState<React.ReactNode[]>([]);
-  const [compilationError, setCompilationError] = useState<{
-    message: string;
-    block: string;
-    remediation: string;
-  } | null>(null);
-
-  // Strip the leading frontmatter block so it never renders as stray text or a
-  // horizontal rule. Line clicks are offset back to the original document.
+export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false, editable = false, onChangeSource, onRequestRawMode, removeEmptyFrontmatter = true }: MDXPreviewProps) {
+  const [blankLine, setBlankLine] = useState<number | null>(null);
+  const [active, setActive] = useState<BlockDraft | null>(null);
+  const activeRef = useRef(active);
+  const sourceRef = useRef(mdxContent);
+  sourceRef.current = mdxContent;
+  const article = useRef<HTMLElement>(null);
+  const pendingFocus = useRef<{ line: number; end: boolean } | null>(null);
   const fm = useMemo(() => parseFrontmatter(mdxContent), [mdxContent]);
   const fmLineOffset = fm.hasFrontmatter ? (mdxContent.slice(0, fm.bodyStart).match(/\n/g)?.length ?? 0) : 0;
   const lineClick = (index: number) => onLineClick?.(index + fmLineOffset);
   const wikiNotes = useMemo(() => buildWikiIndex(notes), [notes]);
+  const updateActive = (next: BlockDraft | null) => { activeRef.current = next; setActive(next); };
+  const changeSource = (next: string) => {
+    if (next === sourceRef.current) return;
+    sourceRef.current = next;
+    onChangeSource?.(next);
+  };
+  const changeRange = ({ startLine, endLine }: SourceRange, value: string | string[]) => {
+    const current = sourceRef.current;
+    const parsed = parseFrontmatter(current);
+    const front = current.slice(0, parsed.bodyStart);
+    const offset = (front.match(/\n/g)?.length ?? 0) + (front && !front.endsWith('\n') ? 1 : 0);
+    const next = replaceLines(current, offset, startLine, endLine, value);
+    const delta = next.split('\n').length - current.split('\n').length;
+    const draft = activeRef.current;
+    if (draft && endLine < draft.startLine) updateActive({ ...draft, startLine: draft.startLine + delta, endLine: draft.endLine + delta });
+    changeSource(next);
+  };
+  const finish = (commit: boolean) => {
+    const draft = activeRef.current;
+    updateActive(null);
+    if (commit && draft && draft.draft !== draft.source) changeRange(draft, draft.draft);
+  };
+  const editing: LiveEditing = {
+    active, colorScheme, finish, change: changeRange,
+    draft: (draft) => { if (activeRef.current) updateActive({ ...activeRef.current, draft }); },
+    focus: (line, end = false) => { pendingFocus.current = { line, end }; setBlankLine(line); },
+    open: (range) => {
+      const previous = activeRef.current;
+      const before = sourceRef.current;
+      finish(true);
+      const delta = sourceRef.current.split('\n').length - before.split('\n').length;
+      const shift = previous && previous.endLine < range.startLine ? delta : 0;
+      const startLine = range.startLine + shift;
+      const endLine = range.endLine + shift;
+      const source = parseFrontmatter(sourceRef.current).body.split(/\r?\n/).slice(startLine, endLine + 1).join('\n');
+      updateActive({ startLine, endLine, source, draft: source });
+    },
+  };
+  useLayoutEffect(() => {
+    const requested = pendingFocus.current;
+    if (!requested) return;
+    const element = article.current?.querySelector<HTMLElement>('[data-live-line="' + requested.line + '"]');
+    if (!element) return;
+    pendingFocus.current = null;
+    element.focus();
+    const range = document.createRange();
+    range.selectNodeContents(element); range.collapse(!requested.end);
+    const selection = window.getSelection();
+    selection?.removeAllRanges(); selection?.addRange(range);
+  });
 
-  useEffect(() => {
-    setCompilationError(null);
-    try {
-      const parsedBlocks = parseMDX(fm.body);
-      setRenderedContent(parsedBlocks);
-    } catch (caughtError: unknown) {
-      const error = normalizeError(caughtError);
-      const errorMessage = error.message || 'Unknown parsing error';
-      const errorBlock = error.block || '';
-      const remediation = error.remediation || 'Check syntax format and balance JSX tags.';
-
-      setCompilationError({
-        message: errorMessage,
-        block: errorBlock,
-        remediation: remediation,
-      });
-
-      // To the diagnostic log under the app's logs directory, via IPC. This
-      // used to name .agents/errors.json, which was gitignored tooling that
-      // never shipped and was resolved against the process working directory.
-      // The message embeds the offending block, so the main side redacts style
-      // and code content before it reaches disk.
-      if (window.electronAPI && window.electronAPI.logError) {
-        window.electronAPI.logError({
-          phase: 'COMPILATION',
-          error_message: `${errorMessage} inside block: "${errorBlock}"`,
-          stack_trace: error.stack || 'No stack trace available',
-          remediation_step: remediation,
-        });
-      }
-    }
-  }, [colorScheme, fm.body, wikiNotes, onWikiLinkClick]);
+  function block(node: ReactElement, startLine: number, endLine: number, canEdit: boolean, name?: string, trailing?: React.ReactNode) {
+    return canEdit ? <LiveBlock key={'block-' + startLine} range={{ startLine, endLine }} editing={editing} name={name} trailing={trailing}>{node}</LiveBlock> : node;
+  }
 
   // Parsing helper to split and evaluate markdown vs custom components
-  function parseMDX(content: string): React.ReactNode[] {
-    const lines = content.split('\n');
+  function parseMDX(content: string, canEdit = editable): React.ReactNode[] {
+    const lines = content.split(/\r?\n/);
     const nodes: React.ReactNode[] = [];
     let i = 0;
+    let trailingParagraph = false;
 
     while (i < lines.length) {
       const line = lines[i];
@@ -179,7 +205,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           i++;
         }
         const codeText = codeLines.join('\n');
-        nodes.push(lang.toLowerCase() === 'mermaid' ? (
+        nodes.push(block(lang.toLowerCase() === 'mermaid' ? (
           <div
             key={`mermaid-${i}`}
             onClick={() => lineClick(startLine)}
@@ -196,7 +222,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             {lang && <div className="mb-2 text-[10px] font-medium text-muted">{lang}</div>}
             <code>{codeText}</code>
           </pre>
-        ));
+        ), startLine, Math.min(i, lines.length - 1), canEdit));
         i++;
         continue;
       }
@@ -214,7 +240,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           i++;
         }
         const columnCount = Math.max(headers.length, tableAlignments.length);
-        nodes.push(
+        nodes.push(block(
           <div
             key={`table-${i}`}
             onClick={() => lineClick(startLine)}
@@ -254,8 +280,8 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                 ))}
               </tbody>
             </table>
-          </div>,
-        );
+          </div>, startLine, i - 1, canEdit,
+        ));
         continue;
       }
 
@@ -268,20 +294,15 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         // line): render the component, then any trailing text as a markdown line.
         const selfClose = line.trim().match(/^(<[A-Za-z0-9]+\b[^>]*\/>)\s*(.*)$/);
         if (selfClose) {
-          nodes.push(
-            <div
-              key={`jsx-${i}`}
-              onClick={(e) => {
-                if ((e.target as HTMLElement).closest('button')) return;
-                lineClick(startLine);
-              }}
-              className="cursor-pointer hover:bg-[rgba(255,255,255,0.01)] rounded transition-colors duration-150"
-            >
-              {evaluateJSX(selfClose[1], i)}
-            </div>
-          );
-          const remainder = selfClose[2].trim();
-          if (remainder) nodes.push(renderMarkdownLine(remainder, i));
+          const component = <div
+            key={`jsx-${i}`}
+            onClick={(e) => { if (!(e.target as HTMLElement).closest('button')) lineClick(startLine); }}
+            className="cursor-pointer hover:bg-[rgba(255,255,255,0.01)] rounded transition-colors duration-150"
+          >
+            {renderJSX(selfClose[1], i, canEdit)}
+          </div>;
+          nodes.push(block(component, startLine, i, canEdit, line.match(/<([A-Za-z0-9]+)/)?.[1], canEdit && selfClose[2].trim() ? renderMarkdownLine(selfClose[2].trim(), i) : null));
+          if (!canEdit && selfClose[2].trim()) nodes.push(renderMarkdownLine(selfClose[2].trim(), i));
           i++;
           continue;
         }
@@ -316,12 +337,13 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             const error = new Error(`Unclosed MDX tag: </${tagName}> is missing.`) as MDXParseError;
             error.block = malformedBlock;
             error.remediation = `Close your tag with </${tagName}>. Make sure you don't have overlapping tags.`;
-            throw error;
+            if (!canEdit) throw error;
+            i = lines.length - 1;
           }
         }
 
         const jsxString = fullJSXLines.join('\n').trim();
-        nodes.push(
+        nodes.push(block(
           <div
             key={`jsx-${startLine}`}
             onClick={(e) => {
@@ -330,21 +352,40 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             }}
             className="cursor-pointer hover:bg-[rgba(255,255,255,0.01)] rounded transition-colors duration-150"
           >
-            {evaluateJSX(jsxString, startLine)}
-          </div>
-        );
+            {renderJSX(jsxString, startLine, canEdit)}
+          </div>, startLine, i, canEdit, tagName
+        ));
         i++;
         continue;
       }
 
       // Markdown line renderings
-      if (line.trim() !== '') {
-        nodes.push(renderMarkdownLine(line, i));
+      if (line.trim() !== '' || (canEdit && (i === lines.length - 1 || blankLine === i))) {
+        nodes.push(renderLine(line, i, canEdit));
+        trailingParagraph = canEdit && i === lines.length - 1 && line.trim() === '';
       }
       i++;
     }
 
+    if (canEdit && !trailingParagraph) {
+      // A virtual trailing paragraph is written only once the user types in it.
+      nodes.push(renderLine('', lines.length, true, lines.length - 1));
+    }
     return nodes;
+  }
+
+  function renderJSX(source: string, index: number, canEdit: boolean): React.ReactNode {
+    try { return evaluateJSX(source, index); }
+    catch (error) {
+      if (!canEdit) throw error;
+      return <pre className="whitespace-pre-wrap text-sm" role="alert">{normalizeError(error).message}</pre>;
+    }
+  }
+
+  function renderLine(source: string, index: number, canEdit: boolean, endLine = index): React.ReactNode {
+    const node = renderMarkdownLine(source, index, canEdit);
+    if (!canEdit) return node;
+    return <LiveText key={index + ':' + source} source={source} range={{ startLine: index, endLine }} editing={editing}>{node}</LiveText>;
   }
 
   // Evaluates string to map dynamically into custom React elements
@@ -375,7 +416,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         const content = childrenMatch ? childrenMatch[1].trim() : '';
         return (
           <Callout key={`callout-${index}`} type={type} title={title}>
-            {content ? parseMDX(content) : null}
+            {content ? parseMDX(content, false) : null}
           </Callout>
         );
       }
@@ -412,7 +453,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         const close = `</${tag}>`;
         const end = jsxStr.lastIndexOf(close);
         const inner = end > -1 ? jsxStr.slice(jsxStr.indexOf('>') + 1, end) : '';
-        const kids = inner.trim() ? parseMDX(inner) : null;
+        const kids = inner.trim() ? parseMDX(inner, false) : null;
         return <div key={`${tag}-${index}`}>{layout[tag](attrs, kids)}</div>;
       }
 
@@ -456,11 +497,12 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   }
 
   // Simple Markdown inline style renderer
-  function renderMarkdownLine(text: string, index: number): React.ReactNode {
+  function renderMarkdownLine(text: string, index: number, canEdit = false): ReactElement {
     // 1. Headings
     if (text.startsWith('# ')) {
       return (
         <h1
+          data-live-text={canEdit || undefined}
           key={index}
           onClick={() => lineClick(index)}
           // No rule under the heading. Size and weight already separate an h1
@@ -476,6 +518,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     if (text.startsWith('## ')) {
       return (
         <h2
+          data-live-text={canEdit || undefined}
           key={index}
           onClick={() => lineClick(index)}
           className="mt-6 mb-2 font-sans text-xl font-semibold text-[var(--md-heading)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
@@ -487,6 +530,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     if (text.startsWith('### ')) {
       return (
         <h3
+          data-live-text={canEdit || undefined}
           key={index}
           onClick={() => lineClick(index)}
           className="mt-5 mb-2 font-sans text-base font-semibold text-[var(--md-heading)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
@@ -518,7 +562,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                 aria-label={checked ? 'Completed task' : 'Incomplete task'}
                 className="task-checkbox mt-1"
               />
-              <span className={checked ? 'text-[var(--ink-muted)] line-through' : undefined}>{parseInlineFormatting(task[2])}</span>
+              <span data-live-text={canEdit || undefined} className={checked ? 'text-[var(--ink-muted)] line-through' : undefined}>{parseInlineFormatting(task[2])}</span>
             </li>
           </ul>
         );
@@ -529,7 +573,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           onClick={() => lineClick(index)}
           className="my-2 list-disc space-y-1 pl-6 font-sans text-sm leading-6 text-[var(--md-text)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
         >
-          <li>{parseInlineFormatting(item)}</li>
+          <li data-live-text={canEdit || undefined}>{parseInlineFormatting(item)}</li>
         </ul>
       );
     }
@@ -538,6 +582,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     if (text.startsWith('> ')) {
       return (
         <blockquote
+          data-live-text={canEdit || undefined}
           key={index}
           onClick={() => lineClick(index)}
           className="my-4 rounded-md border border-[var(--md-quote-border)] bg-[var(--surface)] px-4 py-3 font-sans text-sm italic text-[var(--md-quote)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
@@ -565,19 +610,22 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             aria-label={checked ? 'Completed task' : 'Incomplete task'}
             className="task-checkbox mt-1"
           />
-          {standaloneTask[2] && <span className={checked ? 'text-[var(--ink-muted)] line-through' : undefined}>{parseInlineFormatting(standaloneTask[2])}</span>}
+          {(standaloneTask[2] || canEdit) && <span data-live-text={canEdit || undefined} className={checked ? 'text-[var(--ink-muted)] line-through' : undefined}>{parseInlineFormatting(standaloneTask[2])}</span>}
         </div>
       );
     }
 
+    // Prefixes that Reading displays literally still stay outside the editing region.
+    const literalPrefix = canEdit ? splitLinePrefix(text).prefix : '';
     // Standard paragraph
     return (
       <p
+        data-live-text={(canEdit && !literalPrefix) || undefined}
         key={index}
         onClick={() => lineClick(index)}
         className="my-2 font-sans text-sm leading-7 text-[var(--md-text)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
       >
-        {parseInlineFormatting(text)}
+        {literalPrefix ? <>{literalPrefix}<span data-live-text>{parseInlineFormatting(text.slice(literalPrefix.length))}</span></> : parseInlineFormatting(text)}
       </p>
     );
   }
@@ -591,22 +639,26 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     // Matches bold, italic, code, and wikilinks [[Note Name]]
     // [[wikilink]] must come before [text](url) or the wikilink's own
     // brackets match the inline-link pattern first.
-    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|\[\[.*?\]\]|\[[^\]]*\]\(\s*(?:<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"]*"|'[^']*'))?\)|<[bB][rR]\s*\/?>)/g;
+    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|!?\[\[.*?\]\]|!?\[[^\]]*\]\(\s*(?:<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"]*"|'[^']*'))?\)|<[bB][rR]\s*\/?>)/g;
     const items = currentText.split(regex);
 
     for (const item of items) {
-      if (item.startsWith('**') && item.endsWith('**')) {
+      const atomic = editable ? { contentEditable: false, 'data-md': item } : {};
+      if (item.startsWith('![')) {
+        parts.push(editable ? <span {...atomic} key={key++}>!{parseInlineFormatting(item.slice(1))}</span> : <Fragment key={key++}>!{parseInlineFormatting(item.slice(1))}</Fragment>);
+      } else if (item.startsWith('**') && item.endsWith('**')) {
         parts.push(<strong key={key++} className="font-semibold text-[var(--md-bold)]">{item.slice(2, -2)}</strong>);
       } else if (item.startsWith('*') && item.endsWith('*')) {
         parts.push(<em key={key++} className="italic text-[var(--md-text)]">{item.slice(1, -1)}</em>);
       } else if (item.startsWith('`') && item.endsWith('`')) {
-        parts.push(<code key={key++} className="rounded border border-[var(--divider)] bg-[var(--md-code-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--md-code)]">{item.slice(1, -1)}</code>);
+        parts.push(<code {...atomic} key={key++} className="rounded border border-[var(--divider)] bg-[var(--md-code-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--md-code)]">{item.slice(1, -1)}</code>);
       } else if (item.startsWith('[[') && item.endsWith(']]')) {
         const linkTarget = item.slice(2, -2);
         const resolved = resolveWikiLink(wikiNotes, linkTarget);
         parts.push(
           resolved ? (
             <button
+              {...atomic}
               key={key++}
               type="button"
               aria-label={`Open note ${resolved}`}
@@ -623,6 +675,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             </button>
           ) : (
             <span
+              {...atomic}
               key={key++}
               title={`No note found for "${linkTarget}"`}
               className={BROKEN_PILL}
@@ -649,6 +702,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             // system browser through its own guard, so this needs no bridge of
             // its own and cannot move the app frame.
             safeHref ? <a
+              {...atomic}
               key={key++}
               href={safeHref}
               title={title ?? href}
@@ -658,13 +712,14 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             >
               <ArrowUpRight className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
               {label}
-            </a> : <span key={key++} title={href}>{label}</span>,
+            </a> : <span {...atomic} key={key++} title={href}>{label}</span>,
           );
         } else {
           const resolved = resolveWikiLink(wikiNotes, href.replace(/\.(md|mdx)$/i, ''));
           parts.push(
             resolved ? (
               <button
+                {...atomic}
                 key={key++}
                 type="button"
                 aria-label={`Open note ${resolved}`}
@@ -677,7 +732,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                 {label}
               </button>
             ) : (
-              <span key={key++} title={`No note found for "${href}"`} className={BROKEN_PILL}>
+              <span {...atomic} key={key++} title={`No note found for "${href}"`} className={BROKEN_PILL}>
                 <FileWarning className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
                 {label}<span className="sr-only"> (missing note)</span>
               </span>
@@ -685,7 +740,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           );
         }
       } else if (/<[bB][rR]\s*\/?>/.test(item)) {
-        parts.push(<br key={key++} />);
+        parts.push(<br {...atomic} key={key++} />);
       } else {
         parts.push(item);
       }
@@ -694,17 +749,33 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     return parts;
   }
 
+  let renderedContent: React.ReactNode[] = [];
+  let compilationError: MDXParseError | null = null;
+  try { renderedContent = parseMDX(fm.body); }
+  catch (error) { compilationError = normalizeError(error); }
+  useEffect(() => {
+    if (!compilationError) return;
+    window.electronAPI?.logError?.({
+      phase: 'COMPILATION', error_message: compilationError.message,
+      stack_trace: compilationError.stack || 'No stack trace available',
+      remediation_step: compilationError.remediation || 'Check syntax format and balance JSX tags.',
+    });
+  }, [compilationError?.message]);
+
   return (
     // The flag goes on the scroll container rather than on each block inside
     // it, so the properties panel and the article widen together and a future
     // block cannot forget to opt in.
     <div
       className="canvas-surface h-full w-full overflow-y-auto p-7 font-sans select-text"
+      data-live-preview={editable || undefined}
       data-full-width={isFullWidth(fm.data) || undefined}
     >
-      {showProperties && fm.hasFrontmatter && (
+      {showProperties && (editable || fm.hasFrontmatter) && (
         <div className="preview-prose mx-auto mb-4">
-          <DocumentProperties doc={mdxContent} tagSuggestions={tagSuggestions} onTagClick={onTagClick} defaultCollapsed={defaultPropertiesCollapsed} hideWhenEmpty />
+          <DocumentProperties doc={mdxContent} tagSuggestions={tagSuggestions} onTagClick={onTagClick} defaultCollapsed={defaultPropertiesCollapsed}
+            onChangeDoc={editable ? (next) => changeSource(applyFrontmatter(sourceRef.current, next)) : undefined}
+            onViewRaw={editable ? onRequestRawMode : undefined} removeEmpty={removeEmptyFrontmatter} hideWhenEmpty={!editable} />
         </div>
       )}
       {compilationError ? (
@@ -724,7 +795,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           </div>
         </div>
       ) : (
-        <article className="preview-prose mx-auto space-y-3 text-[var(--md-text)]">
+        <article ref={article} className="preview-prose mx-auto space-y-3 text-[var(--md-text)]">
           {renderedContent.length > 0 ? renderedContent : (
             <div className="py-16 text-center font-mono text-sm text-muted">Nothing to preview yet.</div>
           )}

@@ -3,7 +3,6 @@ import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
-import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import Workbench from './components/Workbench';
@@ -796,7 +795,7 @@ export default function App() {
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
-            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
+            {editorMode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={handleContentChange} onToggleTask={handleToggleTask} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
             {editorMode === 'split' && rawSplit}
             {editorMode === 'reading' && (
               <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
@@ -849,6 +848,10 @@ export default function App() {
             noteContent={noteContent}
             onChangeNote={handleContentChange}
             colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'}
+            tagSuggestions={tags}
+            onTagClick={setSelectedTag}
+            removeEmptyFrontmatter={propsSettings.removeEmpty}
+            defaultPropertiesCollapsed={propsSettings.collapsedByDefault}
           />
         </div>
       </div>
