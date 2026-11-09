@@ -73,7 +73,8 @@ test('Live keeps Reading typography and component DOM without a CodeMirror docum
   await live(page);
   expect(await snapshot()).toEqual(reading);
   await expect(page.locator('.cm-editor')).toHaveCount(0);
-  await expect(prose.locator('.callout [contenteditable="true"]')).toHaveCount(0);
+  // Text written in the file is editable in place inside components too.
+  await expect(prose.locator('.callout [contenteditable="true"]').first()).toBeVisible();
   await page.getByRole('button', { name: 'Reading', exact: true }).first().click();
   await prose.locator('h1').dblclick();
   await expect(page.locator('[data-live-preview]')).toBeVisible();
@@ -203,4 +204,75 @@ test('empty notes provide an editable starting paragraph', async ({ page, worksp
   await page.keyboard.insertText('First words');
   await blur(page);
   await expect.poll(() => readFileSync(join(workspace, 'empty-live.md'), 'utf8')).toBe('First words');
+});
+
+// Text written literally in the file is editable where it is shown, inside
+// components too, without the Edit button; only data a component loads is not.
+const components = [
+  '# Components', '',
+  '<Callout title="Callout title">', 'Inside the callout.', '- [ ] inner task', '</Callout>', '',
+  '<Badge text="Badge text" />', '',
+  '| Name | Value |', '| --- | --- |', '| cell a | cell b |', '',
+  '<DbView path="@Planner.db" />', '',
+].join('\n');
+
+async function openComponents(page: Page, workspace: string) {
+  writeFileSync(join(workspace, 'components.mdx'), components);
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  await openNote(page, 'components.mdx');
+  await live(page);
+  await expect(page.locator('[data-live-preview]').getByText('Inside the callout.')).toBeVisible();
+}
+const file = (workspace: string) => readFileSync(join(workspace, 'components.mdx'), 'utf8');
+
+test('text inside a component is edited in place, without its Edit button', async ({ page, workspace }) => {
+  await openComponents(page, workspace);
+  await append(page, page.locator('.callout p[data-live-line]').filter({ hasText: 'Inside the callout.' }), ' More.');
+  await blur(page);
+  await expect.poll(() => file(workspace)).toBe(components.replace('Inside the callout.', 'Inside the callout. More.'));
+  await expect(page.locator('.live-block-editor')).toHaveCount(0);
+});
+
+test('a component title and a badge are edited in place, rewriting only that attribute', async ({ page, workspace }) => {
+  await openComponents(page, workspace);
+  const title = page.locator('.callout [contenteditable]').filter({ hasText: 'Callout title' });
+  await title.click();
+  await page.keyboard.press(selectAll);
+  await page.keyboard.insertText('New "title"');
+  await page.keyboard.press('Enter');
+  // A typed double quote would end the attribute, so it is stored as a curly one.
+  await expect.poll(() => file(workspace)).toBe(components.replace('title="Callout title"', 'title="New ”title”"'));
+  const badge = page.locator('[data-live-preview] [contenteditable]').filter({ hasText: 'Badge text' });
+  await badge.click();
+  await page.keyboard.press(end);
+  await page.keyboard.insertText(' two');
+  await blur(page);
+  await expect.poll(() => file(workspace)).toContain('<Badge text="Badge text two" />');
+});
+
+test('a task inside a component ticks its own line, in Live and in Reading', async ({ page, workspace }) => {
+  await openComponents(page, workspace);
+  const task = page.locator('.callout input[type="checkbox"]');
+  await task.click();
+  await expect.poll(() => file(workspace)).toBe(components.replace('- [ ] inner task', '- [x] inner task'));
+  await page.getByRole('button', { name: 'Reading', exact: true }).first().click();
+  await page.locator('.callout input[type="checkbox"]').click();
+  await expect.poll(() => file(workspace)).toBe(components);
+});
+
+test('a table cell is edited in place, rewriting only its row', async ({ page, workspace }) => {
+  await openComponents(page, workspace);
+  const cell = page.locator('td [contenteditable]').filter({ hasText: 'cell b' });
+  await cell.click();
+  await page.keyboard.press(end);
+  await page.keyboard.insertText(' | piped');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => file(workspace)).toBe(components.replace('| cell a | cell b |', '| cell a | cell b \\| piped |'));
+});
+
+test('a database view stays read-only: its data is not the note’s text', async ({ page, workspace }) => {
+  await openComponents(page, workspace);
+  const view = page.locator('.live-block').filter({ has: page.getByRole('button', { name: 'Edit DbView', exact: true }) });
+  await expect(view).toBeVisible();
+  await expect(view.locator('[contenteditable="true"], [contenteditable="plaintext-only"]')).toHaveCount(0);
 });

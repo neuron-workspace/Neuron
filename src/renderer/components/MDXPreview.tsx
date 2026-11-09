@@ -10,7 +10,7 @@ import { applyFrontmatter, isFullWidth, parseFrontmatter } from '../lib/frontmat
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
 import { safeUrl } from '../lib/view-security';
 import MermaidDiagram from './MermaidDiagram';
-import { LiveBlock, LiveText, type BlockDraft, type LiveEditing, type SourceRange } from './LiveEditing';
+import { LiveAttr, LiveBlock, LiveCell, LiveText, type BlockDraft, type LiveEditing, type SourceRange } from './LiveEditing';
 import { replaceLines, splitLinePrefix } from '../lib/live-edit';
 
 // Links read as one object rather than as underlined text: an icon says where
@@ -129,6 +129,28 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     if (draft && endLine < draft.startLine) updateActive({ ...draft, startLine: draft.startLine + delta, endLine: draft.endLine + delta });
     changeSource(next);
   };
+  // Rewrite one attribute's value inside a block, leaving every other byte of
+  // the block -- indentation, other attributes, children -- as it was.
+  const blockLines = (start: number, end: number) => parseFrontmatter(sourceRef.current).body.split(/\r?\n/).slice(start, end + 1);
+  const rewriteAttr = (start: number, end: number, name: string, from: string, to: string) => {
+    const block = blockLines(start, end).join('\n');
+    const needle = `${name}="${from}"`;
+    if (!block.includes(needle)) return;
+    changeRange({ startLine: start, endLine: end }, block.replace(needle, `${name}="${to}"`));
+  };
+  // Rewrite one cell of one table row. The row is rebuilt from its cells, so a
+  // pipe typed into the cell is escaped rather than splitting it in two.
+  const rewriteCell = (line: number, column: number, next: string) => {
+    const row = blockLines(line, line)[0];
+    if (row === undefined) return;
+    const cells = splitTableRow(row);
+    while (cells.length <= column) cells.push('');
+    cells[column] = next;
+    const lead = /^\s*\|/.test(row) ? '| ' : '';
+    const trail = /\|\s*$/.test(row) ? ' |' : '';
+    // splitTableRow unescapes \| in every cell, so every cell is escaped again.
+    changeRange({ startLine: line, endLine: line }, lead + cells.map((cell) => cell.replace(/\|/g, '\\|')).join(' | ') + trail);
+  };
   const finish = (commit: boolean) => {
     const draft = activeRef.current;
     updateActive(null);
@@ -168,8 +190,12 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   }
 
   // Parsing helper to split and evaluate markdown vs custom components
-  function parseMDX(content: string, canEdit = editable): React.ReactNode[] {
-    const lines = content.split(/\r?\n/);
+  function parseMDX(content: string, canEdit = editable, base = 0, nested = false): React.ReactNode[] {
+    // Nested content -- a callout body, a card -- is padded to the body line it
+    // really starts on, so a tick, an edit or a range inside it addresses the
+    // right line of the file. Parsed from zero, a task inside a callout ticked
+    // whatever line its position pointed at instead, which was not a task.
+    const lines = ('\n'.repeat(base) + content).split(/\r?\n/);
     const nodes: React.ReactNode[] = [];
     let i = 0;
     let trailingParagraph = false;
@@ -259,7 +285,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                       style={{ textAlign: tableAlignments[columnIndex] ?? 'left' }}
                       className="border-b border-[var(--divider)] px-3 py-2 text-xs font-semibold"
                     >
-                      {parseInlineFormatting(headers[columnIndex] ?? '')}
+                      {canEdit
+                        ? <LiveCell source={headers[columnIndex] ?? ''} onCommit={(next) => rewriteCell(startLine, columnIndex, next)}>{parseInlineFormatting(headers[columnIndex] ?? '')}</LiveCell>
+                        : parseInlineFormatting(headers[columnIndex] ?? '')}
                     </th>
                   ))}
                 </tr>
@@ -273,7 +301,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                         style={{ textAlign: tableAlignments[columnIndex] ?? 'left' }}
                         className="px-3 py-2 align-top text-xs leading-5"
                       >
-                        {parseInlineFormatting(row[columnIndex] ?? '')}
+                        {canEdit
+                          ? <LiveCell source={row[columnIndex] ?? ''} onCommit={(next) => rewriteCell(startLine + 2 + rowIndex, columnIndex, next)}>{parseInlineFormatting(row[columnIndex] ?? '')}</LiveCell>
+                          : parseInlineFormatting(row[columnIndex] ?? '')}
                       </td>
                     ))}
                   </tr>
@@ -360,14 +390,14 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       }
 
       // Markdown line renderings
-      if (line.trim() !== '' || (canEdit && (i === lines.length - 1 || blankLine === i))) {
+      if (line.trim() !== '' || (canEdit && !nested && (i === lines.length - 1 || blankLine === i))) {
         nodes.push(renderLine(line, i, canEdit));
         trailingParagraph = canEdit && i === lines.length - 1 && line.trim() === '';
       }
       i++;
     }
 
-    if (canEdit && !trailingParagraph) {
+    if (canEdit && !nested && !trailingParagraph) {
       // A virtual trailing paragraph is written only once the user types in it.
       nodes.push(renderLine('', lines.length, true, lines.length - 1));
     }
@@ -375,7 +405,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   }
 
   function renderJSX(source: string, index: number, canEdit: boolean): React.ReactNode {
-    try { return evaluateJSX(source, index); }
+    try { return evaluateJSX(source, index, canEdit); }
     catch (error) {
       if (!canEdit) throw error;
       return <pre className="whitespace-pre-wrap text-sm" role="alert">{normalizeError(error).message}</pre>;
@@ -389,15 +419,25 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   }
 
   // Evaluates string to map dynamically into custom React elements
-  function evaluateJSX(jsxStr: string, index: number): React.ReactNode {
+  function evaluateJSX(jsxStr: string, index: number, canEdit = false): React.ReactNode {
     try {
+      // Text written literally in the tag is edited where it is shown; only that
+      // attribute's value is rewritten. Values a component derives or loads
+      // (a DbView's rows) are never handed to this.
+      const endLine = index + (jsxStr.match(/\n/g)?.length ?? 0);
+      const attr = (name: string, value: string | undefined): React.ReactNode =>
+        canEdit && value !== undefined
+          ? <LiveAttr value={value} onCommit={(next) => rewriteAttr(index, endLine, name, value, next)} />
+          : value;
+      // Children start on the line after the open tag's `>`, wherever that is.
+      const childBase = (open: number) => index + (jsxStr.slice(0, open).match(/\n/g)?.length ?? 0);
+
       // 1. Match Badge
       if (jsxStr.startsWith('<Badge')) {
         const textMatch = jsxStr.match(/text="([^"]+)"/);
         const typeMatch = jsxStr.match(/type="([^"]+)"/);
-        const text = textMatch ? textMatch[1] : 'badge';
         const type = parseSemanticType(typeMatch?.[1]);
-        return <Badge key={`badge-${index}`} text={text} type={type} />;
+        return <Badge key={`badge-${index}`} text={textMatch ? attr('text', textMatch[1]) : 'badge'} type={type} />;
       }
 
       // 2. Match Callout
@@ -405,18 +445,18 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         const typeMatch = jsxStr.match(/type="([^"]+)"/);
         const titleMatch = jsxStr.match(/title="([^"]+)"/);
         const type = parseSemanticType(typeMatch?.[1]);
-        const title = titleMatch ? titleMatch[1] : undefined;
 
         // Children go back through parseMDX, exactly like the layout
         // primitives below. Rendered as a raw string a callout could only hold
         // one unformatted paragraph -- a list came out as literal dashes and
         // `code` as literal backticks, which is what a callout is most often
         // used for.
-        const childrenMatch = jsxStr.match(/>([\s\S]*)<\/Callout>/);
-        const content = childrenMatch ? childrenMatch[1].trim() : '';
+        const open = jsxStr.indexOf('>') + 1;
+        const close = jsxStr.lastIndexOf('</Callout>');
+        const content = close >= open ? jsxStr.slice(open, close) : '';
         return (
-          <Callout key={`callout-${index}`} type={type} title={title}>
-            {content ? parseMDX(content, false) : null}
+          <Callout key={`callout-${index}`} type={type} title={titleMatch ? attr('title', titleMatch[1]) : undefined}>
+            {content.trim() ? parseMDX(content, canEdit, childBase(open), true) : null}
           </Callout>
         );
       }
@@ -428,7 +468,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       // Attribute values are looked up in tables inside mdx-layout, never
       // interpolated into a class string: a note is untrusted content and
       // arbitrary CSS over the app chrome is UI spoofing.
-      const layout: Record<string, (props: Record<string, string>, kids: React.ReactNode) => React.ReactNode> = {
+      const layout: Record<string, (props: Record<string, any>, kids: React.ReactNode) => React.ReactNode> = {
         Row: (a, k) => <Row {...a}>{k}</Row>,
         Col: (a, k) => <Col {...a}>{k}</Col>,
         Grid: (a, k) => <Grid {...a}>{k}</Grid>,
@@ -452,9 +492,17 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         // close, so a nested tag of the same name does not truncate the block.
         const close = `</${tag}>`;
         const end = jsxStr.lastIndexOf(close);
-        const inner = end > -1 ? jsxStr.slice(jsxStr.indexOf('>') + 1, end) : '';
-        const kids = inner.trim() ? parseMDX(inner, false) : null;
-        return <div key={`${tag}-${index}`}>{layout[tag](attrs, kids)}</div>;
+        const open = jsxStr.indexOf('>') + 1;
+        const inner = end > -1 ? jsxStr.slice(open, end) : '';
+        const kids = inner.trim() ? parseMDX(inner, canEdit, childBase(open), true) : null;
+        // The visible text attributes. Run's label is a button that runs a
+        // command, so a click there must run it, not start editing.
+        const props: Record<string, any> = { ...attrs };
+        for (const name of ['title', 'label', 'value']) {
+          if (tag !== 'Run' && attrs[name] !== undefined) props[name] = attr(name, attrs[name]);
+        }
+        if (tag === 'Flashcard' && attrs.front !== undefined) props.frontNode = attr('front', attrs.front);
+        return <div key={`${tag}-${index}`}>{layout[tag](props, kids)}</div>;
       }
 
       // 3. Match DbView — embeds a .db database (table/board/card) by @path.

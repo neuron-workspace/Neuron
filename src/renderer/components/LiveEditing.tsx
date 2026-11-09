@@ -57,6 +57,87 @@ export function LiveBlock({ children, range, editing, name = 'block', trailing }
   </button>)}{trailing}</>;
 }
 
+/**
+ * A literal attribute value -- a callout title, a badge's text, a flashcard's
+ * question -- edited where it is shown. Only the value is rewritten in the tag;
+ * a double quote would end the attribute, so it becomes a curly one.
+ */
+export function LiveAttr({ value, onCommit }: { value: string; onCommit: (next: string) => void }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const done = useRef(false);
+  return (
+    <span
+      ref={ref}
+      className="live-text"
+      contentEditable="plaintext-only"
+      suppressContentEditableWarning
+      aria-label="Edit text"
+      onFocus={() => { done.current = false; }}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === 'Enter') { event.preventDefault(); ref.current?.blur(); }
+        else if (event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation();
+          done.current = true;
+          if (ref.current) ref.current.textContent = value;
+          ref.current?.blur();
+        }
+      }}
+      onBlur={() => {
+        if (done.current) return;
+        const next = (ref.current?.textContent ?? '').replace(/\s+/g, ' ').replace(/"/g, '”').trim();
+        if (next && next !== value) onCommit(next);
+        else if (ref.current) ref.current.textContent = value;
+      }}
+    >{value}</span>
+  );
+}
+
+/**
+ * A table cell edited in place. Its markup round-trips through the same
+ * serializer as a paragraph; a cell that would not convert back exactly stays
+ * read-only and is edited through the table's Edit button instead.
+ */
+export function LiveCell({ children, source, onCommit }: { children: ReactNode; source: string; onCommit: (next: string) => void }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const original = useRef('');
+  const skip = useRef(false);
+  const [editable, setEditable] = useState(false);
+  useLayoutEffect(() => { if (ref.current) setEditable(canRoundTrip(ref.current, source)); }, [source]);
+  return (
+    <span
+      ref={ref}
+      className={editable ? 'live-text block' : 'block'}
+      contentEditable={editable || undefined}
+      suppressContentEditableWarning
+      aria-label={editable ? 'Edit cell' : undefined}
+      onFocus={() => { skip.current = false; original.current = ref.current?.innerHTML ?? ''; }}
+      onClick={(event) => { if (editable) event.stopPropagation(); }}
+      onPaste={(event) => {
+        if (!editable) return;
+        event.preventDefault();
+        document.execCommand('insertText', false, event.clipboardData.getData('text/plain').replace(/\s*\r?\n\s*/g, ' '));
+      }}
+      onKeyDown={(event) => {
+        if (!editable || event.nativeEvent.isComposing) return;
+        if (event.key === 'Enter') { event.preventDefault(); ref.current?.blur(); }
+        else if (event.key === 'Escape') {
+          event.preventDefault(); event.stopPropagation();
+          skip.current = true;
+          if (ref.current) ref.current.innerHTML = original.current;
+          ref.current?.blur();
+        }
+      }}
+      onBlur={() => {
+        if (!editable || skip.current) return;
+        const next = ref.current ? serializeInline(ref.current) : null;
+        if (next !== null && next !== source) onCommit(next.replace(/\r?\n/g, ' '));
+      }}
+    >{children}</span>
+  );
+}
+
 export function LiveText({ children, source, range, editing }: {
   children: ReactElement; source: string; range: SourceRange; editing: LiveEditing;
 }) {
