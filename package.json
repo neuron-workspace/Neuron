@@ -86,6 +86,7 @@
     "@codemirror/language-data": "^6.3.1",
     "@codemirror/state": "^6.4.1",
     "@codemirror/view": "^6.26.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@radix-ui/react-accordion": "^1.2.14",
     "@radix-ui/react-alert-dialog": "^1.1.17",
