@@ -182,6 +182,9 @@ body.platform-darwin .status-bar {
 .nav-surface { background: var(--nav); border-color: var(--divider); }
 .work-surface { background: var(--surface); border-color: var(--divider); }
 .canvas-surface { background: var(--canvas); border-color: var(--divider); }
+/* Reading and Live share this frame; a scrollbar that came and went with Live's
+   trailing "Start writing…" line shifted the page sideways between the two. */
+.canvas-surface[data-live-preview], .canvas-surface:has(> article.preview-prose) { scrollbar-gutter: stable; }
 .divider-color { border-color: var(--divider); }
 .text-primary { color: var(--ink); }
 .text-secondary { color: var(--ink-secondary); }
@@ -383,66 +386,22 @@ body.platform-darwin .status-bar {
 .cm-cursor { border-left-color: var(--accent-strong) !important; }
 .cm-focused { outline: none !important; }
 
-/* Live editor */
-.cm-live-editor .cm-content { padding: 2rem 1.5rem; max-width: 768px; margin: 0 auto; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 16px; color: var(--md-text); }
-/* Same note, same flag, so switching between reading and live does not change
-   the width the document is written at. */
-.cm-live-editor[data-full-width] .cm-content { max-width: none; }
-.cm-live-editor .cm-line { line-height: 1.7; }
-.cm-live-editor .cm-lp-prose { color: var(--md-text); }
-.cm-live-editor .cm-lp-prose > span { color: inherit !important; }
-.cm-live-editor .cm-lp-h1 { font-size: 1.7em; font-weight: 700; line-height: 1.3; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h2 { font-size: 1.4em; font-weight: 700; line-height: 1.3; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h3 { font-size: 1.2em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h4 { font-size: 1.08em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h5 { font-size: 1em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h6 { font-size: 0.95em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-strong { font-weight: 700; color: var(--md-bold) !important; }
-.cm-live-editor .cm-lp-em { color: var(--md-text) !important; font-style: italic; }
-.cm-live-editor .cm-lp-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--md-code-bg); border: 1px solid var(--divider); border-radius: 4px; padding: 0.05em 0.35em; color: var(--md-code) !important; }
-.cm-live-editor .cm-lp-link { color: var(--md-link) !important; font-weight: 500; text-decoration: underline dotted; text-underline-offset: 0.2em; }
-.cm-live-editor .cm-lp-quote { border: 1px solid var(--md-quote-border); border-radius: 4px; padding: 0.25em 0.85em; color: var(--md-quote); font-style: italic; }
+/* Live uses Reading's elements and spacing; only editing chrome is added. */
+.live-text { cursor: text; white-space: pre-wrap; min-width: 1ch; }
+.live-text:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.live-text:empty::before { content: attr(data-placeholder); opacity: 0.65; pointer-events: none; }
+.live-block { position: relative; }
+.live-edit-action { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 4px; padding: 0.25rem 0.5rem; font: inherit; cursor: pointer; }
+.live-edit-action:hover { background: var(--surface-hover); }
+.live-edit-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.live-edit-button { position: absolute; top: 0.25rem; right: 0.25rem; z-index: 1; font-size: 0.75rem; line-height: 1.25rem; font-style: normal; font-weight: 400; opacity: 0; pointer-events: none; }
+.live-block:hover > .live-edit-button,
+.live-block:focus-within > .live-edit-button { opacity: 1; pointer-events: auto; }
+.live-block-editor:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.live-block-editor .cm-editor { height: auto; }
+.live-block-editor .cm-scroller { height: auto !important; }
+.live-block-editor .cm-content { min-height: 4.5rem; }
 .task-checkbox { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); vertical-align: -0.15em; }
-.cm-lp-task-checkbox { margin-right: 0.5rem; cursor: pointer; }
-.cm-live-editor .cm-lp-task-completed { color: var(--ink-muted) !important; text-decoration: line-through; text-decoration-thickness: 1px; }
-.cm-lp-widget-block { display: block; }
-.cm-lp-widget-inline { display: inline-block; vertical-align: middle; }
-
-/* Notion-style block chrome for rendered components (Callout, Counter, Table).
-   Handle + toolbar are absolutely positioned so they never change the measured
-   block height (keeping CodeMirror's click → caret mapping correct), and the
-   whole block is contenteditable=false so clicks don't steal the text caret. */
-/* flow-root establishes a block formatting context so the rendered component's
-   vertical margins (my-4/my-5) are contained inside the widget's measured box.
-   Without it those margins collapse out, CodeMirror under-measures the block
-   height, and clicks below it land on the wrong line. */
-.cm-lp-block { position: relative; display: flow-root; }
-.cm-lp-block-body { display: flow-root; }
-.cm-lp-block-handle {
-  position: absolute; left: -1.45rem; top: 0.5rem; z-index: 4;
-  display: grid; place-items: center; width: 1.15rem; height: 1.45rem;
-  border: 0; border-radius: 4px; background: transparent; color: var(--ink-muted);
-  cursor: pointer; opacity: 0; font-size: 0.7rem; line-height: 1; letter-spacing: -0.12em;
-  transition: opacity 140ms var(--ease-out), background-color 140ms var(--ease-out), color 140ms var(--ease-out);
-}
-.cm-lp-block:hover .cm-lp-block-handle { opacity: 0.65; }
-.cm-lp-block-handle:hover { opacity: 1; background: var(--surface-hover); color: var(--ink); }
-.cm-lp-block-toolbar {
-  position: absolute; top: -0.65rem; right: 0.25rem; z-index: 5;
-  display: flex; gap: 0.2rem; padding: 0.2rem;
-  border: 1px solid var(--divider); border-radius: 6px; background: var(--nav);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-  opacity: 0; transform: translateY(-2px); pointer-events: none;
-  transition: opacity 140ms var(--ease-out), transform 140ms var(--ease-out);
-}
-.cm-lp-block:hover .cm-lp-block-toolbar { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.cm-lp-block-action {
-  border: 0; border-radius: 4px; padding: 0.15rem 0.5rem;
-  font-family: "Geist", ui-sans-serif, sans-serif; font-size: 0.7rem; font-weight: 500;
-  color: var(--ink-secondary); background: transparent; cursor: pointer;
-}
-.cm-lp-block-action:hover { background: var(--surface-hover); color: var(--ink); }
-.cm-lp-block-action.danger:hover { background: var(--danger-surface); color: var(--danger); }
 
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -130,7 +130,7 @@ for (const maximized of [false, true]) {
       await expect(dialog).toBeVisible();
       for (const command of [
         'Open folder…', 'Create workspace…', 'Plugins & integrations',
-        'Hide sidebar', 'Show left dock', 'Show right dock', 'Show bottom dock', 'Hide workspace graph',
+        'Hide sidebar', 'Show left dock', 'Show right dock', 'Show bottom dock', 'Show workspace graph',
         'Hide activity bar', maximized ? 'Show status bar' : 'Hide status bar', 'Zen mode',
         'Move sidebar to the right', 'Reset layout',
       ]) {

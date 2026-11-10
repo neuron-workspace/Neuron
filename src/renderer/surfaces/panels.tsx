@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { Eye, PenLine, SplitSquareHorizontal } from 'lucide-react';
 import { Segmented, type SegmentedOption } from '../components/ui/segmented';
 import Editor from '../components/Editor';
-import LiveEditor from '../components/LiveEditor';
 import GraphCanvas from '../components/GraphCanvas';
 import MDXPreview from '../components/MDXPreview';
 import XtermTerminal from '../components/XtermTerminal';
@@ -164,7 +163,10 @@ function EditorPanel({ surface }: PanelContext) {
             <MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} notes={notePaths} onWikiLinkClick={openNote} />
           </div>
         )}
-        {mode === 'live' && <LiveEditor value={noteContent} onChange={onChangeNote} colorScheme={scheme} notes={notePaths} onWikiLinkClick={openNote} />}
+        {mode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={onChangeNote} colorScheme={scheme} notes={notePaths} onWikiLinkClick={openNote}
+          onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }}
+          onRequestRawMode={() => setMode('split')} tagSuggestions={surface.tagSuggestions} onTagClick={surface.onTagClick}
+          removeEmptyFrontmatter={surface.removeEmptyFrontmatter} defaultPropertiesCollapsed={surface.defaultPropertiesCollapsed} />}
         {mode === 'split' && (
           <div className="flex h-full divide-x divide-[var(--divider)]">
             <div className="min-w-0 flex-1"><Editor value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></div>

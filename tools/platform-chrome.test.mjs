@@ -63,14 +63,24 @@ function browserWindowOptions(source) {
 }
 
 const options = browserWindowOptions(main);
-function windowOptions(platform) {
+function windowOptions(platform, testInBackground = false) {
   return runInNewContext('(' + options.replace(/\bas const\b/g, '') + ')', {
     process: { platform }, iconPath: '', fs: { existsSync: () => false },
-    path: { join: () => '' }, __dirname: '',
+    path: { join: () => '' }, __dirname: '', testInBackground,
   });
 }
 
 const tests = [
+  ['e2e background mode is off-screen and unthrottled, and nothing else', () => {
+    const normal = windowOptions('win32');
+    assert.equal(normal.x, undefined, 'a normal launch is placed by the OS');
+    assert.equal(normal.show, undefined, 'a normal launch shows its window');
+    const background = windowOptions('win32', true);
+    assert.ok(background.x < -10000 && background.y < -10000, 'placed off-screen');
+    assert.equal(background.show, false, 'shown later, without focus');
+    assert.equal(background.webPreferences.backgroundThrottling, false, 'still renders while unseen');
+    assert.match(main, /testInBackground = !app\.isPackaged &&/, 'never available to an installed build');
+  }],
   ['Windows and Linux use native frame and Window Controls Overlay', () => {
     for (const platform of ['win32', 'linux']) {
       const actual = windowOptions(platform);

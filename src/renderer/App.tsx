@@ -3,7 +3,6 @@ import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
-import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import Workbench from './components/Workbench';
@@ -195,6 +194,9 @@ export default function App() {
   const [propsSettings, setPropsSettings] = useState<PropertiesSettings>(DEFAULT_PROPERTIES_SETTINGS);
 
   const saveVersion = useRef(0);
+  // What the watcher needs to update the open note without fighting the user:
+  // which note is open, and whether one of our own writes is still in flight.
+  const openNoteRef = useRef<{ path: string | null; saving: boolean }>({ path: null, saving: false });
   const editorRef = useRef<any>(null);
   const browserCounter = useRef(0);
 
@@ -373,6 +375,14 @@ export default function App() {
             if (existing?.content === content) return current;
             return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
           });
+          // The open note follows its file. It used to keep showing what it was
+          // opened with, so an edit from a sync client, git or another editor
+          // stayed invisible -- and the next keystroke here wrote over it. Our
+          // own saves come back through the watcher too, so wait while one is in
+          // flight: adopting the disk copy then could undo the user's last few
+          // characters. When that write lands, the disk is what they typed.
+          const open = openNoteRef.current;
+          if (path === open.path && !open.saving) setNoteContent(current => current === content ? current : content);
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
@@ -390,6 +400,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    openNoteRef.current = { path: selectedNote && !isUrl(selectedNote) ? selectedNote : null, saving: false };
     (async () => {
       if (!selectedNote || isUrl(selectedNote) || !window.electronAPI) { setNoteContent(''); setSaveState('idle'); return; }
       try {
@@ -509,9 +520,11 @@ export default function App() {
     if (!selectedNote || !window.electronAPI) return;
     const version = ++saveVersion.current;
     setSaveState('saving');
+    openNoteRef.current.saving = true;
     setNotesData((previous) => previous.map((note) => (note.path === selectedNote ? { ...note, content: value } : note)));
     const result = await window.electronAPI.writeNote(selectedNote, value);
     if (version !== saveVersion.current) return;
+    openNoteRef.current.saving = false;
     setSaveState(result.success ? 'saved' : 'error');
     if (result.success && selectedNote === SHELL_CONFIG) setPendingShellConfig(value);
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
@@ -796,7 +809,7 @@ export default function App() {
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
-            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
+            {editorMode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={handleContentChange} onToggleTask={handleToggleTask} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
             {editorMode === 'split' && rawSplit}
             {editorMode === 'reading' && (
               <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
@@ -849,6 +862,10 @@ export default function App() {
             noteContent={noteContent}
             onChangeNote={handleContentChange}
             colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'}
+            tagSuggestions={tags}
+            onTagClick={setSelectedTag}
+            removeEmptyFrontmatter={propsSettings.removeEmpty}
+            defaultPropertiesCollapsed={propsSettings.collapsedByDefault}
           />
         </div>
       </div>
@@ -967,7 +984,7 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar repositoryName={repository?.name ?? null} activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
         </div>
 
         <CreateModal

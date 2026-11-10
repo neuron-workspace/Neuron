@@ -17,7 +17,7 @@ import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './template
 import { configureUpdater } from './updater';
 import { createDiagnosticLogger, errorDetails } from './diagnostic-logger';
 import { configureCrashReporter } from './crash-reporter';
-import { workspacePathFromArgv } from './workspace-argv';
+import { installDirectory, isInsideInstall, workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -145,10 +145,22 @@ function writeSettings(settings: Settings): void {
 // Settings only change through writeSettings, which clears this.
 let activeRepoCache: string | null | undefined;
 
+const INSTALL_FOLDER_MESSAGE = 'That folder is where Neuron is installed. Updates replace it, so choose another folder for your notes.';
+
+function isInstallWorkspace(dir: string): boolean {
+  return app.isPackaged && isInsideInstall(dir, installDirectory(app.getPath('exe')));
+}
+
+async function refuseInstallWorkspace(dir: string): Promise<boolean> {
+  if (!isInstallWorkspace(dir)) return false;
+  await dialog.showMessageBox(mainWindow!, { type: 'warning', message: INSTALL_FOLDER_MESSAGE });
+  return true;
+}
+
 function activeRepoPath(): string | null {
   if (activeRepoCache !== undefined) return activeRepoCache;
   const current = readSettings().repositories.current;
-  activeRepoCache = current && fs.existsSync(current) && fs.statSync(current).isDirectory() ? current : null;
+  activeRepoCache = current && !isInstallWorkspace(current) && fs.existsSync(current) && fs.statSync(current).isDirectory() ? current : null;
   return activeRepoCache;
 }
 
@@ -163,7 +175,7 @@ function demoRepoPath(): string {
 function repoInfo(dir: string) {
   const lower = dir.toLowerCase();
   const names = readSettings().repositories.names ?? {};
-  // The bundled demo is always in the list, and a workspace copied from it is
+  // In development the demo is in the list, and a workspace copied from it is
   // usually a folder called demo-repo too: two rows reading "demo-repo".
   const base = folderKey(dir) === folderKey(demoRepoPath()) ? 'Demo workspace' : path.basename(dir) || dir;
   return {
@@ -173,7 +185,7 @@ function repoInfo(dir: string) {
   };
 }
 
-/** On first launch, auto-open the bundled demo repository if one is present. */
+/** Repair saved workspace paths and keep the development demo discoverable. */
 function ensureDefaultRepo(): void {
   const settings = readSettings();
   const isDir = (p: string) => fs.existsSync(p) && fs.statSync(p).isDirectory();
@@ -182,11 +194,14 @@ function ensureDefaultRepo(): void {
 
   // Prune repositories whose folders no longer exist (e.g. renamed/removed),
   // and collapse entries that are the same folder spelled differently.
-  settings.repositories.recent = uniqueRecents(settings.repositories.recent.filter(isDir), null);
+  settings.repositories.recent = uniqueRecents(settings.repositories.recent.filter((p) => !isInstallWorkspace(p) && isDir(p)), null);
 
-  // Always keep the bundled demo repository in the recents list so it stays
-  // discoverable on the Repositories page, even after other repos are opened.
-  if (demoExists && !settings.repositories.recent.some((p) => folderKey(p) === folderKey(demo))) {
+  if (settings.repositories.current && isInstallWorkspace(settings.repositories.current)) {
+    settings.repositories.current = null;
+  }
+
+  // Only the checkout's demo is a writable workspace; packaged templates are copied.
+  if (!app.isPackaged && demoExists && !settings.repositories.recent.some((p) => folderKey(p) === folderKey(demo))) {
     settings.repositories.recent = [...settings.repositories.recent, demo];
   }
 
@@ -201,7 +216,8 @@ function ensureDefaultRepo(): void {
   writeSettings(settings);
 }
 
-function setActiveRepo(dir: string): void {
+function setActiveRepo(dir: string): boolean {
+  if (isInstallWorkspace(dir)) return false;
   const settings = readSettings();
   settings.repositories.current = dir;
   settings.repositories.recent = [dir, ...uniqueRecents(settings.repositories.recent, dir)].slice(0, 8);
@@ -216,6 +232,7 @@ function setActiveRepo(dir: string): void {
   disposeWindowPty();
   setupWatcher();
   if (mainWindow) mainWindow.webContents.send('repository:changed', repoInfo(dir));
+  return true;
 }
 
 function seedWelcomeNote(dir: string): void {
@@ -257,10 +274,17 @@ function createWindow() {
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
     : path.join(process.cwd(), 'build', 'icon.png');
+  // Set only by e2e/fixtures.ts: a test run opens a hundred windows, and each one
+  // used to land on top of whatever the developer was doing and take the
+  // keyboard. In this mode the window is placed off-screen and shown without
+  // focus. It must still render and run timers at full speed while nobody can
+  // see it, or tests that wait on a frame would stall.
+  const testInBackground = !app.isPackaged && process.env.NEURON_E2E_BACKGROUND === '1';
 
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 860,
+    ...(testInBackground ? { x: -32000, y: -32000, show: false } : {}),
     minWidth: 720,
     minHeight: 560,
     title: 'Neuron',
@@ -278,9 +302,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true, // enables in-app browser tabs (<webview>)
+      ...(testInBackground ? { backgroundThrottling: false } : {}),
     },
     backgroundColor: '#11181c',
   });
+  if (testInBackground) mainWindow.once('ready-to-show', () => mainWindow?.showInactive());
 
   // Windows and Linux hide Electron's default menu bar entirely; the in-app
   // title bar is the menu there. On macOS the menu bar is not part of the
@@ -412,7 +438,7 @@ ipcMain.handle('repository:get-current', () => {
 // button, and listing it again underneath was the name appearing twice.
 ipcMain.handle('repository:list-recent', () => {
   const recent = readSettings().repositories.recent;
-  return uniqueRecents(recent.filter((p) => fs.existsSync(p)), activeRepoPath()).map(repoInfo);
+  return uniqueRecents(recent.filter((p) => !isInstallWorkspace(p) && fs.existsSync(p)), activeRepoPath()).map(repoInfo);
 });
 
 ipcMain.handle('repository:create', async () => {
@@ -424,8 +450,9 @@ ipcMain.handle('repository:create', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const dir = result.filePaths[0];
+  if (await refuseInstallWorkspace(dir)) return null;
   seedWelcomeNote(dir);
-  setActiveRepo(dir);
+  if (!setActiveRepo(dir)) return null;
   return repoInfo(dir);
 });
 
@@ -455,6 +482,7 @@ ipcMain.handle('templates:create', async (_event, templateId: string) => {
   if (result.canceled || result.filePaths.length === 0) return null;
 
   const dir = result.filePaths[0];
+  if (await refuseInstallWorkspace(dir)) return null;
   // Refuse rather than merge. Copying a template over someone's existing notes
   // is not something they can undo from in here.
   if (hasNotes(dir)) {
@@ -467,7 +495,7 @@ ipcMain.handle('templates:create', async (_event, templateId: string) => {
     return { error: `Could not create the workspace: ${(err as Error).message}` };
   }
 
-  setActiveRepo(dir);
+  if (!setActiveRepo(dir)) return null;
   return { repository: repoInfo(dir) };
 });
 
@@ -480,7 +508,8 @@ ipcMain.handle('repository:open', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const dir = result.filePaths[0];
-  setActiveRepo(dir);
+  if (await refuseInstallWorkspace(dir)) return null;
+  if (!setActiveRepo(dir)) return null;
   return repoInfo(dir);
 });
 
@@ -488,7 +517,7 @@ ipcMain.handle('repository:switch', (_event, dir: string) => {
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     return { success: false, error: 'Folder no longer exists.' };
   }
-  setActiveRepo(dir);
+  if (!setActiveRepo(dir)) return { success: false, error: INSTALL_FOLDER_MESSAGE };
   return { success: true, repository: repoInfo(dir) };
 });
 
@@ -1070,7 +1099,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 app.on('second-instance', (_event, commandLine) => {
-  const workspace = workspacePathFromArgv(commandLine, app.isPackaged);
+  const workspace = workspacePathFromArgv(commandLine, app.isPackaged, isInstallWorkspace);
   if (workspace) setActiveRepo(workspace);
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1129,7 +1158,7 @@ app.on('ready', () => {
   });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
-  const workspace = workspacePathFromArgv(process.argv, app.isPackaged);
+  const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);
   if (workspace) setActiveRepo(workspace);
   createWindow();
   // GitHub-backed in-app updates. What counts as an update, and whether to look

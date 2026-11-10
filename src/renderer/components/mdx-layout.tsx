@@ -116,7 +116,7 @@ export function Cell({ children, cols }: { children?: ReactNode; cols?: Span }) 
 }
 
 /** A bordered panel. `<Card title="Today" tone="accent">` */
-export function Card({ children, title, tone, pad }: BoxProps & { title?: string; tone?: Tone }) {
+export function Card({ children, title, tone, pad }: BoxProps & { title?: ReactNode; tone?: Tone }) {
   return (
     <section className={['rounded-lg border border-[var(--divider)]', pick(TONE, tone, 'surface'), pick(PAD, pad, 'md')].join(' ')}>
       {title && (
@@ -128,7 +128,7 @@ export function Card({ children, title, tone, pad }: BoxProps & { title?: string
 }
 
 /** A number with a label, for a metric strip. `<Stat label="Overdue" value="3" tone="danger">` */
-export function Stat({ label, value, tone }: { label?: string; value?: string; tone?: Tone }) {
+export function Stat({ label, value, tone }: { label?: ReactNode; value?: ReactNode; tone?: Tone }) {
   const ink = tone === 'danger' ? 'text-[var(--danger)]'
     : tone === 'accent' ? 'text-[var(--accent-strong)]'
     : 'text-[var(--ink)]';
@@ -155,9 +155,10 @@ export function Stat({ label, value, tone }: { label?: string; value?: string; t
  * put it one "find in page" away, and a flashcard whose answer can be read
  * without revealing it is a paragraph with extra steps.
  */
-export function Flashcard({ children, front }: { children?: ReactNode; front?: string }) {
+export function Flashcard({ children, front, frontNode }: { children?: ReactNode; front?: string; frontNode?: ReactNode }) {
   const [revealed, setRevealed] = useState(false);
-  const prompt = front?.trim() || 'Untitled card';
+  // frontNode: the same question, editable in place in Live.
+  const prompt = frontNode ?? (front?.trim() || 'Untitled card');
 
   return (
     <section className="my-4 rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-4">
@@ -185,7 +186,7 @@ export function Flashcard({ children, front }: { children?: ReactNode; front?: s
 }
 
 /** A horizontal rule with an optional caption. `<Divider label="Blocked" />` */
-export function Divider({ label }: { label?: string }) {
+export function Divider({ label }: { label?: ReactNode }) {
   if (!label) return <hr className="my-4 border-[var(--divider)]" />;
   return (
     <div className="my-4 flex items-center gap-3">
