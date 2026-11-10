@@ -115,6 +115,7 @@ export const test = base.extend<AppFixture>({
       JSON.stringify({ repositories: { current: workspace, recent: [workspace] }, seededDemo: true }, null, 2),
     );
 
+    const background = process.env.NEURON_E2E_VISIBLE !== '1';
     launchTiming.startedAt = performance.now();
     const app = await electron.launch({
       args: [
@@ -145,8 +146,14 @@ export const test = base.extend<AppFixture>({
           || (process.env.CI && process.platform !== 'win32')
           ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
           : []),
+        // Windows marks an off-screen window as occluded and Chromium then stops
+        // painting it, which would stall every test waiting on a frame.
+        ...(background ? ['--disable-features=CalculateNativeWinOcclusion'] : []),
       ],
       cwd: repoRoot,
+      // Off-screen and unfocused, so a run does not take over the screen. Set
+      // NEURON_E2E_VISIBLE=1 to watch the windows instead.
+      env: { ...process.env, ...(background ? { NEURON_E2E_BACKGROUND: '1' } : {}) },
     });
 
     // Stub shell.openExternal for EVERY test, before a single line runs.

@@ -1,8 +1,10 @@
 import { test, expect, openNote } from './fixtures';
 import type { Locator } from '@playwright/test';
 
-// T-026. The graph is a floating square over the editor, on by default, drawing
-// the whole workspace -- not a full-height column showing the active note alone.
+// T-026. The graph is a floating square over the editor, drawing the whole
+// workspace -- not a full-height column showing the active note alone. It is off
+// by default, because floating over the editor it covered content and controls;
+// the toolbar's graph button opens it, so it is one visible click away.
 
 /**
  * Wait until Sigma has actually painted a frame.
@@ -22,11 +24,15 @@ const painted = (canvas: Locator) => canvas.evaluate((el: any) => new Promise<vo
   el.sigma.refresh();
 }));
 
-test('the graph is visible without touching a shortcut', async ({ page }) => {
-  // No keypress, no focus juggling. It is on by default because it replaced a
-  // panel that was always on; a graph you must discover a shortcut for is a
-  // graph nobody sees. This also sidesteps the real problem that a global
-  // keydown handler does nothing while the terminal or a webview holds focus.
+test.beforeEach(async ({ page }) => {
+  // Every test here starts from an open graph, reached the way a user reaches it.
+  await page.getByRole('button', { name: 'Show graph', exact: true }).click();
+});
+
+test('the toolbar opens the graph without touching a shortcut', async ({ page }) => {
+  // No keypress, no focus juggling: a visible toolbar button, so the graph is
+  // not something you must discover a shortcut for, and it works while the
+  // terminal or a webview holds focus, where the global keydown does nothing.
   const graph = page.getByRole('complementary', { name: 'Workspace graph' });
   await expect(graph).toBeVisible();
 

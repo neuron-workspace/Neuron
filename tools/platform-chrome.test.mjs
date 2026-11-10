@@ -1,11 +1,12 @@
 // Run: node tools/platform-chrome.test.mjs
 //
-// macOS gets native window chrome; the other platforms keep the custom frame.
-// These checks are deliberately static so they run on every host platform.
+// Native chrome on every platform, without launching Electron.
+// Evaluate the constructor options with host stubs so every platform is covered.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf-8');
@@ -61,94 +62,50 @@ function browserWindowOptions(source) {
   return balanced(source, source.indexOf('{', declaration.index), '{', '}');
 }
 
-/** Split an object literal at its top-level commas. */
-/**
- * Strip `//` comments before splitting.
- *
- * Without this, a property explained by a comment above it arrives with the
- * comment glued to its front, so a spread reads as starting with `//` rather
- * than `...` and the guard check fails on correct code. The comments are where
- * the reasoning lives, so the parser accommodates them rather than the source
- * being rearranged to suit the parser.
- */
-function stripComments(text) {
-  return text.replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
-}
-
-function properties(object) {
-  const body = stripComments(object.slice(1, -1));
-  const result = [];
-  let start = 0;
-  let round = 0;
-  let square = 0;
-  let curly = 0;
-  let quote = null;
-
-  for (let i = 0; i < body.length; i++) {
-    const char = body[i];
-    if (quote) {
-      if (char === '\\') i++;
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === '`') { quote = char; continue; }
-    if (char === '(') round++;
-    else if (char === ')') round--;
-    else if (char === '[') square++;
-    else if (char === ']') square--;
-    else if (char === '{') curly++;
-    else if (char === '}') curly--;
-    else if (char === ',' && round === 0 && square === 0 && curly === 0) {
-      result.push(body.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  result.push(body.slice(start).trim());
-  return result.filter(Boolean);
-}
-
 const options = browserWindowOptions(main);
-const optionProperties = properties(options);
-const macAliases = [...main.matchAll(/\b(?:const|let)\s+([$A-Z_a-z][$\w]*)\s*=\s*process\.platform\s*===\s*['"]darwin['"]/g)]
-  .map((match) => match[1]);
-const macGuard = new RegExp([
-  "process\\.platform\\s*(?:===?|!==?)\\s*['\"]darwin['\"]",
-  ...macAliases.map((name) => `\\b${name}\\b`),
-].join('|'));
+function windowOptions(platform, testInBackground = false) {
+  return runInNewContext('(' + options.replace(/\bas const\b/g, '') + ')', {
+    process: { platform }, iconPath: '', fs: { existsSync: () => false },
+    path: { join: () => '' }, __dirname: '', testInBackground,
+  });
+}
 
 const tests = [
-  ['BrowserWindow frame is platform-conditional', () => {
-    const frameProperties = optionProperties.filter((property) => /^(?:readonly\s+)?frame\s*:/.test(property));
-    assert.match(options, /\bframe\s*:/, 'BrowserWindow options must configure frame for non-macOS platforms');
-    assert.ok(
-      frameProperties.every((property) => !/^frame\s*:\s*false\s*$/.test(property)),
-      'frame: false must not be an unconditional BrowserWindow option',
-    );
-    assert.ok(
-      frameProperties.some((property) => macGuard.test(property))
-        || optionProperties.some((property) => property.startsWith('...') && /\bframe\s*:\s*false\b/.test(property) && macGuard.test(property)),
-      'the BrowserWindow frame choice must be guarded by the darwin platform',
-    );
+  ['e2e background mode is off-screen and unthrottled, and nothing else', () => {
+    const normal = windowOptions('win32');
+    assert.equal(normal.x, undefined, 'a normal launch is placed by the OS');
+    assert.equal(normal.show, undefined, 'a normal launch shows its window');
+    const background = windowOptions('win32', true);
+    assert.ok(background.x < -10000 && background.y < -10000, 'placed off-screen');
+    assert.equal(background.show, false, 'shown later, without focus');
+    assert.equal(background.webPreferences.backgroundThrottling, false, 'still renders while unseen');
+    assert.match(main, /testInBackground = !app\.isPackaged &&/, 'never available to an installed build');
   }],
-  ['hiddenInset is on the macOS BrowserWindow path', () => {
-    const chromeProperty = optionProperties.find((property) => /\btitleBarStyle\s*:/.test(property));
-    assert.ok(chromeProperty, "macOS BrowserWindow options must include titleBarStyle: 'hiddenInset'");
-    assert.match(chromeProperty, /\btitleBarStyle\s*:\s*['"]hiddenInset['"]|['"]hiddenInset['"]/, "titleBarStyle must use 'hiddenInset'");
-    assert.match(chromeProperty, macGuard, "titleBarStyle: 'hiddenInset' must be guarded by the darwin platform");
+  ['Windows and Linux use native frame and Window Controls Overlay', () => {
+    for (const platform of ['win32', 'linux']) {
+      const actual = windowOptions(platform);
+      assert.notEqual(actual.frame, false, platform + ': keep the native frame');
+      assert.equal(actual.titleBarStyle, 'hidden', platform);
+      assert.equal(actual.titleBarOverlay.height, 39, platform);
+      assert.equal(actual.titleBarOverlay.color, '#121419', platform);
+      assert.equal(actual.titleBarOverlay.symbolColor, '#e6e8ec', platform);
+      assert.equal(actual.trafficLightPosition, undefined, platform);
+    }
   }],
-  ['maximized-window CSS cannot apply on macOS', () => {
-    const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
-    const selectors = [...source.matchAll(/([^{}]+)\{[^{}]*\}/g)]
-      .flatMap((match) => match[1].split(','))
-      .map((selector) => selector.trim())
-      .filter((selector) => /\bbody\b[^{}]*\.window-maximized\b/.test(selector));
-    assert.ok(selectors.length > 0, 'Expected body.window-maximized rules to check');
-    const scoped = (selector) => (
-      /(?:\.|data-platform\s*=\s*['"]?)(?:platform-)?(?:win32|windows)\b/i.test(selector)
-      || /:not\([^)]*(?:darwin|mac(?:os)?)[^)]*\)/i.test(selector)
-    );
-    const unscoped = selectors.filter((selector) => !scoped(selector));
-    assert.deepEqual(unscoped, [], `These maximized selectors can still apply on macOS: ${unscoped.join(', ')}`);
+  ['macOS keeps hiddenInset and its native traffic lights', () => {
+    const actual = windowOptions('darwin');
+    assert.notEqual(actual.frame, false);
+    assert.equal(actual.titleBarStyle, 'hiddenInset');
+    assert.equal(actual.titleBarOverlay, undefined);
+    assert.equal(actual.trafficLightPosition.x, 18);
+    assert.equal(actual.trafficLightPosition.y, 13);
+  }],
+  ['custom controls and maximized insets are gone', () => {
+    const titlebar = read('src', 'renderer', 'components', 'TitleBar.tsx');
+    assert.doesNotMatch(main, /needsMaximizeInset|window:toggle-maximize|window:minimize|window:close/);
+    assert.doesNotMatch(css, /window-maximized|\.window-control/);
+    assert.doesNotMatch(titlebar, /usesCustomWindowControls|window-control|SparkIcon|neuron-logo/);
+    assert.doesNotMatch(declarations, /inset: boolean/);
   }],
   ['preload exposes process.platform', () => {
     assert.match(

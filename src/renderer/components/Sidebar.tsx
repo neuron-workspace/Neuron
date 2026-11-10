@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderGit2, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
+import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, Home, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
 import type { SidebarMode } from './ActivityRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
@@ -233,20 +233,19 @@ export default function Sidebar(props: SidebarProps) {
                 Icon, name and count are one target rather than three elements
                 with a 16px-tall button in the middle: the folder icon read as
                 part of the control and did nothing when clicked. */}
+            {/* An icon, not the name: next to four tool buttons the name only
+                ever had room to read "wo…", and the toolbar switcher and the
+                explorer heading already say which workspace is open. The full
+                name stays in the tooltip. */}
             <button
               type="button"
-              className="interactive flex min-h-[var(--control-sm)] min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left hover:bg-[var(--surface-hover)]"
+              className="interactive grid h-[var(--control-sm)] w-[var(--control-sm)] shrink-0 place-items-center rounded-md text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
               title={`${repositoryName} — workspace home`}
+              aria-label="Workspace home"
               data-workspace-home
               onClick={onGoHome}
             >
-              <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
-              {/* The note count used to sit here too. Four tool buttons at a
-                  full-size target plus a badge left the workspace name about
-                  seventy pixels, so it truncated to "works…" -- the sidebar
-                  could not say which workspace you were in. The explorer heads
-                  its listing with the same count. */}
-              <span className="truncate text-xs font-semibold text-[var(--ink)]">{repositoryName}</span>
+              <Home className="h-3.5 w-3.5" />
             </button>
             <div className="flex shrink-0 items-center">
               <ToolbarButton label="New note" onClick={() => onRequestCreate()}><FilePlus2 className="h-3.5 w-3.5" /></ToolbarButton>

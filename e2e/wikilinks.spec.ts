@@ -41,16 +41,10 @@ test('a resolved wiki-link opens from the live editor', async ({ page }) => {
   // the reading view. It only reaches the live editor now that both spellings
   // of the control are the same control.
   await page.getByRole('button', { name: 'Live', exact: true }).first().click();
-  await expect(page.locator('.cm-live-editor')).toBeVisible();
+  await expect(page.locator('[data-live-preview]')).toBeVisible();
+  await expect(page.locator('.cm-editor')).toHaveCount(0);
 
-  // CodeMirror only renders the lines near the viewport, so a link far down the
-  // document is not in the DOM until it is scrolled towards.
   const link = page.getByRole('button', { name: websiteLinkName }).first();
-  const scroller = page.locator('.cm-scroller').first();
-  for (let i = 0; i < 25 && (await link.count()) === 0; i++) {
-    await scroller.evaluate((element) => { element.scrollTop += element.clientHeight * 0.8; });
-    await page.waitForTimeout(100);
-  }
   await link.click();
 
   await expectWebsiteRefreshOpen(page);

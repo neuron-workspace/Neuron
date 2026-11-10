@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import {
-  PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search, Blocks, Minus, Square, Copy, X,
+  PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search, Blocks,
   FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Share2 } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
@@ -10,7 +10,7 @@ import {
 } from './ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
-import { isMac, platform, usesCustomWindowControls } from '../lib/platform';
+import { isMac, platform } from '../lib/platform';
 import { formatChord } from '../lib/keybindings';
 
 interface TitleBarProps {
@@ -57,27 +57,19 @@ function IconButton({ label, active, onClick, children }: { label: string; activ
   );
 }
 
-function SparkIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 512 512" className={className} fill="currentColor">
-      <g transform="translate(256,256)">
-        <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(0)"/>
-        <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(72)"/>
-        <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(144)"/>
-        <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(216)"/>
-        <polygon points="-24,-136 24,-136 16,6 -16,6" transform="rotate(288)"/>
-      </g>
-    </svg>
-  );
+/** Two different folders with the same name need their location to tell them apart. */
+export function sharedName(recents: RepositoryInfo[], repo: RepositoryInfo): boolean {
+  return recents.some((other) => other.path !== repo.path && other.name === repo.name);
+}
+
+export function parentFolder(dir: string): string {
+  const parts = dir.split(/[\\/]+/).filter(Boolean);
+  return parts.slice(-3, -1).join('/');
 }
 
 export default function TitleBar(props: TitleBarProps) {
   const { repository, recents, activeNote } = props;
-  const [maximized, setMaximized] = useState(false);
-
-  // The platform never changes under a running window, so this is set once and
-  // left alone. It is what scopes the Windows maximise workaround and the macOS
-  // chrome rules in index.css, rather than either leaking onto the other.
+  // Scope native overlay safe areas and macOS typography to the host.
   useEffect(() => {
     document.body.classList.add(`platform-${platform}`);
   }, []);
@@ -100,31 +92,33 @@ export default function TitleBar(props: TitleBarProps) {
   }, [props.onOpenCommandPalette, props.onOpenSettings]);
 
   useEffect(() => {
-    const apply = (state: { inset: boolean; fullScreen: boolean }) => {
-      setMaximized(state.inset);
-      document.body.classList.toggle('window-maximized', state.inset);
+    const apply = (state: { fullScreen: boolean }) => {
       document.body.classList.toggle('window-fullscreen', state.fullScreen);
     };
-    window.electronAPI?.windowControls.chromeState().then(apply);
-    return window.electronAPI?.windowControls.onChromeStateChanged(apply);
+    // A state event takes precedence over the initial IPC snapshot.
+    let awaitingInitialState = true;
+    const unsubscribe = window.electronAPI?.windowControls.onChromeStateChanged((state) => {
+      awaitingInitialState = false;
+      apply(state);
+    });
+    void window.electronAPI?.windowControls.chromeState().then((state) => {
+      if (awaitingInitialState) apply(state);
+    });
+    return () => {
+      awaitingInitialState = false;
+      unsubscribe?.();
+    };
   }, []);
 
   return (
     <header
       className={cn(
         'titlebar flex items-center justify-between border-b pr-0',
-        // The traffic lights are drawn by macOS in the window's top-left, over
-        // whatever is there. Without this the logo and sidebar toggle end up
-        // underneath them.
+        // Keep toolbar actions clear of macOS traffic lights.
         isMac ? 'pl-[78px]' : 'pl-2',
-        maximized && 'maximized',
       )}
     >
       <div className="flex min-w-0 items-center gap-1">
-        <span className="neuron-logo-bg ml-1 grid h-6 w-6 shrink-0 place-items-center rounded border border-[var(--divider)]">
-          <SparkIcon className="neuron-logo h-3.5 w-3.5" />
-        </span>
-
         <IconButton label={props.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} active={props.sidebarOpen} onClick={props.onToggleSidebar}>
           <PanelLeft className="h-4 w-4" />
         </IconButton>
@@ -147,9 +141,10 @@ export default function TitleBar(props: TitleBarProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Recent</DropdownMenuLabel>
                 {recents.map((repo) => (
-                  <DropdownMenuItem key={repo.path} onClick={() => props.onSwitchRepo(repo.path)}>
+                  <DropdownMenuItem key={repo.path} title={repo.path} onClick={() => props.onSwitchRepo(repo.path)}>
                     <FolderGit2 className="h-4 w-4" />
                     <span className="truncate">{repo.name}</span>
+                    {sharedName(recents, repo) && <span className="truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
                     {repo.cloud && <Cloud className="ml-auto h-3 w-3 text-[var(--ink-muted)]" />}
                   </DropdownMenuItem>
                 ))}
@@ -166,7 +161,7 @@ export default function TitleBar(props: TitleBarProps) {
         )}
       </div>
 
-      <div className="flex items-center">
+      <div className="flex shrink-0 items-center">
         <div className="mr-1 flex items-center gap-0.5">
           <button
             onClick={props.onOpenCommandPalette}
@@ -224,30 +219,6 @@ export default function TitleBar(props: TitleBarProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-
-        {/* macOS draws its own traffic lights and they are the real controls.
-            Painting a second set beside them would be three buttons that look
-            native, are not, and sit next to the ones that are. */}
-        {usesCustomWindowControls && (
-          <div className="ml-1 flex items-center">
-            <button className="window-control" aria-label="Minimize" onClick={() => window.electronAPI?.windowControls.minimize()}>
-              <Minus className="h-4 w-4" />
-            </button>
-            <button
-              className="window-control"
-              // "Restore" alone collided with the Restore buttons in the panel
-              // rail and in version history, so a by-name lookup could match a
-              // window control and resize the window instead.
-              aria-label={maximized ? 'Restore window' : 'Maximize window'}
-              onClick={async () => setMaximized(await window.electronAPI.windowControls.toggleMaximize())}
-            >
-              {maximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3 w-3" />}
-            </button>
-            <button className="window-control danger" aria-label="Close" onClick={() => window.electronAPI?.windowControls.close()}>
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        )}
       </div>
     </header>
   );

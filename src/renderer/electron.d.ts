@@ -61,16 +61,8 @@ export type HtmxViewOpenResult =
   | { status: 'needs-approval'; name: string; permissions: string[]; description?: string; readPaths: string[]; writePaths: string[] }
   | { status: 'error'; message: string };
 
-/**
- * How the window chrome should be drawn right now.
- *
- * `inset` is not "the window is maximised": it means the title bar must pad
- * itself for the 8px a frameless Windows window overhangs the screen by. Full
- * screen does not overhang, so it is false there even though the window is
- * still, as far as Electron is concerned, maximised.
- */
+/** Whether the toolbar should be hidden for native full screen. */
 export interface WindowChromeState {
-  inset: boolean;
   fullScreen: boolean;
 }
 
@@ -117,11 +109,10 @@ export interface ElectronAPI {
 
   // Window controls
   windowControls: {
-    minimize: () => Promise<void>;
-    toggleMaximize: () => Promise<boolean>;
-    close: () => Promise<void>;
+    setOverlayColors: (colors: { color: string; symbolColor: string }) => Promise<void>;
     onMenuCommand: (callback: (command: string) => void) => () => void;
     chromeState: () => Promise<WindowChromeState>;
+    toggleFullScreen: () => Promise<void>;
     onChromeStateChanged: (callback: (state: WindowChromeState) => void) => () => void;
   };
 
@@ -151,6 +142,8 @@ export interface ElectronAPI {
     history: (id: number) => Promise<string>;
     write: (id: number, data: string) => Promise<void>;
     resize: (id: number, cols: number, rows: number) => Promise<void>;
+    /** ConPTY details on Windows, for xterm's `windowsPty` option; null elsewhere. */
+    windowsPty: () => Promise<{ backend: 'conpty'; buildNumber: number } | null>;
     kill: (id: number) => Promise<void>;
     onData: (callback: (id: number, data: string) => void) => () => void;
     onExit: (callback: (id: number, exitCode: number) => void) => () => void;

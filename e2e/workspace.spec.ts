@@ -31,8 +31,11 @@ test('closing a tab keeps the note on disk', async ({ page, workspace }) => {
   expect(readFileSync(join(workspace, 'guides', 'markdown-basics.mdx'), 'utf-8').length).toBeGreaterThan(0);
 });
 
-test('frontmatter renders as editable properties', async ({ page }) => {
+test('frontmatter renders as editable properties', async ({ page, workspace }) => {
+  const file = join(workspace, 'properties', 'project-atlas.mdx');
+  const before = readFileSync(file, 'utf8');
   await openNote(page, 'properties/project-atlas.mdx');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
   const props = page.locator('[aria-label="Document properties"]');
   await expect(props).toBeVisible();
   // Values live in inputs, not text nodes -- the panel is an editor, not a
@@ -41,6 +44,15 @@ test('frontmatter renders as editable properties', async ({ page }) => {
     (els) => els.map((el) => (el as HTMLInputElement).value));
   expect(values).toContain('Project Atlas');
   await expect(props).toContainText('Tags');
+  const title = props.getByRole('textbox', { name: 'Title', exact: true });
+  await expect(title).toBeEnabled();
+  await title.fill('Updated Atlas');
+  await title.press('Enter');
+  await expect.poll(() => readFileSync(file, 'utf8')).toContain('Updated Atlas');
+  expect(readFileSync(file, 'utf8').split(/---\r?\n/).slice(2).join('---\n')).toBe(before.split(/---\r?\n/).slice(2).join('---\n'));
+  await props.getByRole('button', { name: 'Properties actions' }).click();
+  await page.getByRole('menuitem', { name: 'Edit as YAML' }).click();
+  await expect(page.locator('.cm-editor')).toBeVisible();
 });
 
 test('invalid YAML degrades and never rewrites the file', async ({ page, workspace }) => {

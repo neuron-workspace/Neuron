@@ -1,7 +1,9 @@
-import { Blocks, Chrome, FileCode2, FolderPlus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
+import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { WorkbenchLayout } from '../lib/layout';
+import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
+import { parentFolder, sharedName } from './TitleBar';
 import { formatChord, type Bindings } from '../lib/keybindings';
 
 /**
@@ -27,6 +29,10 @@ interface CommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   notes: string[];
+  recents: RepositoryInfo[];
+  onOpenRepo: () => void;
+  onCreateRepo: () => void;
+  onSwitchRepo: (dir: string) => void;
   onSelectNote: (note: string) => void;
   onOpenMarketplace: () => void;
   onOpenSettings: () => void;
@@ -43,7 +49,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, onLayoutChange, onResetLayout, open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -65,7 +71,22 @@ export default function CommandPalette({ layout, onLayoutChange, onResetLayout, 
           <CommandItem onSelect={() => { onOpenSettings(); close(); }}><Settings /> Open settings</CommandItem>
         </CommandGroup>
 
+        <CommandGroup heading="Workspaces">
+          <CommandItem onSelect={() => { close(); onOpenRepo(); }}><FolderOpen /> Open folder…</CommandItem>
+          <CommandItem onSelect={() => { close(); onCreateRepo(); }}><FolderPlus /> Create workspace…</CommandItem>
+          {recents.map((repo) => (
+            <CommandItem key={repo.path} value={'Switch workspace: ' + repo.name + ' ' + repo.path} onSelect={() => { close(); onSwitchRepo(repo.path); }}>
+              <FolderOpen /> Switch workspace: {repo.name}
+              {sharedName(recents, repo) && <span className="ml-1 truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+
         <CommandGroup heading="Layout">
+          <CommandItem onSelect={() => { onLayoutChange({ activityBar: !layout.activityBar }); close(); }}><PanelsTopLeft /> {layout.activityBar ? 'Hide' : 'Show'} activity bar</CommandItem>
+          <CommandItem onSelect={() => { onLayoutChange({ statusBar: !layout.statusBar }); close(); }}><PanelsTopLeft /> {layout.statusBar ? 'Hide' : 'Show'} status bar</CommandItem>
+          <CommandItem onSelect={() => { close(); void window.electronAPI.windowControls.toggleFullScreen(); }}><Focus /> Toggle full screen<Shortcut chord={bindings['toggle-fullscreen']} /></CommandItem>
+          <CommandItem onSelect={() => { onLayoutChange({ zen: !layout.zen }); close(); }}><Focus /> {layout.zen ? 'Exit zen mode' : 'Zen mode'}<Shortcut chord={bindings['toggle-zen']} /></CommandItem>
           {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
             <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
               <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}

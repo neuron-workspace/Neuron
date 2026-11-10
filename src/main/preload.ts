@@ -58,24 +58,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Window controls
   windowControls: {
-    minimize: () => ipcRenderer.invoke('window:minimize'),
-    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
-    close: () => ipcRenderer.invoke('window:close'),
-    // Was a bare "is it maximised" boolean. That was not enough to draw the
-    // chrome correctly: full screen needs different treatment from maximised on
-    // both platforms, and conflating them is what left a gap across the top of
-    // a full-screen window on Windows.
+    setOverlayColors: (colors: { color: string; symbolColor: string }) => ipcRenderer.invoke('window:set-overlay-colors', colors),
     // Menu items the macOS application menu owns but the renderer performs.
-    // Clicking "Search & Commands…" has to reach the palette; the keystroke
-    // itself is deliberately left to the page, so this carries only clicks.
     onMenuCommand: (callback: (command: string) => void) => {
       const listener = (_event: unknown, command: string) => callback(command);
       ipcRenderer.on('menu:command', listener);
       return () => ipcRenderer.removeListener('menu:command', listener);
     },
     chromeState: () => ipcRenderer.invoke('window:chrome-state'),
-    onChromeStateChanged: (callback: (state: { inset: boolean; fullScreen: boolean }) => void) => {
-      const listener = (_event: unknown, state: { inset: boolean; fullScreen: boolean }) => callback(state);
+    toggleFullScreen: () => ipcRenderer.invoke('window:toggle-fullscreen'),
+    onChromeStateChanged: (callback: (state: { fullScreen: boolean }) => void) => {
+      const listener = (_event: unknown, state: { fullScreen: boolean }) => callback(state);
       ipcRenderer.on('window:chrome-state-changed', listener);
       return () => ipcRenderer.removeListener('window:chrome-state-changed', listener);
     },
@@ -109,6 +102,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     history: (id: number) => ipcRenderer.invoke('terminal:history', id),
     write: (id: number, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: number, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    windowsPty: () => ipcRenderer.invoke('terminal:windows-pty'),
     kill: (id: number) => ipcRenderer.invoke('terminal:kill', id),
     onData: (callback: (id: number, data: string) => void) => {
       const listener = (_event: unknown, id: number, data: string) => callback(id, data);

@@ -9,6 +9,24 @@ export interface GraphEdge { [key: string]: unknown; kind: EdgeKind; weight: num
 export type Positions = Record<string, { x: number; y: number }>;
 type Reference = { target: string; kind: EdgeKind; wiki: boolean };
 
+function stripFencedCode(content: string): string {
+  const prose: string[] = [];
+  let fence = '';
+  for (const line of content.split(/\r\n|\n|\r/)) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (match && match[1][0] === fence[0] && match[1].length >= fence.length && /^\s*$/.test(match[2])) fence = '';
+      continue;
+    }
+    if (match && (match[1][0] === '~' || !match[2].includes('`'))) {
+      fence = match[1];
+      continue;
+    }
+    prose.push(line);
+  }
+  return prose.join('\n');
+}
+
 function references(note: NoteData): Reference[] {
   if (note.path.endsWith('.canvas')) {
     try {
@@ -20,7 +38,7 @@ function references(note: NoteData): Reference[] {
   if (!/\.mdx?$/i.test(note.path)) return [];
   const result: Reference[] = [];
   // Code examples are not relationships. This only reads content; it never renders it.
-  const prose = note.content.replace(/^\s*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\s*\1\s*$/gm, '').replace(/`[^`\n]*`/g, '');
+  const prose = stripFencedCode(note.content).replace(/`[^`\n]*`/g, '');
   for (const match of prose.matchAll(/(!?)\[\[([^\]\n]+)\]\]|(!?)\[[^\]\n]*\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+[^)]*)?\)/g)) {
     const wiki = match[2] !== undefined;
     const target = (wiki ? match[2].split('|')[0] : match[4].replace(/^<|>$/g, '')).split('#')[0].trim();

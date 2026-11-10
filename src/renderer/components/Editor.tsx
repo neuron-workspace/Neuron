@@ -8,11 +8,13 @@ interface EditorProps {
   value: string;
   onChange: (value: string) => void;
   readOnly?: boolean;
+  autoHeight?: boolean;
+  autoFocus?: boolean;
   colorScheme?: 'dark' | 'light';
 }
 
 const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
-  { value, onChange, readOnly = false, colorScheme = 'dark' },
+  { value, onChange, readOnly = false, autoHeight = false, autoFocus = false, colorScheme = 'dark' },
   ref
 ) {
   React.useEffect(() => {
@@ -39,12 +41,13 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
   }, [ref]);
 
   return (
-    <div className="canvas-surface flex h-full w-full flex-col font-mono text-sm">
+    <div className={`canvas-surface flex w-full flex-col font-mono text-sm ${autoHeight ? '' : 'h-full'}`}>
       <CodeMirror
         ref={ref}
+        autoFocus={autoFocus}
         aria-label="Note source"
         value={value}
-        height="100%"
+        height={autoHeight ? 'auto' : '100%'}
         theme={colorScheme}
         extensions={[
           markdown({

@@ -28,7 +28,10 @@ export const DEFAULT_LAYOUT: WorkbenchLayout = {
   bottomPanel: false,
   statusBar: true,
   zen: false,
-  graphOverlay: true,
+  // Off until asked for: floating over the top-right of the editor, it covered
+  // content and controls there (a save error's Retry button, the callout Edit
+  // button). The toolbar toggle and Ctrl+Shift+G bring it up.
+  graphOverlay: false,
   sidebarSide: 'left',
   panels: {},
 };

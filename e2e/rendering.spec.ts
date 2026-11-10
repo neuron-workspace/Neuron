@@ -86,3 +86,64 @@ test('the workspace layout file can be opened and edited from the explorer', asy
   await openNote(page, '.neuron/layout.json');
   await expect(page.locator('.preview-prose, .cm-content').first()).toBeVisible();
 });
+
+test('table cells preserve backslashes and escaped pipes (#53)', async ({ page, workspace }) => {
+  writeFileSync(join(workspace, 'table-escapes.mdx'), [
+    '| Path | Note |',
+    '| --- | --- |',
+    '| C:\\Users\\me | a \\| b |',
+  ].join('\n'), 'utf-8');
+
+  await page.locator('button[aria-label="Refresh explorer"]').click();
+  await openNote(page, 'table-escapes.mdx');
+
+  const cells = page.locator('.preview-prose tbody tr').first().locator('td');
+  await expect(cells).toHaveCount(2);
+  await expect(cells).toHaveText(['C:\\Users\\me', 'a | b']);
+});
+
+test('Markdown links support balanced parentheses and quoted titles (#59)', async ({ page, workspace }) => {
+  writeFileSync(join(workspace, 'link-destinations.mdx'), [
+    '[Foo](https://en.wikipedia.org/wiki/Foo_(bar))',
+    '',
+    '[a](https://example.com "Title")',
+    '',
+    "[single](https://example.com 'Single title')",
+  ].join('\n'), 'utf-8');
+
+  await page.locator('button[aria-label="Refresh explorer"]').click();
+  await openNote(page, 'link-destinations.mdx');
+
+  const prose = page.locator('.preview-prose').first();
+  const wikipedia = prose.getByRole('link', { name: 'Foo', exact: true });
+  await expect(wikipedia).toHaveAttribute('href', 'https://en.wikipedia.org/wiki/Foo_(bar)');
+  // Without a title the tooltip is still the destination.
+  await expect(wikipedia).toHaveAttribute('title', 'https://en.wikipedia.org/wiki/Foo_(bar)');
+  // No stray ")" after the link: the parenthesis belongs to the destination.
+  await expect(wikipedia.locator('xpath=..')).toHaveText('Foo');
+  const titled = prose.getByRole('link', { name: 'a', exact: true });
+  await expect(titled).toHaveAttribute('href', 'https://example.com');
+  await expect(titled).toHaveAttribute('title', 'Title');
+  await expect(prose.getByRole('link', { name: 'single', exact: true })).toHaveAttribute('title', 'Single title');
+});
+
+test('angle-bracket and plain Markdown destinations open internal notes (#59)', async ({ page, workspace }) => {
+  writeFileSync(join(workspace, 'internal-links.mdx'), '[a](<path with spaces.md>)\n\n[plain](y.md)\n', 'utf-8');
+  writeFileSync(join(workspace, 'path with spaces.md'), '# Spaced destination\n', 'utf-8');
+  writeFileSync(join(workspace, 'y.md'), '# Plain destination\n', 'utf-8');
+
+  await page.locator('button[aria-label="Refresh explorer"]').click();
+  await openNote(page, 'internal-links.mdx');
+
+  const prose = page.locator('.preview-prose').first();
+  const spaced = prose.getByRole('button', { name: 'Open note path with spaces.md', exact: true });
+  const plain = prose.getByRole('button', { name: 'Open note y.md', exact: true });
+  await expect(spaced).toHaveText('a');
+  await expect(plain).toHaveText('plain');
+  await spaced.click();
+  await expect(prose.getByRole('heading', { name: 'Spaced destination' })).toBeVisible();
+
+  await openNote(page, 'internal-links.mdx');
+  await plain.click();
+  await expect(prose.getByRole('heading', { name: 'Plain destination' })).toBeVisible();
+});

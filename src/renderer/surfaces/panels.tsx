@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, PenLine, SplitSquareHorizontal } from 'lucide-react';
 import { Segmented, type SegmentedOption } from '../components/ui/segmented';
 import Editor from '../components/Editor';
-import LiveEditor from '../components/LiveEditor';
 import GraphCanvas from '../components/GraphCanvas';
 import MDXPreview from '../components/MDXPreview';
 import XtermTerminal from '../components/XtermTerminal';
@@ -74,6 +74,10 @@ export type EditMode = 'reading' | 'live' | 'split';
 /** The one place the three view modes are named, shared with App's own switch
     so a note does not offer "Reading view" in one shell and "reading" in the
     other. */
+/** Element id of the slot in App's tab row that the editor panel's view-mode
+    switch renders into, so it costs no row of its own. */
+export const EDITOR_MODE_SLOT = 'editor-mode-slot';
+
 export const EDIT_MODES: SegmentedOption<EditMode>[] = [
   { value: 'reading', label: 'Reading', icon: <Eye className="h-3.5 w-3.5" /> },
   { value: 'live', label: 'Live', icon: <PenLine className="h-3.5 w-3.5" /> },
@@ -101,6 +105,10 @@ function EditorPanel({ surface }: PanelContext) {
   const { selectedNote, noteContent, onChangeNote, colorScheme } = surface;
   const [modes, setModes] = useState<Record<string, EditMode>>({});
   const explorer = useExplorer();
+  // App renders the slot in the same commit, so it is found after mount; a
+  // layout that places the editor where no tab row exists keeps its own row.
+  const [modeSlot, setModeSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setModeSlot(document.getElementById(EDITOR_MODE_SLOT)); }, [selectedNote]);
 
   const isNote = !!selectedNote && /\.(md|mdx)$/.test(selectedNote);
   // Plain-text workspace files -- .neuron/layout.json above all -- are editable
@@ -142,18 +150,23 @@ function EditorPanel({ surface }: PanelContext) {
   const notePaths = surface.notesData.map((note) => note.path);
   const openNote = surface.onSelectNote;
 
+  const modeSwitch = <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />;
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center border-b border-[var(--divider)] px-2 py-1.5">
-        <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />
-      </div>
+      {modeSlot?.isConnected
+        ? createPortal(modeSwitch, modeSlot)
+        : <div className="flex items-center border-b border-[var(--divider)] px-2 py-1.5">{modeSwitch}</div>}
       <div className="min-h-0 flex-1">
         {mode === 'reading' && (
           <div className="h-full overflow-auto" onDoubleClick={() => setMode('live')}>
             <MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} notes={notePaths} onWikiLinkClick={openNote} />
           </div>
         )}
-        {mode === 'live' && <LiveEditor value={noteContent} onChange={onChangeNote} colorScheme={scheme} notes={notePaths} onWikiLinkClick={openNote} />}
+        {mode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={onChangeNote} colorScheme={scheme} notes={notePaths} onWikiLinkClick={openNote}
+          onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }}
+          onRequestRawMode={() => setMode('split')} tagSuggestions={surface.tagSuggestions} onTagClick={surface.onTagClick}
+          removeEmptyFrontmatter={surface.removeEmptyFrontmatter} defaultPropertiesCollapsed={surface.defaultPropertiesCollapsed} />}
         {mode === 'split' && (
           <div className="flex h-full divide-x divide-[var(--divider)]">
             <div className="min-w-0 flex-1"><Editor value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></div>

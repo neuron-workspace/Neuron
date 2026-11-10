@@ -3,7 +3,6 @@ import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
-import LiveEditor from './components/LiveEditor';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import Workbench from './components/Workbench';
@@ -27,7 +26,7 @@ import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
-import { EDIT_MODES, type EditMode } from './surfaces/panels';
+import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
@@ -195,6 +194,9 @@ export default function App() {
   const [propsSettings, setPropsSettings] = useState<PropertiesSettings>(DEFAULT_PROPERTIES_SETTINGS);
 
   const saveVersion = useRef(0);
+  // What the watcher needs to update the open note without fighting the user:
+  // which note is open, and whether one of our own writes is still in flight.
+  const openNoteRef = useRef<{ path: string | null; saving: boolean }>({ path: null, saving: false });
   const editorRef = useRef<any>(null);
   const browserCounter = useRef(0);
 
@@ -373,6 +375,14 @@ export default function App() {
             if (existing?.content === content) return current;
             return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
           });
+          // The open note follows its file. It used to keep showing what it was
+          // opened with, so an edit from a sync client, git or another editor
+          // stayed invisible -- and the next keystroke here wrote over it. Our
+          // own saves come back through the watcher too, so wait while one is in
+          // flight: adopting the disk copy then could undo the user's last few
+          // characters. When that write lands, the disk is what they typed.
+          const open = openNoteRef.current;
+          if (path === open.path && !open.saving) setNoteContent(current => current === content ? current : content);
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
@@ -390,6 +400,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    openNoteRef.current = { path: selectedNote && !isUrl(selectedNote) ? selectedNote : null, saving: false };
     (async () => {
       if (!selectedNote || isUrl(selectedNote) || !window.electronAPI) { setNoteContent(''); setSaveState('idle'); return; }
       try {
@@ -509,9 +520,11 @@ export default function App() {
     if (!selectedNote || !window.electronAPI) return;
     const version = ++saveVersion.current;
     setSaveState('saving');
+    openNoteRef.current.saving = true;
     setNotesData((previous) => previous.map((note) => (note.path === selectedNote ? { ...note, content: value } : note)));
     const result = await window.electronAPI.writeNote(selectedNote, value);
     if (version !== saveVersion.current) return;
+    openNoteRef.current.saving = false;
     setSaveState(result.success ? 'saved' : 'error');
     if (result.success && selectedNote === SHELL_CONFIG) setPendingShellConfig(value);
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
@@ -703,10 +716,22 @@ export default function App() {
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
         case 'toggle-graph': toggleGraphOverlay(); break;
+        case 'toggle-fullscreen': void window.electronAPI.windowControls.toggleFullScreen(); break;
       }
     };
+    // Capture before terminals/editors consume the palette chord; Settings can
+    // still record shortcuts in its earlier window capture listener.
+    const capturePalette = (event: KeyboardEvent) => {
+      if (!document.body.classList.contains('window-fullscreen') || eventToChord(event) !== bindings.palette) return;
+      event.stopPropagation();
+      handler(event);
+    };
+    document.addEventListener('keydown', capturePalette, true);
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', capturePalette, true);
+      window.removeEventListener('keydown', handler);
+    };
   }, [bindings, requestCreate, createSurfaceFile, openWebsite, patchLayout]);
 
   const saveLabel = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' }[saveState];
@@ -736,7 +761,7 @@ export default function App() {
   const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
 
   const editorHeader = (
-    <header className="pane-header flex items-center justify-between border-b">
+    <header className="pane-header editor-tab-header flex items-center justify-between border-b">
       <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
       {selectedNote && Surface ? (
           <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
@@ -759,6 +784,10 @@ export default function App() {
                 was invisible while this was a dropdown and the other a row of
                 text; giving them the same shape is what showed it. */}
             {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
+            {/* In a layout workspace the editor panel owns the view mode and
+                renders its switch into this slot, so it shares the tab row
+                instead of taking a row of its own. */}
+            {shellConfig && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
           </div>
       ) : null}
     </header>
@@ -780,7 +809,7 @@ export default function App() {
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
-            {editorMode === 'live' && <LiveEditor value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
+            {editorMode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={handleContentChange} onToggleTask={handleToggleTask} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
             {editorMode === 'split' && rawSplit}
             {editorMode === 'reading' && (
               <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
@@ -792,15 +821,20 @@ export default function App() {
   ) : (
     // What used to be a blank "Choose a note to begin" panel. Nothing selected
     // means the explorer at the workspace root; the tabs, if any, are untouched.
-    <WorkspaceExplorer
-      repositoryName={explorerState.repositoryName}
-      paths={explorerState.paths}
-      folder={explorerState.folder}
-      onNavigate={explorerState.navigate}
-      onOpenFile={explorerState.openFile}
-      recents={explorerState.recents}
-      onClearRecents={explorerState.clearRecents}
-    />
+    <div className="flex h-full w-full flex-col">
+      {editorHeader}
+      <div className="min-h-0 flex-1">
+        <WorkspaceExplorer
+          repositoryName={explorerState.repositoryName}
+          paths={explorerState.paths}
+          folder={explorerState.folder}
+          onNavigate={explorerState.navigate}
+          onOpenFile={explorerState.openFile}
+          recents={explorerState.recents}
+          onClearRecents={explorerState.clearRecents}
+        />
+      </div>
+    </div>
   );
 
   let mainContent: React.ReactNode;
@@ -828,6 +862,10 @@ export default function App() {
             noteContent={noteContent}
             onChangeNote={handleContentChange}
             colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'}
+            tagSuggestions={tags}
+            onTagClick={setSelectedTag}
+            removeEmptyFrontmatter={propsSettings.removeEmpty}
+            defaultPropertiesCollapsed={propsSettings.collapsedByDefault}
           />
         </div>
       </div>
@@ -946,7 +984,7 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar repositoryName={repository?.name ?? null} activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
         </div>
 
         <CreateModal
@@ -959,6 +997,10 @@ export default function App() {
           onCreateSection={createSectionFolder}
         />
         <CommandPalette
+          recents={recents}
+          onOpenRepo={openRepository}
+          onCreateRepo={createRepository}
+          onSwitchRepo={switchRepository}
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
           notes={notes}
