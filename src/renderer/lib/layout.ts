@@ -5,6 +5,19 @@ export type Dock = 'left' | 'right' | 'bottom';
 export const DOCKS: Dock[] = ['left', 'right', 'bottom'];
 export const PANEL_MIME = 'application/x-neuron-panel';
 export const SIDEBAR_MIME = 'application/x-neuron-sidebar';
+/** The dockable twin of the floating graph. */
+export const GRAPH_PANEL_KEY = 'graph:graph.panel';
+/** Window events the floating graph sends while its grip is dragged, so the
+    workbench can show where it would dock. detail: { x, y } in client pixels. */
+export const FLOAT_DRAG_EVENT = 'neuron:float-drag';
+export const FLOAT_DROP_EVENT = 'neuron:float-drop';
+
+/** Which dock a pointer is over: the outer bands of the workbench. The middle is none. */
+export function dockBand(rect: { left: number; top: number; width: number; height: number }, x: number, y: number, allowBottom = true): Dock | null {
+  const fx = (x - rect.left) / rect.width;
+  const fy = (y - rect.top) / rect.height;
+  return allowBottom && fy > 0.72 ? 'bottom' : fx < 0.22 ? 'left' : fx > 0.78 ? 'right' : null;
+}
 
 export type GroupTarget = number | 'new-before' | 'new-after' | { group: number; edge: 'before' | 'after' };
 

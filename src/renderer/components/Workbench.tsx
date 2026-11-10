@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { usePlugins } from '../plugins/host';
-import { PANEL_MIME, SIDEBAR_MIME, activePanel, movePanel, panelKey, placePanels, type Dock, type GroupTarget, type WorkbenchLayout } from '../lib/layout';
+import { FLOAT_DRAG_EVENT, FLOAT_DROP_EVENT, GRAPH_PANEL_KEY, PANEL_MIME, SIDEBAR_MIME, activePanel, dockBand, movePanel, panelKey, placePanels, type Dock, type GroupTarget, type WorkbenchLayout } from '../lib/layout';
 import PanelDock from './RightPanel';
 
 export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, sidebar, children }: {
@@ -15,7 +15,10 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
   const placed = placePanels(panels, layout);
   const sizes = useRef<Record<string, number>>({});
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [drag, setDrag] = useState<'panel' | 'sidebar' | null>(null);
+  const [drag, setDrag] = useState<'panel' | 'sidebar' | 'float' | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const latest = useRef({ panels, layout, onLayoutChange });
+  latest.current = { panels, layout, onLayoutChange };
   const [hover, setHover] = useState<Dock | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const clearDrag = () => { setDrag(null); setHover(null); setDragKey(null); };
@@ -30,6 +33,29 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
       window.removeEventListener('drop', clear);
       window.removeEventListener('blur', clear);
     };
+  }, []);
+
+  // The floating graph is not an HTML drag, so it reports its pointer here. Over
+  // a dock band it shows the same slot a panel would, and dropping there docks it.
+  useEffect(() => {
+    const band = (event: Event): Dock | null => {
+      const root = rootRef.current;
+      const { x, y } = (event as CustomEvent<{ x: number; y: number }>).detail;
+      if (!root || !latest.current.panels.some((p) => panelKey(p) === GRAPH_PANEL_KEY)) return null;
+      return dockBand(root.getBoundingClientRect(), x, y);
+    };
+    const onDrag = (event: Event) => { setDrag('float'); setHover(band(event)); };
+    const onDrop = (event: Event) => {
+      const target = band(event);
+      setDrag(null); setHover(null);
+      if (!target) return;
+      const next = movePanel(latest.current.panels, latest.current.layout, GRAPH_PANEL_KEY, target);
+      latest.current.onLayoutChange({ ...next, [target + 'Panel']: true, graphOverlay: false });
+      setFocusId(GRAPH_PANEL_KEY);
+    };
+    window.addEventListener(FLOAT_DRAG_EVENT, onDrag);
+    window.addEventListener(FLOAT_DROP_EVENT, onDrop);
+    return () => { window.removeEventListener(FLOAT_DRAG_EVENT, onDrag); window.removeEventListener(FLOAT_DROP_EVENT, onDrop); };
   }, []);
 
   const move = (key: string, dock: Dock, index?: number, group?: GroupTarget) => {
@@ -48,7 +74,7 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
     const members = placed[dock][group] ?? [];
     const current = activePanel(members, layout, dock, group);
     return (
-      <PanelDock dock={dock} group={group} groupCount={count} dragging={drag === 'panel'} dragKey={dragKey} dropTarget={drag === 'panel' && hover === dock} dockPanels={members}
+      <PanelDock dock={dock} group={group} groupCount={count} dragging={drag === 'panel'} dragKey={dragKey} dropTarget={(drag === 'panel' || drag === 'float') && hover === dock} dockPanels={members}
         activeId={current ? panelKey(current) : null} focusId={focusId}
         onActivate={(key) => { onLayoutChange({ activePanels: { ...layout.activePanels, [dock + ':' + group]: key } }); setFocusId(key); }}
         onMove={move} onOpenMarketplace={onOpenMarketplace}
@@ -100,11 +126,8 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
 
   // Where a drag would land, from the pointer alone: the outer bands of the
   // workbench are the three docks, and the middle means "put it back".
-  const targetAt = (event: DragEvent, kind: 'panel' | 'sidebar' | null = drag): Dock | null => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const fx = (event.clientX - rect.left) / rect.width;
-    const fy = (event.clientY - rect.top) / rect.height;
-    const target: Dock | null = kind === 'panel' && fy > 0.72 ? 'bottom' : fx < 0.22 ? 'left' : fx > 0.78 ? 'right' : null;
+  const targetAt = (event: DragEvent, kind: 'panel' | 'sidebar' | 'float' | null = drag): Dock | null => {
+    const target = dockBand(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, kind === 'panel');
     return kind === 'sidebar' && target === layout.sidebarSide ? null : target;
   };
   const dockOpen = (dock: Dock) => layout[(dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel'];
@@ -113,14 +136,14 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
   const slot = (dock: Dock) => (
     <div aria-label={dock[0].toUpperCase() + dock.slice(1) + ' dock'} aria-hidden={!drag}
       data-dock-zone={dock} data-visible={!!drag} data-hover={hover === dock}
-      data-open={drag === 'panel' && dockOpen(dock)}
+      data-open={drag !== 'sidebar' && dockOpen(dock)}
       className={'dock-slot dock-slot-' + (dock === 'bottom' ? 'h' : 'v')}>
       <div className="dock-slot-fill" />
     </div>
   );
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-dragging={drag ?? undefined}
+    <div ref={rootRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-dragging={drag ?? undefined}
       onDragStart={(event) => { detectDrag(event); setDragKey((event.target as HTMLElement).dataset?.panelKey ?? null); }}
       onDragEnter={detectDrag} onDropCapture={clearDrag}
       onDragOver={(event) => {
