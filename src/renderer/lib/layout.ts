@@ -9,6 +9,7 @@ export const SIDEBAR_MIME = 'application/x-neuron-sidebar';
 export interface WorkbenchLayout {
   activityBar: boolean;
   sidebar: boolean;
+  sidebarCollapsed: boolean;
   leftPanel: boolean;
   rightPanel: boolean;
   bottomPanel: boolean;
@@ -23,6 +24,7 @@ export interface WorkbenchLayout {
 export const DEFAULT_LAYOUT: WorkbenchLayout = {
   activityBar: true,
   sidebar: true,
+  sidebarCollapsed: false,
   leftPanel: false,
   rightPanel: false,
   bottomPanel: false,
@@ -45,7 +47,7 @@ const safeKey = (key: string) => key.includes(':') && !key.split(':').some((part
 export function resolveLayout(stored: unknown): WorkbenchLayout {
   const merged: WorkbenchLayout = { ...DEFAULT_LAYOUT, panels: {} };
   if (isObject(stored)) {
-    for (const key of ['activityBar', 'sidebar', 'leftPanel', 'rightPanel', 'bottomPanel', 'statusBar', 'graphOverlay'] as const) {
+    for (const key of ['activityBar', 'sidebar', 'sidebarCollapsed', 'leftPanel', 'rightPanel', 'bottomPanel', 'statusBar', 'graphOverlay'] as const) {
       if (typeof stored[key] === 'boolean') merged[key] = stored[key];
     }
     if (stored.sidebarSide === 'left' || stored.sidebarSide === 'right') merged.sidebarSide = stored.sidebarSide;

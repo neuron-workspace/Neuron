@@ -43,7 +43,7 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate,
               {isUrl(note)
                 ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />
                 : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />}
-              <span className="truncate font-mono">{noteLabel(note)}</span>
+              <span className="truncate font-sans">{noteLabel(note)}</span>
             </button>
             <button
               type="button"

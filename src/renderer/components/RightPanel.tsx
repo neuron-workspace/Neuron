@@ -54,7 +54,7 @@ export default function PanelDock({
       aria-label={`${dock === 'bottom' ? 'Bottom' : dock === 'left' ? 'Left' : 'Side'} plugin peek`}
       className="shell-card flex h-full w-full flex-col"
     >
-      <header ref={headerRef} className="pane-header flex items-center justify-between gap-1 border-b px-2">
+      <header ref={headerRef} className="pane-header dock-header flex items-center justify-between gap-1 border-b px-2">
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           aria-label="Panel tabs"
           onDragOver={(event) => { if (event.dataTransfer.types.includes(PANEL_MIME)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }}

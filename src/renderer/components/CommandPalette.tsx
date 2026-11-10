@@ -83,7 +83,7 @@ export default function CommandPalette({ layout, onLayoutChange, onResetLayout, 
         </CommandGroup>
 
         <CommandGroup heading="Layout">
-          <CommandItem onSelect={() => { onLayoutChange({ activityBar: !layout.activityBar }); close(); }}><PanelsTopLeft /> {layout.activityBar ? 'Hide' : 'Show'} activity bar</CommandItem>
+          <CommandItem onSelect={() => { onLayoutChange({ sidebar: true, sidebarCollapsed: !layout.sidebarCollapsed }); close(); }}><PanelsTopLeft /> {layout.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar to icons'}</CommandItem>
           <CommandItem onSelect={() => { onLayoutChange({ statusBar: !layout.statusBar }); close(); }}><PanelsTopLeft /> {layout.statusBar ? 'Hide' : 'Show'} status bar</CommandItem>
           <CommandItem onSelect={() => { close(); void window.electronAPI.windowControls.toggleFullScreen(); }}><Focus /> Toggle full screen<Shortcut chord={bindings['toggle-fullscreen']} /></CommandItem>
           <CommandItem onSelect={() => { onLayoutChange({ zen: !layout.zen }); close(); }}><Focus /> {layout.zen ? 'Exit zen mode' : 'Zen mode'}<Shortcut chord={bindings['toggle-zen']} /></CommandItem>

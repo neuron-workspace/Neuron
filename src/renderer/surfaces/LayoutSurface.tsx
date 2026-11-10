@@ -1,18 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { LayoutDashboard, RotateCcw, X } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { SurfaceProps } from './index';
 import { parseLayout, type LayoutChild, type LayoutGroup } from './layout';
 import { getPanel, type PanelContext } from './panels';
 
-function PanelBody({ spec, surface, onClose, label }: PanelContext & { onClose: () => void; label: string }) {
+function PanelBody({ spec, surface, onClose, label, editorHeader }: PanelContext & { onClose: () => void; label: string; editorHeader?: ReactNode }) {
   const Renderer = getPanel(spec.type);
   if (!Renderer) {
     return <div className="grid h-full place-items-center px-4 text-center text-xs text-[var(--ink-muted)]">Unknown panel type "{spec.type}".</div>;
   }
   return (
-    <div className="group/panel relative h-full min-h-0">
-      <Renderer spec={spec} surface={surface} />
+    <div className="shell-card group/panel relative flex h-full min-h-0 flex-col">
+      {spec.type === 'editor' && editorHeader ? editorHeader : <header className="flex h-7 shrink-0 items-center border-b border-[var(--divider)] bg-[var(--surface)] px-3 text-xs text-[var(--ink-secondary)]">{label[0].toUpperCase() + label.slice(1)}</header>}
+      <div className="min-h-0 flex-1"><Renderer spec={spec} surface={surface} /></div>
       {/* Revealed on hover and on keyboard focus. Always-visible chrome on every
           panel would cost more than the control is worth, but focus-visible
           keeps it reachable without a mouse.
@@ -40,6 +41,7 @@ function renderGroup(
   key: string,
   hidden: Set<string>,
   hide: (id: string) => void,
+  editorHeader?: ReactNode,
 ) {
   const handleClass = group.direction === 'horizontal' ? 'resize-handle resize-handle-v' : 'resize-handle resize-handle-h';
   return (
@@ -57,9 +59,9 @@ function renderGroup(
         .map(({ child, childKey, i }) => (
           <Panel key={childKey} id={childKey} order={i + 1} defaultSize={child.size} minSize={8} className="min-h-0 min-w-0">
             {child.group
-              ? renderGroup(child.group, surface, childKey, hidden, hide)
+              ? renderGroup(child.group, surface, childKey, hidden, hide, editorHeader)
               : child.panel
-                ? <PanelBody spec={child.panel} surface={surface} onClose={() => hide(childKey)} label={child.panel.type} />
+                ? <PanelBody editorHeader={editorHeader} spec={child.panel} surface={surface} onClose={() => hide(childKey)} label={child.panel.type} />
                 : null}
           </Panel>
         ))
@@ -68,7 +70,7 @@ function renderGroup(
   );
 }
 
-export function LayoutSurface(props: SurfaceProps) {
+export function LayoutSurface(props: SurfaceProps & { editorHeader?: ReactNode }) {
   const group = useMemo(() => parseLayout(props.content), [props.content]);
   // Session-scoped on purpose: .neuron/layout.json is the user's own file and a
   // click on a close button should not rewrite it. Reopening the workspace
@@ -87,7 +89,7 @@ export function LayoutSurface(props: SurfaceProps) {
 
   return (
     <div className="relative h-full w-full">
-      {renderGroup(group, props, '0', hidden, hide)}
+      {renderGroup(group, props, '0', hidden, hide, props.editorHeader)}
       {/* Closing must not be one-way. Without this, hiding the terminal would
           mean editing .neuron/layout.json by hand to get it back. */}
       {hidden.size > 0 && (

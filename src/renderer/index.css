@@ -323,11 +323,12 @@ body.platform-darwin .status-bar {
   padding-block: 0;
 }
 
-.editor-tab-header .segmented {
+.note-header .segmented {
+  background: var(--surface);
   padding: 0;
 }
 
-.editor-tab-header .segmented button {
+.note-header .segmented button {
   min-height: 22px;
 }
 
@@ -584,3 +585,7 @@ html[data-theme='light'] .neuron-logo {
 }
 
 .field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+
+.note-header .segmented button { border: 1px solid transparent; }
+.note-header .segmented button[aria-pressed="true"] { background: var(--canvas); border-color: var(--divider); box-shadow: none; }
+.pane-header.dock-header { height: 28px; min-height: 28px; flex-shrink: 0; }

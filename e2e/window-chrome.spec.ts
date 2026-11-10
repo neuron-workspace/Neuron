@@ -131,15 +131,15 @@ for (const maximized of [false, true]) {
       for (const command of [
         'Open folder…', 'Create workspace…', 'Plugins & integrations',
         'Hide sidebar', 'Show left dock', 'Show right dock', 'Show bottom dock', 'Show workspace graph',
-        'Hide activity bar', maximized ? 'Show status bar' : 'Hide status bar', 'Zen mode',
+        'Collapse sidebar to icons', maximized ? 'Show status bar' : 'Hide status bar', 'Zen mode',
         'Move sidebar to the right', 'Reset layout',
       ]) {
         await dialog.getByRole('combobox').fill(command);
         await expect(dialog.getByRole('option', { name: command })).toBeVisible();
       }
       await page.keyboard.press('Escape');
-      await paletteCommand(page, 'Hide activity bar');
-      await paletteCommand(page, 'Show activity bar');
+      await paletteCommand(page, 'Collapse sidebar to icons');
+      await paletteCommand(page, 'Expand sidebar');
       await expect.poll(() => content.evaluate((node) => node.getBoundingClientRect().top)).toBe(0);
     } finally {
       await setFullScreen(app, false);

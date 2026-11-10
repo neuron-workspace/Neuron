@@ -14,6 +14,11 @@ try { helpers = await import(pathToFileURL(tmp)); } finally { rmSync(tmp); }
 const { DEFAULT_LAYOUT, resolveLayout, placePanels, movePanel, panelKey } = helpers;
 
 for (const input of [undefined, null, false, 42, 'junk', []]) assert.deepEqual(resolveLayout(input), DEFAULT_LAYOUT);
+assert.equal(resolveLayout({}).sidebarCollapsed, false);
+for (const value of [true, false]) assert.equal(resolveLayout({ sidebarCollapsed: value }).sidebarCollapsed, value);
+for (const value of ['true', 'false', 0, 1, null, [], {}, undefined]) {
+  assert.equal(resolveLayout({ sidebarCollapsed: value }).sidebarCollapsed, false);
+}
 const defaults = resolveLayout({});
 defaults.panels['test:one'] = { dock: 'left', order: 0 };
 assert.deepEqual(DEFAULT_LAYOUT.panels, {});

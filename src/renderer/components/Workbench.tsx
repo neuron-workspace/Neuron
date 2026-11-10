@@ -87,12 +87,14 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
       <PanelGroup direction="horizontal" autoSaveId={layout.sidebarSide === 'left' ? 'neuron.shell.h' : 'neuron.shell.h.right'} className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {regions.map((region, order) => (
           <Fragment key={region}>
-            {order > 0 && <PanelResizeHandle className="resize-handle resize-handle-v" />}
+            {order > 0 && (layout.sidebarCollapsed && (region === 'sidebar' || regions[order - 1] === 'sidebar') ? <div className="w-2 shrink-0" /> : <PanelResizeHandle className="resize-handle resize-handle-v" />)}
+            {region === 'sidebar' && layout.sidebarCollapsed ? <div className="h-full w-11 shrink-0">{sidebar}</div> : (
             <Panel key={region} id={region} order={order} defaultSize={sizes.current[region] ?? (region === 'sidebar' ? 18 : region === 'left' ? 22 : undefined)}
               onResize={(size) => { sizes.current[region] = size; }}
               minSize={region === 'center' ? 30 : 12} maxSize={region === 'center' ? undefined : 40} className="min-w-0">
               {region === 'center' ? center : region === 'sidebar' ? sidebar : dockView('left')}
             </Panel>
+            )}
           </Fragment>
         ))}
       </PanelGroup>

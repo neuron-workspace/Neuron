@@ -1,3 +1,4 @@
+import { cn } from './lib/utils';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -37,7 +38,7 @@ import {
   addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
 } from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
-import ActivityRail, { type SidebarMode } from './components/ActivityRail';
+import { type SidebarMode } from './components/ActivityRail';
 import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
 
 interface PropertiesSettings { removeEmpty: boolean; showInReading: boolean; collapsedByDefault: boolean }
@@ -761,10 +762,18 @@ export default function App() {
   const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
 
   const editorHeader = (
-    <header className="pane-header editor-tab-header flex items-center justify-between">
+    <header className="shrink-0">
+      <div className="pane-header editor-tab-header flex items-center">
       <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
+      </div>
+      {selectedNote && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
+        <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
+          {selectedNote.includes('/') && <span>{selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1)}</span>}
+          <span className="text-[var(--ink-secondary)]">{selectedNote.split('/').pop()}</span>
+        </div>
+        {!browsing && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{saveLabel}</span>}
       {selectedNote && Surface ? (
-          <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
+          <div className="flex shrink-0 items-center">
             <Segmented
               label="Surface mode"
               value={surfaceEditing ? 'source' : 'preview'}
@@ -776,8 +785,7 @@ export default function App() {
             />
           </div>
       ) : selectedNote && !browsing ? (
-          <div className="flex h-full shrink-0 items-center gap-3 border-l border-[var(--divider)] px-3">
-            {saveState === 'error' && <span role="status" className="text-[11px] text-[var(--danger)]">{saveLabel}</span>}
+          <div className="flex shrink-0 items-center gap-3">
             {/* Not in a layout workspace. There the editor is a panel that owns
                 its own view mode, so this switch drove nothing -- two identical
                 controls one above the other, and only the lower one worked. It
@@ -785,11 +793,12 @@ export default function App() {
                 text; giving them the same shape is what showed it. */}
             {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
             {/* In a layout workspace the editor panel owns the view mode and
-                renders its switch into this slot, so it shares the tab row
+                renders its switch into this slot, so it shares the note header
                 instead of taking a row of its own. */}
             {shellConfig && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
           </div>
       ) : null}
+      </div>}
     </header>
   );
 
@@ -851,9 +860,9 @@ export default function App() {
     // browser tabs are full-page documents, so let them fall through to notesView.
     mainContent = (
       <div className="flex h-full w-full flex-col">
-        {editorHeader}
         <div className="min-h-0 flex-1">
           <LayoutSurface
+            editorHeader={editorHeader}
             path={SHELL_CONFIG}
             content={shellConfig}
             notesData={notesData}
@@ -908,24 +917,15 @@ export default function App() {
             <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
-              {layout.activityBar && (
-                <ActivityRail
-                  view={view}
-                  sidebarMode={sidebarMode}
-                  sidebarOpen={sidebarOpen}
-                  tagCount={tags.length}
-                  onSelectMode={(mode) => {
-                    if (view === 'notes' && sidebarOpen && sidebarMode === mode) { patchLayout({ sidebar: false }); return; }
-                    setSidebarMode(mode);
-                    setView('notes');
-                    if (!sidebarOpen) patchLayout({ sidebar: true });
-                  }}
-                  onNavigate={setView}
-                />
-              )}
             <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => setView('plugins')}
               sidebar={
                 <Sidebar
+                  collapsed={layout.sidebarCollapsed}
+                  onToggleCollapsed={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
+                  onSelectMode={(mode) => { setSidebarMode(mode); setView('notes'); }}
+                  onNavigate={setView}
+                  graphOpen={graphOverlayOpen}
+                  onToggleGraph={toggleGraphOverlay}
                   sidebarSide={layout.sidebarSide}
                   onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
                   notes={filteredNotes}
@@ -945,7 +945,7 @@ export default function App() {
                   selectedTag={selectedTag}
                 />
               }>
-              <main className="shell-card relative flex h-full w-full min-w-0 flex-col overflow-hidden">
+              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && shellConfig && !Surface && !browsing) && 'shell-card')}>
                 {notice && (
                   <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
                     <span>{notice}</span>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, Home, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
-import type { SidebarMode } from './ActivityRail';
+import ActivityRail, { type SidebarMode } from './ActivityRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
@@ -9,6 +9,12 @@ import { searchNotes } from '../lib/search';
 type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
 
 interface SidebarProps {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onSelectMode: (mode: SidebarMode) => void;
+  onNavigate: (view: View) => void;
+  graphOpen: boolean;
+  onToggleGraph: () => void;
   sidebarSide: 'left' | 'right';
   onMoveSidebar: (side: 'left' | 'right') => void;
   notes: string[];
@@ -155,7 +161,7 @@ export default function Sidebar(props: SidebarProps) {
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
         <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }}>
           <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
-          <span className="truncate font-mono text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
+          <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
         {isConfirming ? (
           <button aria-busy={deletingNote === file.path} disabled={deletingNote === file.path} className="interactive min-h-[28px] rounded px-1.5 py-1 text-[10px] font-semibold text-[var(--danger)] hover:bg-[var(--danger-surface)]" onClick={() => handleDelete(file.path)}>
@@ -178,7 +184,7 @@ export default function Sidebar(props: SidebarProps) {
         <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => onSelectNote(appPath)}>
           <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate text-[12px] font-medium">{node.name}</span>
-          <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
+          <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-sans text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
         </button>
       </div>
     );
@@ -213,7 +219,7 @@ export default function Sidebar(props: SidebarProps) {
   };
 
   const noteTree = (
-    <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
+    <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
       {tree.files.filter((f) => !isAppInternal(f.name)).sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
       {filtered.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
@@ -221,7 +227,8 @@ export default function Sidebar(props: SidebarProps) {
   );
 
   return (
-    <aside aria-label="Workspace sidebar" className="nav-surface flex h-full w-full shrink-0 select-none flex-col">
+    <aside aria-label="Workspace sidebar" data-sidebar-collapsed={props.collapsed} className="nav-surface flex h-full w-full shrink-0 select-none flex-col">
+      <ActivityRail view={view} sidebarMode={mode} sidebarOpen tagCount={tags.length} collapsed={props.collapsed} onToggleCollapsed={props.onToggleCollapsed} onSelectMode={props.onSelectMode} onNavigate={props.onNavigate} graphOpen={props.graphOpen} onToggleGraph={props.onToggleGraph}>
       {mode === 'files' && (
         <section aria-label="Explorer" className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between gap-1 px-3 py-2">
@@ -291,8 +298,8 @@ export default function Sidebar(props: SidebarProps) {
                       filename hit with nothing behind it. */}
                   {hit.matches.map((match) => (
                     <div key={match.line} className="mt-0.5 flex gap-1.5 pl-5">
-                      <span className="shrink-0 font-mono text-[10px] tabular-nums text-[var(--ink-muted)]">{match.line}</span>
-                      <span className="truncate font-mono text-[10px] leading-4 text-[var(--ink-secondary)]">{match.text}</span>
+                      <span className="shrink-0 font-sans text-[10px] tabular-nums text-[var(--ink-muted)]">{match.line}</span>
+                      <span className="truncate font-sans text-[10px] leading-4 text-[var(--ink-secondary)]">{match.text}</span>
                     </div>
                   ))}
                 </button>
@@ -317,12 +324,13 @@ export default function Sidebar(props: SidebarProps) {
               <p className="px-1 py-6 text-center text-xs leading-5 text-[var(--ink-muted)]">No tags yet. Add #tags to your notes to filter by them.</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {tags.map((tag) => <button key={tag} aria-pressed={selectedTag === tag} className="tag-button interactive px-2 font-mono text-[10px]" onClick={() => onSelectTag(selectedTag === tag ? null : tag)}>#{tag}</button>)}
+                {tags.map((tag) => <button key={tag} aria-pressed={selectedTag === tag} className="tag-button interactive px-2 font-sans text-[10px]" onClick={() => onSelectTag(selectedTag === tag ? null : tag)}>#{tag}</button>)}
               </div>
             )}
           </div>
         </section>
       )}
+      </ActivityRail>
     </aside>
   );
 }
