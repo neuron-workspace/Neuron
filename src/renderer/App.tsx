@@ -170,6 +170,24 @@ export default function App() {
     });
   }, []);
 
+  // Settings and the workspace manager are about the app, not this workspace,
+  // so they open in a window of their own.
+  const remoteAppearance = useRef<string | null>(null);
+  const utilityWindow = useMemo(() => {
+    const page = new URLSearchParams(window.location.search).get('window');
+    return page === 'settings' || page === 'workspaces' ? page : null;
+  }, []);
+  const openGlobalPage = useCallback((page: 'settings' | 'workspaces') => {
+    if (window.electronAPI?.windowControls?.openPage) void window.electronAPI.windowControls.openPage(page);
+    else setView(page === 'settings' ? 'settings' : 'repositories');
+  }, []);
+  // Another window changed a shared setting: take the new value.
+  useEffect(() => window.electronAPI?.settings.onChanged?.((key) => {
+    if (key === 'appearance') void window.electronAPI.settings.get<Appearance>('appearance').then((stored) => { const next = normalizeAppearance(stored); remoteAppearance.current = JSON.stringify(next); applyTheme(next); setAppearance(next); });
+    if (key === 'keybindings') void window.electronAPI.settings.get<Bindings>('keybindings').then((stored) => setBindings(resolveBindings(stored)));
+    if (key === 'properties') void window.electronAPI.settings.get<Partial<PropertiesSettings>>('properties').then((stored) => { if (stored) setPropsSettings({ ...DEFAULT_PROPERTIES_SETTINGS, ...stored }); });
+  }), []);
+
   const updatePropsSettings = useCallback((next: PropertiesSettings) => {
     setPropsSettings(next);
     void window.electronAPI?.settings.set('properties', next);
@@ -266,6 +284,9 @@ export default function App() {
 
   useEffect(() => {
     if (!appearanceReady || !window.electronAPI) return;
+    // A theme another window chose is already saved. Saving it again from here
+    // would echo back and could overwrite a newer choice made over there.
+    if (remoteAppearance.current === JSON.stringify(appearance)) return;
     void window.electronAPI.settings.set('appearance', appearance).then((result) => {
       if (!result.success) setNotice('Appearance settings could not be saved.');
     });
@@ -289,18 +310,24 @@ export default function App() {
     (async () => { await reloadRepoState(); setRepoReady(true); })();
     return window.electronAPI.repository.onChanged(() => { void reloadRepoState(); });
   }, [reloadRepoState]);
+  // The workspace manager lists what other windows open and forget.
+  useEffect(() => {
+    if (utilityWindow !== 'workspaces') return;
+    const refresh = () => { void reloadRepoState(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [utilityWindow, reloadRepoState]);
 
   const createRepository = useCallback(async () => {
-    const repo = await window.electronAPI?.repository.create();
-    if (repo) { setRepository(repo); void reloadRepoState(); }
+    // The folder may open in its own window, so ask what this window shows now.
+    if (await window.electronAPI?.repository.create()) void reloadRepoState();
   }, [reloadRepoState]);
   const openRepository = useCallback(async () => {
-    const repo = await window.electronAPI?.repository.open();
-    if (repo) { setRepository(repo); void reloadRepoState(); }
+    if (await window.electronAPI?.repository.open()) void reloadRepoState();
   }, [reloadRepoState]);
   const switchRepository = useCallback(async (dir: string) => {
     const result = await window.electronAPI?.repository.switch(dir);
-    if (result?.success && result.repository) { setRepository(result.repository); setView('notes'); void reloadRepoState(); }
+    if (result?.success) void reloadRepoState();
   }, [reloadRepoState]);
 
   // --- Notes ----------------------------------------------------------------
@@ -973,6 +1000,23 @@ export default function App() {
     mainContent = notesView;
   }
 
+  if (utilityWindow) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <div className="flex h-screen flex-col bg-[var(--nav)] font-sans text-[var(--ink)]" data-utility-window={utilityWindow}>
+          <header className="titlebar flex h-10 shrink-0 items-center px-4 text-[13px] font-medium text-[var(--ink-secondary)]">
+            {utilityWindow === 'settings' ? 'Settings' : 'Workspaces'}
+          </header>
+          <main className="shell-card mx-2 mb-2 min-h-0 flex-1 overflow-auto">
+            {utilityWindow === 'settings'
+              ? <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />
+              : <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />}
+          </main>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <PluginProvider catalog={builtinPlugins} bridge={bridge}>
       <ExplorerProvider value={explorerState}>
@@ -993,7 +1037,7 @@ export default function App() {
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
             onOpenMarketplace={() => setView('plugins')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
-            onOpenSettings={() => setView('settings')}
+            onOpenSettings={() => openGlobalPage('settings')}
             onSwitchRepo={switchRepository}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}
@@ -1014,7 +1058,7 @@ export default function App() {
                   collapsed={layout.sidebarCollapsed}
                   onToggleCollapsed={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
                   onSelectMode={(mode) => { setSidebarMode(mode); setView('notes'); }}
-                  onNavigate={setView}
+                  onNavigate={(next) => (next === 'settings' ? openGlobalPage('settings') : next === 'repositories' ? openGlobalPage('workspaces') : setView(next))}
                   graphOpen={graphOverlayOpen}
                   onToggleGraph={toggleGraphOverlay}
                   sidebarSide={layout.sidebarSide}
@@ -1105,7 +1149,7 @@ export default function App() {
           notes={notes}
           onSelectNote={handleSelectNote}
           onOpenMarketplace={() => setView('plugins')}
-          onOpenSettings={() => setView('settings')}
+          onOpenSettings={() => openGlobalPage('settings')}
           onCreate={() => requestCreate()}
           onCreateSurface={createSurfaceFile}
           onOpenWebsite={openWebsite}

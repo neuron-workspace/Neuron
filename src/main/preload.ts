@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Window controls
   windowControls: {
     setOverlayColors: (colors: { color: string; symbolColor: string }) => ipcRenderer.invoke('window:set-overlay-colors', colors),
+    // Settings and the workspace manager are about the app, not one workspace, so they open in their own window.
+    openPage: (page: 'settings' | 'workspaces') => ipcRenderer.invoke('window:open-page', page),
     // Menu items the macOS application menu owns but the renderer performs.
     onMenuCommand: (callback: (command: string) => void) => {
       const listener = (_event: unknown, command: string) => callback(command);
@@ -78,6 +80,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+    // Another window changed a setting. Only the key arrives; read the value with get().
+    onChanged: (callback: (key: string) => void) => {
+      const listener = (_event: unknown, key: string) => callback(key);
+      ipcRenderer.on('settings:changed', listener);
+      return () => { ipcRenderer.removeListener('settings:changed', listener); };
+    },
     // Write-only by design: a secret can be stored and its presence checked,
     // never read back into the renderer.
     setSecret: (scope: string, field: string, value: string) => ipcRenderer.invoke('settings:set-secret', scope, field, value),

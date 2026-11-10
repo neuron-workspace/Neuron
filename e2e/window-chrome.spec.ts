@@ -203,15 +203,21 @@ test('theme changes reach the native overlay and invalid colors are ignored', as
     };
   });
 
-  await paletteCommand(page, 'Open settings');
-  for (const name of ['Light', 'Nord', 'Graphite']) {
-    const button = page.getByRole('group', { name: 'Application theme' }).getByRole('button', { name: new RegExp('^' + name) });
+  // Settings is its own window; the theme chosen there has to reach this
+  // window's page and, through it, this window's native buttons.
+  const [settings] = await Promise.all([app.waitForEvent('window'), paletteCommand(page, 'Open settings')]);
+  await settings.waitForLoadState('domcontentloaded');
+  const read = () => {
+    const style = getComputedStyle(document.documentElement);
+    return { color: style.getPropertyValue('--nav').trim(), symbolColor: style.getPropertyValue('--ink').trim() };
+  };
+  for (const name of ['Nord', 'Light', 'Graphite']) {
+    const button = settings.getByRole('group', { name: 'Application theme' }).getByRole('button', { name: new RegExp('^' + name) });
     await button.click();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
-    const colors = await page.evaluate(() => {
-      const style = getComputedStyle(document.documentElement);
-      return { color: style.getPropertyValue('--nav').trim(), symbolColor: style.getPropertyValue('--ink').trim() };
-    });
+    const chosen = await settings.evaluate(read);
+    await expect.poll(() => page.evaluate(read)).toEqual(chosen);
+    const colors = await page.evaluate(read);
     await expect.poll(() => app.evaluate(() =>
       (globalThis as unknown as { overlayCalls: unknown[] }).overlayCalls.at(-1),
     )).toEqual(colors);

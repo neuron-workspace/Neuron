@@ -12,7 +12,8 @@ import { validateManifest, effectiveGrants, ViewManifest } from './manifest';
 import { isViewPath, appManifestPathFor, manifestPathFor, legacyManifestPathFor, defaultViewName } from './appPaths';
 
 interface Deps {
-  getRepoRoot: () => string | null;
+  /** The workspace of the window that sent the request; views are served against that root only. */
+  getRepoRoot: (event: { sender: import('electron').WebContents }) => string | null;
   getSetting: (key: string) => unknown;
   setSetting: (key: string, value: unknown) => void;
 }
@@ -145,7 +146,7 @@ export function initHtmxViews(deps: Deps): void {
   };
 
   ipcMain.handle('htmx-views:open', async (_event, relativePath: string, theme?: 'light' | 'dark') => {
-    const root = deps.getRepoRoot();
+    const root = deps.getRepoRoot(_event);
     if (!root) return { status: 'error', message: 'No workspace is open.' };
     const resolved = resolveInWorkspace(root, relativePath);
     if (!resolved || !isViewPath(resolved.rel)) return { status: 'error', message: 'Not a valid HTMX view path.' };
@@ -195,7 +196,7 @@ export function initHtmxViews(deps: Deps): void {
   });
 
   ipcMain.handle('htmx-views:approve', (_event, relativePath: string, scope: 'always' | 'once') => {
-    const root = deps.getRepoRoot();
+    const root = deps.getRepoRoot(_event);
     if (!root) return { success: false, error: 'No workspace is open.' };
     const resolved = resolveInWorkspace(root, relativePath);
     if (!resolved) return { success: false, error: 'Invalid path.' };
@@ -218,7 +219,7 @@ export function initHtmxViews(deps: Deps): void {
   });
 
   ipcMain.handle('htmx-views:reset-approval', (_event, relativePath: string) => {
-    const root = deps.getRepoRoot();
+    const root = deps.getRepoRoot(_event);
     if (!root) return { success: false };
     const resolved = resolveInWorkspace(root, relativePath);
     if (!resolved) return { success: false };
