@@ -1120,6 +1120,7 @@ export default function App() {
           onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}
           savedLayouts={savedLayouts}
           onApplySavedLayout={applySavedLayout}
+          onSearchNotes={() => { setView('notes'); patchLayout({ sidebar: true, sidebarCollapsed: false }); setSidebarMode('search'); }}
           sideNoteOpen={!!sidePath}
           canOpenToSide={!!selectedNote && /\.(md|mdx)$/.test(selectedNote)}
           onOpenToSide={() => openToSide(selectedNote)}

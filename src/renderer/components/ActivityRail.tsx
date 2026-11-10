@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Blocks, FileCode2, FolderGit2, LayoutGrid, Search, Settings, Tag, Share2, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Blocks, FileCode2, FolderGit2, Settings, Tag, Share2, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
 
@@ -59,7 +59,6 @@ export default function ActivityRail(props: ActivityRailProps) {
         </TooltipTrigger><TooltipContent side="right">{collapseLabel}</TooltipContent></Tooltip>
       </div>
       {row('Explorer', 'Files', modeActive('files'), () => onSelectMode('files'), <FileCode2 className="h-4 w-4 shrink-0" />)}
-      {row('Search notes', 'Search', modeActive('search'), () => onSelectMode('search'), <Search className="h-4 w-4 shrink-0" />)}
       {row('Tags', 'Tags', modeActive('tags'), () => onSelectMode('tags'), <Tag className="h-4 w-4 shrink-0" />, tagCount)}
       {row('Graph', 'Graph', props.graphOpen, props.onToggleGraph, <Share2 className="h-4 w-4 shrink-0" />)}
       {row('Plugins & integrations', 'Plugins', view === 'plugins', () => onNavigate('plugins'), <Blocks className="h-4 w-4 shrink-0" />)}
@@ -69,7 +68,6 @@ export default function ActivityRail(props: ActivityRailProps) {
       </div>}
       <div className="mt-auto flex shrink-0 flex-col gap-0.5 pt-2">
         {row('Workspaces', 'Workspaces', view === 'repositories', () => onNavigate('repositories'), <FolderGit2 className="h-4 w-4 shrink-0" />)}
-        {row('Component gallery', 'Component gallery', view === 'gallery', () => onNavigate('gallery'), <LayoutGrid className="h-4 w-4 shrink-0" />)}
         {row('Settings', 'Settings', view === 'settings', () => onNavigate('settings'), <Settings className="h-4 w-4 shrink-0" />)}
       </div>
     </nav>

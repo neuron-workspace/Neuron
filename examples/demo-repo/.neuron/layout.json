@@ -2,15 +2,9 @@
   "direction": "vertical",
   "children": [
     {
-      "size": 72,
+      "size": 100,
       "panel": {
         "type": "editor"
-      }
-    },
-    {
-      "size": 28,
-      "panel": {
-        "type": "terminal"
       }
     }
   ]

@@ -30,6 +30,8 @@ test('a new profile starts with three layouts, and switching rearranges the work
 
 test('the current layout can be saved by name, survives reload, and can be deleted', async ({ page }) => {
   await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
+  // The terminal takes focus as its shell starts, which would close a menu opened before it.
+  await expect(page.locator('.xterm-rows').first()).not.toBeEmpty({ timeout: 60_000 });
   await trigger(page).click();
   const name = page.getByLabel('Save current layout as');
 

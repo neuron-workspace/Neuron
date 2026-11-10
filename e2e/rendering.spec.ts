@@ -79,7 +79,7 @@ test('a link to a note that does not exist is shown as broken', async ({ page, w
 test('the workspace layout file can be opened and edited from the explorer', async ({ page, workspace }) => {
   const file = join(workspace, '.neuron', 'layout.json');
   const before = readFileSync(file, 'utf-8');
-  expect(before).toContain('terminal');
+  expect(before).toContain('editor');
 
   // It is the one piece of workspace configuration worth hand-editing, so it
   // has to be reachable without another editor.

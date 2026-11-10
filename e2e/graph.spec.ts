@@ -71,9 +71,10 @@ test('no full-height graph column remains in the shell layout', async ({ page, w
   const layout = JSON.parse(readFileSync(join(workspace, '.neuron', 'layout.json'), 'utf-8'));
   const panels = JSON.stringify(layout);
   expect(panels).not.toContain('"graph"');
-  // The editor gets the width back: it is the only panel besides the terminal.
+  // The editor gets the whole width: the terminal is a dock panel now, not part
+  // of this file, so a workspace never shows two of them.
   expect(panels).toContain('"editor"');
-  expect(panels).toContain('"terminal"');
+  expect(panels).not.toContain('"terminal"');
   // And the floating graph is what shows the workspace instead.
   await expect(page.getByRole('complementary', { name: 'Workspace graph' })).toBeVisible();
 });
