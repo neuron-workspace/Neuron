@@ -86,9 +86,10 @@ const tests = [
       const actual = windowOptions(platform);
       assert.notEqual(actual.frame, false, platform + ': keep the native frame');
       assert.equal(actual.titleBarStyle, 'hidden', platform);
+      assert.equal(actual.backgroundColor, '#f3f4f6', platform);
       assert.equal(actual.titleBarOverlay.height, 39, platform);
-      assert.equal(actual.titleBarOverlay.color, '#121419', platform);
-      assert.equal(actual.titleBarOverlay.symbolColor, '#e6e8ec', platform);
+      assert.equal(actual.titleBarOverlay.color, '#f3f4f6', platform);
+      assert.equal(actual.titleBarOverlay.symbolColor, '#171a1f', platform);
       assert.equal(actual.trafficLightPosition, undefined, platform);
     }
   }],

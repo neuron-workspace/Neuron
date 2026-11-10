@@ -39,26 +39,26 @@ async function paletteCommand(page: Page, command: string) {
   await expect(dialog).toBeHidden();
 }
 
-test('tab strip stays 28px on workspace home and when opening a note', async ({ page }) => {
+test('tab strip stays 32px on workspace home and when opening a note', async ({ page }) => {
   const tabs = page.getByRole('navigation', { name: 'Open notes' });
   const row = tabs.locator('..');
   await expect(tabs).toBeVisible();
   await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
   await expect(tabs.getByRole('button', { name: 'Create note', exact: true })).toBeVisible();
   await expect(tabs.getByRole('button', { name: 'Open website tab' })).toBeVisible();
-  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
   const homeHeight = await tabs.evaluate((node) => node.getBoundingClientRect().height);
   expect(homeHeight).toBeGreaterThan(0);
-  expect(homeHeight).toBeLessThanOrEqual(28);
+  expect(homeHeight).toBeLessThanOrEqual(32);
 
   await openNote(page, 'getting-started.mdx');
   await expect(tabs.getByRole('button', { name: 'Close getting-started' })).toBeVisible();
-  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
   await expect.poll(() => tabs.evaluate((node) => node.getBoundingClientRect().height)).toBe(homeHeight);
 
   await tabs.getByRole('button', { name: 'Close getting-started' }).click();
   await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
-  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
 });
 
 test('native overlay keeps toolbar actions clear of window controls', async ({ page }) => {
@@ -122,7 +122,7 @@ for (const maximized of [false, true]) {
       await expect(bar).toBeHidden();
       await expect(content).toBeVisible();
       await expect.poll(() => content.evaluate((node) => node.getBoundingClientRect().top)).toBe(0);
-      await expect.poll(() => page.locator('main').evaluate((node) => node.getBoundingClientRect().top)).toBe(0);
+      await expect.poll(() => page.locator('main').evaluate((node) => node.getBoundingClientRect().top)).toBe(8);
 
       // All toolbar actions, including the former menu-only ones, remain searchable.
       await page.keyboard.press(paletteShortcut);

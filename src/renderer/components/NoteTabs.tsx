@@ -21,7 +21,7 @@ function noteLabel(path: string) {
 
 export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate, onNewBrowser }: NoteTabsProps) {
   return (
-    <nav aria-label="Open notes" className="flex h-full min-w-0 flex-1 items-stretch overflow-x-auto whitespace-nowrap">
+    <nav aria-label="Open notes" className="flex h-8 bg-[var(--surface)] min-w-0 flex-1 items-stretch overflow-x-auto whitespace-nowrap">
       {tabs.map((note) => {
         const active = note === activeTab;
         return (
@@ -29,7 +29,7 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate,
             key={note}
             className={cn(
               'group flex min-w-[8rem] max-w-[13rem] shrink-0 items-center border-r border-[var(--divider)]',
-              active ? 'bg-[var(--canvas)] text-[var(--ink)]' : 'text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink-secondary)]',
+              active ? 'bg-[var(--canvas)] text-[var(--ink)] shadow-[inset_0_-2px_var(--accent)]' : 'text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink-secondary)]',
             )}
           >
             <button
@@ -41,8 +41,8 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate,
               onAuxClick={(event) => { if (event.button === 1) onClose(note); }}
             >
               {isUrl(note)
-                ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--accent-strong)]')} />
-                : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--accent-strong)]')} />}
+                ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />
+                : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />}
               <span className="truncate font-mono">{noteLabel(note)}</span>
             </button>
             <button

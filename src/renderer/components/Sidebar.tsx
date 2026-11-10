@@ -154,7 +154,7 @@ export default function Sidebar(props: SidebarProps) {
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
         <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }}>
-          <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--accent-strong)]' : 'text-[var(--ink-muted)]')} />
+          <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate font-mono text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
         {isConfirming ? (
@@ -176,7 +176,7 @@ export default function Sidebar(props: SidebarProps) {
     return (
       <div key={node.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
         <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => onSelectNote(appPath)}>
-          <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--accent-strong)]' : 'text-[var(--ink-muted)]')} />
+          <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate text-[12px] font-medium">{node.name}</span>
           <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
         </button>
@@ -195,7 +195,7 @@ export default function Sidebar(props: SidebarProps) {
         <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" style={{ paddingLeft: `${8 + depth * 14}px` }}>
           <button className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left" onClick={() => toggleFolder(node.path)}>
             <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)] transition-transform', isOpen && 'rotate-90')} />
-            {isOpen ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" /> : <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
+            {isOpen ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink)]" /> : <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
             <span className="truncate text-[12px] font-medium">{node.name}</span>
           </button>
           <button aria-label={`New note in ${node.name}`} title="New note in section" className="interactive grid h-7 w-7 place-items-center rounded text-[var(--ink-muted)] opacity-0 hover:bg-[var(--surface-hover)] hover:text-[var(--ink)] group-hover:opacity-100" onClick={() => onRequestCreate(node.path)}>
@@ -221,10 +221,10 @@ export default function Sidebar(props: SidebarProps) {
   );
 
   return (
-    <aside aria-label="Workspace sidebar" className="nav-surface flex h-full w-full shrink-0 select-none flex-col border-r">
+    <aside aria-label="Workspace sidebar" className="nav-surface flex h-full w-full shrink-0 select-none flex-col">
       {mode === 'files' && (
         <section aria-label="Explorer" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-between gap-1 border-b divider-color px-3 py-2">
+          <div className="flex items-center justify-between gap-1 px-3 py-2">
             {dragHandle}
             {/* The workspace name is the way back to the explorer, and it stays
                 available while notes are open -- going home does not close
@@ -262,7 +262,7 @@ export default function Sidebar(props: SidebarProps) {
 
       {mode === 'search' && (
         <section aria-label="Search notes" className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b divider-color p-3">
+          <div className="p-3">
             {dragHandle}
             <label className="relative block">
               <span className="sr-only">Search notes</span>
@@ -307,10 +307,10 @@ export default function Sidebar(props: SidebarProps) {
 
       {mode === 'tags' && (
         <section aria-label="Tag filters" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b divider-color px-3 py-2 text-xs text-[var(--ink-muted)]">
+          <div className="flex items-center justify-between px-3 py-2 text-xs text-[var(--ink-muted)]">
             {dragHandle}
             <span className="flex items-center gap-1.5 font-semibold text-[var(--ink)]"><Tag className="h-3.5 w-3.5 text-[var(--ink-muted)]" />Tags</span>
-            {selectedTag && <button className="interactive text-[var(--accent-strong)] hover:text-[var(--ink)]" onClick={() => onSelectTag(null)}>Clear filter</button>}
+            {selectedTag && <button className="interactive text-[var(--ink)] hover:text-[var(--ink)]" onClick={() => onSelectTag(null)}>Clear filter</button>}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {tags.length === 0 ? (

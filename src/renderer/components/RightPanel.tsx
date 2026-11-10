@@ -52,7 +52,7 @@ export default function PanelDock({
   return (
     <aside
       aria-label={`${dock === 'bottom' ? 'Bottom' : dock === 'left' ? 'Left' : 'Side'} plugin peek`}
-      className={cn('nav-surface flex h-full w-full flex-col', dock === 'bottom' ? 'border-t' : 'border-l')}
+      className="shell-card flex h-full w-full flex-col"
     >
       <header ref={headerRef} className="pane-header flex items-center justify-between gap-1 border-b px-2">
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"

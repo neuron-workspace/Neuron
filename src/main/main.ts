@@ -296,7 +296,7 @@ function createWindow() {
     // bottom border visible under the buttons. macOS keeps its traffic lights.
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 13 } }
-      : { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 39, color: '#121419', symbolColor: '#e6e8ec' } }),
+      : { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 39, color: '#f3f4f6', symbolColor: '#171a1f' } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -304,7 +304,7 @@ function createWindow() {
       webviewTag: true, // enables in-app browser tabs (<webview>)
       ...(testInBackground ? { backgroundThrottling: false } : {}),
     },
-    backgroundColor: '#11181c',
+    backgroundColor: '#f3f4f6',
   });
   if (testInBackground) mainWindow.once('ready-to-show', () => mainWindow?.showInactive());
 

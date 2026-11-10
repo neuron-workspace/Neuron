@@ -28,13 +28,13 @@ function RailButton({ label, active, badge, onClick, children }: {
           aria-pressed={active}
           onClick={onClick}
           className={cn(
-            'interactive relative grid h-10 w-full place-items-center border-l-2 border-transparent text-[var(--ink-muted)] hover:text-[var(--ink)]',
-            active && 'border-[var(--accent)] text-[var(--ink)]',
+            'interactive relative grid h-10 w-full place-items-center text-[var(--ink-muted)] hover:text-[var(--ink)]',
+            active && 'bg-[var(--surface-hover)] text-[var(--ink)]',
           )}
         >
           {children}
           {badge !== undefined && badge > 0 && (
-            <span className="absolute right-1 top-1 min-w-[14px] rounded-full bg-[var(--accent)] px-1 text-center text-[9px] font-semibold leading-[14px] text-[var(--canvas)]">
+            <span className="absolute right-1 top-1 min-w-[14px] rounded-full bg-[var(--surface-hover)] px-1 text-center text-[9px] font-semibold leading-[14px] text-[var(--ink)]">
               {badge > 99 ? '99+' : badge}
             </span>
           )}
@@ -52,7 +52,7 @@ export default function ActivityRail(props: ActivityRailProps) {
   const modeActive = (mode: SidebarMode) => view === 'notes' && sidebarOpen && sidebarMode === mode;
 
   return (
-    <nav aria-label="Activity" className="nav-surface flex h-full w-10 shrink-0 flex-col items-stretch border-r divider-color py-1">
+    <nav aria-label="Activity" className="nav-surface flex h-full w-10 shrink-0 flex-col items-stretch py-1">
       <RailButton label="Explorer" active={modeActive('files')} onClick={() => onSelectMode('files')}>
         <FileCode2 className="h-[18px] w-[18px]" />
       </RailButton>

@@ -113,7 +113,7 @@ export default function TitleBar(props: TitleBarProps) {
   return (
     <header
       className={cn(
-        'titlebar flex items-center justify-between border-b pr-0',
+        'titlebar flex items-center justify-between pr-0',
         // Keep toolbar actions clear of macOS traffic lights.
         isMac ? 'pl-[78px]' : 'pl-2',
       )}

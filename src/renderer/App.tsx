@@ -761,7 +761,7 @@ export default function App() {
   const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
 
   const editorHeader = (
-    <header className="pane-header editor-tab-header flex items-center justify-between border-b">
+    <header className="pane-header editor-tab-header flex items-center justify-between">
       <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
       {selectedNote && Surface ? (
           <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
@@ -878,7 +878,7 @@ export default function App() {
     <PluginProvider catalog={builtinPlugins} bridge={bridge}>
       <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
-        <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}`}>
+        <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
           <TitleBar
             repository={repository}
             recents={recents}
@@ -907,7 +907,7 @@ export default function App() {
           ) : !repository ? (
             <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
           ) : (
-            <div className="flex min-h-0 min-w-0 overflow-hidden">
+            <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
               {layout.activityBar && (
                 <ActivityRail
                   view={view}
@@ -945,7 +945,7 @@ export default function App() {
                   selectedTag={selectedTag}
                 />
               }>
-              <main className="canvas-surface relative flex h-full w-full min-w-0 flex-col overflow-hidden">
+              <main className="shell-card relative flex h-full w-full min-w-0 flex-col overflow-hidden">
                 {notice && (
                   <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
                     <span>{notice}</span>

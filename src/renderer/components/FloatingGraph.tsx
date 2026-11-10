@@ -67,7 +67,7 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
       // hover-revealed close button of the panel it floats over -- so reaching
       // for the graph's own close button revealed that one on the way and
       // clicked it instead, if it landed at all.
-      className="pointer-events-auto absolute z-[var(--z-overlay)] overflow-hidden rounded-lg border divider-color bg-[var(--surface)] shadow-lg"
+      className="pointer-events-auto absolute z-[var(--z-overlay)] shell-card"
       style={pos
         ? { left: pos.x, top: pos.y, width: SIZE, height: SIZE }
         : { right: EDGE, top: DEFAULT_TOP, width: SIZE, height: SIZE }}
