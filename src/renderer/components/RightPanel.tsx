@@ -86,7 +86,11 @@ export default function PanelDock({
             event.dataTransfer.dropEffect = 'move';
             setSplitHover(edge);
           }}
-          onDragLeave={() => setSplitHover(null)}
+          onDragLeave={(event) => {
+            // Only a pointer that has really left: leaves also fire with it still inside.
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (event.clientX <= rect.left || event.clientX >= rect.right || event.clientY <= rect.top || event.clientY >= rect.bottom) setSplitHover(null);
+          }}
           onDrop={(event) => {
             if (!event.dataTransfer.types.includes(PANEL_MIME)) return;
             event.preventDefault();

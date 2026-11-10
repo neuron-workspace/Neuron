@@ -53,6 +53,7 @@ test('dragging a tab onto a card edge splits it into a new group', async ({ page
     // sends one per move, so move again inside the zone.
     await page.mouse.move(target.x + target.width / 2 + 12, target.y + target.height / 2, { steps: 4 });
     await expect(zone).toHaveAttribute('data-hover', 'true');
+    await page.mouse.move(target.x + target.width / 2 + 16, target.y + target.height / 2, { steps: 3 });
   } finally {
     await page.mouse.up();
   }

@@ -22,13 +22,21 @@ async function dragToRight(page: Page, source: Locator) {
     await page.mouse.move(box!.x + box!.width / 2 + 15, box!.y + box!.height / 2 + 15, { steps: 5 });
     const zone = page.locator('[data-dock-zone="right"]');
     await expect(zone).toHaveAttribute('data-visible', 'true');
-    const target = await zone.boundingBox();
-    expect(target).not.toBeNull();
-    await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 10 });
+    // The right-hand band of the workbench is the right dock's target. The slot
+    // itself has no width until the pointer is over that band.
+    const area = await page.locator('[data-dragging]').boundingBox();
+    expect(area).not.toBeNull();
+    const x = area!.x + area!.width * 0.9;
+    const y = area!.y + area!.height * 0.4;
+    await page.mouse.move(x, y, { steps: 10 });
     // A real pointer keeps sending dragover while it rests on a target; the
-    // synthetic drag sends one per move, so move again inside the zone.
-    await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2 + 24, { steps: 4 });
+    // synthetic drag sends one per move, so move again inside the band.
+    await page.mouse.move(x, y + 24, { steps: 4 });
     await expect(zone).toHaveAttribute('data-hover', 'true');
+    // The slot animates open and moves what is under the pointer. A resting real
+    // pointer keeps sending dragover through that; here it takes one more move.
+    await page.waitForTimeout(350);
+    await page.mouse.move(x, y + 30, { steps: 3 });
   } finally {
     await page.mouse.up();
   }
