@@ -97,6 +97,11 @@ function ExplorerPane({ explorer }: { explorer: ExplorerState }) {
       onOpenFile={explorer.openFile}
       recents={explorer.recents}
       onClearRecents={explorer.clearRecents}
+      folders={explorer.folders}
+      notesData={explorer.notesData}
+      onCreateNote={explorer.createNote}
+      onCreateFolder={explorer.createFolder}
+      onOpenToSide={explorer.openToSide}
     />
   );
 }
@@ -142,7 +147,7 @@ function EditorPanel({ surface }: PanelContext) {
     );
   }
 
-  const mode = modes[selectedNote] ?? 'reading';
+  const mode = modes[selectedNote] ?? explorer?.editorModes[selectedNote] ?? 'reading';
   const setMode = (next: EditMode) => setModes((prev) => ({ ...prev, [selectedNote]: next }));
   const scheme = colorScheme ?? 'dark';
   // Wiki-links need the note list and a way to open one. Both already arrive

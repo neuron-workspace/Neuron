@@ -34,6 +34,12 @@ export interface ExplorerState {
   folder: string;
   navigate: (folder: string) => void;
   openFile: (path: string) => void;
+  folders: string[];
+  notesData: { path: string; content: string }[];
+  createNote: (path: string, content?: string) => Promise<boolean>;
+  createFolder: (path: string) => Promise<boolean>;
+  openToSide?: (path: string) => void;
+  editorModes: Record<string, 'reading' | 'live' | 'split'>;
   recents: RecentEntry[];
   clearRecents: () => void;
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Blocks, FileCode2, FolderGit2, LayoutGrid, Search, Settings, Tag, Share2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Blocks, FileCode2, FolderGit2, LayoutGrid, Search, Settings, Tag, Share2, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
 
@@ -16,6 +16,8 @@ interface ActivityRailProps {
   onToggleGraph: () => void;
   children: React.ReactNode;
   tagCount: number;
+  sidebarSide: 'left' | 'right';
+  dragHandle: React.ReactNode;
   /** Select the content shown below the navigation rows. */
   onSelectMode: (mode: SidebarMode) => void;
   onNavigate: (view: View) => void;
@@ -48,10 +50,11 @@ export default function ActivityRail(props: ActivityRailProps) {
   const collapseLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar to icons';
   return (
     <nav aria-label="Activity" className="flex h-full min-h-0 flex-col gap-0.5 p-1">
-      <div className="flex justify-end">
+      <div className="flex h-7 items-center justify-end gap-0.5">
+        {!collapsed && props.dragHandle}
         <Tooltip><TooltipTrigger asChild>
           <button type="button" aria-label={collapseLabel} onClick={props.onToggleCollapsed} className="tool-button interactive">
-            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            {collapsed !== (props.sidebarSide === 'right') ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
           </button>
         </TooltipTrigger><TooltipContent side="right">{collapseLabel}</TooltipContent></Tooltip>
       </div>
@@ -61,7 +64,7 @@ export default function ActivityRail(props: ActivityRailProps) {
       {row('Graph', 'Graph', props.graphOpen, props.onToggleGraph, <Share2 className="h-4 w-4 shrink-0" />)}
       {row('Plugins & integrations', 'Plugins', view === 'plugins', () => onNavigate('plugins'), <Blocks className="h-4 w-4 shrink-0" />)}
       {!collapsed && <div className="flex min-h-0 flex-1 flex-col pt-3">
-        <p className="px-2 text-xs text-[var(--ink-muted)]">{sidebarMode === 'files' ? 'Files' : sidebarMode === 'search' ? 'Search' : 'Tags'}</p>
+        {sidebarMode !== 'files' && <p className="px-2 text-xs text-[var(--ink-muted)]">{sidebarMode === 'search' ? 'Search' : 'Tags'}</p>}
         {children}
       </div>}
       <div className="mt-auto flex shrink-0 flex-col gap-0.5 pt-2">

@@ -9,7 +9,8 @@ import StatusBar from './components/StatusBar';
 import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
-import CreateModal from './components/CreateModal';
+import { nextUntitled } from './lib/untitled';
+import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
 import RepositoriesPage from './views/RepositoriesPage';
@@ -42,7 +43,6 @@ import {
 } from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
 import { type SidebarMode } from './components/ActivityRail';
-import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
 
 interface PropertiesSettings { removeEmpty: boolean; showInReading: boolean; collapsedByDefault: boolean }
 const DEFAULT_PROPERTIES_SETTINGS: PropertiesSettings = { removeEmpty: true, showInReading: true, collapsedByDefault: false };
@@ -121,12 +121,17 @@ export default function App() {
   //
   // `atHome` is deliberately its own flag rather than being inferred from
   // `selectedNote === null`. Having no file open implies the explorer, but the
-  // reverse is not true: clicking the workspace title must show it WITHOUT
+  // reverse is not true: opening a new tab must show it WITHOUT
   // closing anyone's tabs, so home has to be a place you can navigate to while
   // a note is still open. Conflating the two is how the explorer either refuses
   // to appear or refuses to go away.
   const [atHome, setAtHome] = useState(false);
   const [explorerFolder, setExplorerFolder] = useState('');
+  // listNotes returns files only; retain newly created empty directories per workspace.
+  const [createdFolders, setCreatedFolders] = useState<string[]>([]);
+  const foldersLoadedFor = useRef<string | null>(null);
+  const [revealedFolder, setRevealedFolder] = useState<string | null>(null);
+  const creatingUntitled = useRef(false);
   const [explorerRecents, setExplorerRecents] = useState<RecentEntry[]>([]);
 
   // Workbench layout: which shell regions are visible. Persisted per user.
@@ -226,9 +231,6 @@ export default function App() {
     patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createSection, setCreateSection] = useState('');
-  const [createTab, setCreateTab] = useState<'note' | 'section'>('note');
   const [wide, setWide] = useState(true);
   const [bindings, setBindings] = useState<Bindings>(DEFAULT_BINDINGS);
   const [surfaceSourceMode, setSurfaceSourceMode] = useState<Record<string, boolean>>({});
@@ -333,18 +335,7 @@ export default function App() {
 
   useEffect(() => {
       const allTags = new Set<string>();
-      notesData.forEach((note) => {
-        // Body #tags…
-        const tagRegex = /(?:^|\s)#([A-Za-z0-9_-]+)(?=\s|$|\.|,)/g;
-        let match;
-        while ((match = tagRegex.exec(note.content)) !== null) {
-          const tag = match[1];
-          if (!/^[0-9a-fA-F]{3,6}$/.test(tag) && !/^\d+$/.test(tag)) allTags.add(tag);
-        }
-        // …plus frontmatter tags (scalar or list form).
-        const fm = parseFrontmatter(note.content);
-        if (fm.valid && fm.data.tags != null) normalizeStringList(fm.data.tags).forEach((t) => allTags.add(t));
-      });
+      notesData.forEach(note => noteTags(note.content).forEach(tag => allTags.add(tag)));
       setTags(Array.from(allTags).sort((a, b) => a.localeCompare(b)));
   }, [notesData]);
 
@@ -353,6 +344,7 @@ export default function App() {
   // would sync someone's browsing history to every other machine.
   useEffect(() => {
     setExplorerFolder('');
+    setRevealedFolder(null);
     if (!repository) { setExplorerRecents([]); return; }
     let cancelled = false;
     void window.electronAPI?.settings.get<unknown>(recentsKey(repository.path)).then((stored) => {
@@ -406,6 +398,7 @@ export default function App() {
           if (removed(candidate)) versions.set(candidate, pendingVersion + 1);
         }
         setNotes(current => current.filter(n => !removed(n)));
+        setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
         setOpenTabs(current => current.filter(n => !removed(n)));
         setSelectedNote(current => current !== null && removed(current) ? null : current);
@@ -481,6 +474,26 @@ export default function App() {
     if (folder) setExplorerRecents((current) => addRecent(current, { path: folder, kind: 'folder' }));
   }, []);
 
+  useEffect(() => {
+    foldersLoadedFor.current = null;
+    setCreatedFolders([]);
+    if (!repository) return;
+    let cancelled = false;
+    void window.electronAPI.settings.get<unknown>('explorer.folders:' + repository.path).then(stored => {
+      if (cancelled) return;
+      const folders = Array.isArray(stored) ? stored.filter((path): path is string => typeof path === 'string' && !!path) : [];
+      foldersLoadedFor.current = repository.path;
+      setCreatedFolders(current => [...new Set([...folders, ...current])]);
+    }).catch(() => { if (!cancelled) setNotice('Could not load saved empty folders.'); });
+    return () => { cancelled = true; };
+  }, [repository]);
+
+  useEffect(() => {
+    if (!repository || foldersLoadedFor.current !== repository.path) return;
+    void window.electronAPI.settings.set('explorer.folders:' + repository.path, createdFolders)
+      .catch(() => setNotice('Could not remember empty folders.'));
+  }, [repository, createdFolders]);
+
   const clearExplorerRecents = useCallback(() => setExplorerRecents([]), []);
 
   // The file list, minus the workspace's own configuration.
@@ -502,51 +515,38 @@ export default function App() {
     [notes],
   );
 
-  // One state object for both empty editor areas: the plain shell's pane and
-  // the layout shell's `editor` panel. Two consumers, one folder and one Recent
-  // list, so they cannot drift apart.
-  const explorerState = useMemo(() => ({
-    atHome,
-    repositoryName: repository?.name ?? 'Workspace',
-    // notesData, not notes: it is the list already filtered of `.neuron/`, so
-    // the explorer cannot offer to open the workspace's own configuration --
-    // which the sidebar and graph both hide. Using the raw list listed .neuron
-    // as the first folder in the workspace.
-    paths: explorerPaths,
-    folder: explorerFolder,
-    navigate: navigateExplorer,
-    openFile: handleSelectNote,
-    recents: explorerRecents,
-    clearRecents: clearExplorerRecents,
-  }), [atHome, repository, explorerPaths, explorerFolder, navigateExplorer, handleSelectNote, explorerRecents, clearExplorerRecents]);
-
   const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
-    const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '').replace(/[-_]/g, ' ');
-    const body = content ?? `# ${title}\n\nStart writing here. Link another note with [[Note name]].\n`;
-    const result = await window.electronAPI.writeNote(relativePath, body);
-    if (!result.success) { setNotice(`Could not create “${relativePath}”. ${result.error ?? ''}`.trim()); return false; }
-    await loadNotes();
-    setSelectedNote(relativePath);
-    setOpenTabs((current) => current.includes(relativePath) ? current : [...current, relativePath]);
-    setView('notes');
-    setSaveState('saved');
-    return true;
-  }, [loadNotes]);
-
-  const createSectionFolder = useCallback(async (path: string, firstNoteName?: string): Promise<boolean> => {
-    if (!window.electronAPI) return false;
-    const result = await window.electronAPI.createSection(path);
-    if (!result.success) { setNotice(`Could not create section “${path}”. ${result.error ?? ''}`.trim()); return false; }
-    if (firstNoteName) {
-      let file = firstNoteName.trim();
-      if (!/\.(md|mdx)$/.test(file)) file += '.mdx';
-      await createNote(`${path}/${file}`);
-    } else {
+    try {
+      const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '');
+      const body = content ?? '# ' + title + '\n\n';
+      const result = await window.electronAPI.writeNote(relativePath, body);
+      if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
       await loadNotes();
+      handleSelectNote(relativePath);
+      setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
+      setSaveState('saved');
+      return true;
+    } catch {
+      setNotice('Could not create “' + relativePath + '”.');
+      return false;
     }
-    return true;
-  }, [createNote, loadNotes]);
+  }, [loadNotes, handleSelectNote]);
+
+  const createSectionFolder = useCallback(async (path: string): Promise<boolean> => {
+    if (!window.electronAPI) return false;
+    try {
+      const result = await window.electronAPI.createSection(path);
+      if (!result.success) { setNotice('Could not create folder “' + path + '”. ' + (result.error ?? '')); return false; }
+      setCreatedFolders(current => current.includes(path) ? current : [...current, path]);
+      await loadNotes();
+      setRevealedFolder(path);
+      return true;
+    } catch {
+      setNotice('Could not create folder “' + path + '”.');
+      return false;
+    }
+  }, [loadNotes]);
 
   const handleDeleteNote = useCallback(async (note: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
@@ -573,11 +573,26 @@ export default function App() {
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
   }, [selectedNote]);
 
-  const requestCreate = useCallback((section?: string) => {
-    setCreateTab('note');
-    setCreateSection(section ?? '');
-    setCreateOpen(true);
-  }, []);
+  const requestCreate = useCallback(async () => {
+    if (creatingUntitled.current) return;
+    creatingUntitled.current = true;
+    try {
+      const paths = await window.electronAPI.listNotes();
+      await createNote(nextUntitled([...paths, ...createdFolders], ''), '# Untitled\n\n');
+    } catch { setNotice('Could not create a note.'); }
+    finally { creatingUntitled.current = false; }
+  }, [createNote, createdFolders]);
+
+  const requestCreateFolder = useCallback(async () => {
+    if (creatingUntitled.current) return;
+    creatingUntitled.current = true;
+    try {
+      const paths = await window.electronAPI.listNotes();
+      await createSectionFolder(nextUntitled([...paths, ...createdFolders], '', 'Untitled folder', ''));
+      setSidebarMode('files');
+    } catch { setNotice('Could not create a folder.'); }
+    finally { creatingUntitled.current = false; }
+  }, [createSectionFolder, createdFolders]);
 
   // Create an .html view in the current note's folder.
   const createSurfaceFile = useCallback(async () => {
@@ -613,10 +628,8 @@ export default function App() {
   const openWebsite = useCallback(() => {
     const n = ++browserCounter.current;
     const url = `https://duckduckgo.com/#neuron-tab-${n}`;
-    setSelectedNote(url);
-    setOpenTabs((current) => (current.includes(url) ? current : [...current, url]));
-    setView('notes');
-  }, []);
+    handleSelectNote(url);
+  }, [handleSelectNote]);
 
   // A second note beside the editor. Only its path is state here: its content
   // is the main pane's when both show the same note, otherwise the workspace
@@ -635,6 +648,14 @@ export default function App() {
     setSideNote(path); setSideDraft(null); setSideSave('saved');
     void window.electronAPI?.settings.set('editorSplit', path);
   }, []);
+  const explorerState = useMemo(() => ({
+    atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerPaths,
+    folders: createdFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
+    openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder,
+    editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
+  }), [atHome, repository, explorerPaths, createdFolders, notesData, explorerFolder, navigateExplorer,
+    handleSelectNote, openToSide, createNote, createSectionFolder, editorModes, explorerRecents, clearExplorerRecents]);
+
   // A deleted or renamed file, or another workspace, simply has no side pane.
   const sidePath = sideNote && notes.includes(sideNote) ? sideNote : null;
   const sideContent = !sidePath ? '' : sidePath === selectedNote ? noteContent
@@ -658,6 +679,7 @@ export default function App() {
     setOpenTabs((current) => {
       const index = current.indexOf(note);
       const remaining = current.filter((tab) => tab !== note);
+      if (!remaining.length) { setExplorerFolder(''); setAtHome(true); }
       setSelectedNote((active) => {
         if (active !== note) return active;
         return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
@@ -721,25 +743,10 @@ export default function App() {
   // --- Derived --------------------------------------------------------------
   const filteredNotes = useMemo(
     () => (selectedTag
-      ? notesData.filter((note) => {
-          if (new RegExp(`(?:^|\\s)#${selectedTag}(?=\\s|$|\\.|,)`).test(note.content)) return true;
-          const fm = parseFrontmatter(note.content);
-          return fm.valid && fm.data.tags != null && normalizeStringList(fm.data.tags).includes(selectedTag);
-        }).map((note) => note.path)
+      ? notesData.filter(note => noteTags(note.content).includes(selectedTag)).map(note => note.path)
       : notes),
     [selectedTag, notesData, notes],
   );
-
-  const sections = useMemo(() => {
-    const set = new Set<string>();
-    for (const path of notes) {
-      const segments = path.split('/');
-      segments.pop();
-      let prefix = '';
-      for (const segment of segments) { prefix = prefix ? `${prefix}/${segment}` : segment; set.add(prefix); }
-    }
-    return Array.from(set).sort();
-  }, [notes]);
 
   const bridge = useMemo(() => ({
     activeNote: selectedNote,
@@ -842,9 +849,9 @@ export default function App() {
   const editorHeader = (
     <header className="shrink-0">
       <div className="pane-header editor-tab-header flex items-center">
-      <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onOpenToSide={openToSide} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
+      <NoteTabs tabs={openTabs} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
       </div>
-      {selectedNote && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
+      {selectedNote && !atHome && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
         <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
           {selectedNote.includes('/') && <span>{selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1)}</span>}
           <span className="text-[var(--ink-secondary)]">{selectedNote.split('/').pop()}</span>
@@ -881,7 +888,7 @@ export default function App() {
   );
 
 
-  // Home wins over the open note, which is what lets the workspace title show
+  // Home wins over the open note, which is what lets the New tab action show
   // the explorer without closing tabs -- they stay in `openTabs`, and clicking
   // one calls handleSelectNote, which clears `atHome` and brings it back.
   const notesView = selectedNote && !atHome ? (
@@ -919,6 +926,11 @@ export default function App() {
           onOpenFile={explorerState.openFile}
           recents={explorerState.recents}
           onClearRecents={explorerState.clearRecents}
+          folders={explorerState.folders}
+          notesData={explorerState.notesData}
+          onCreateNote={explorerState.createNote}
+          onCreateFolder={explorerState.createFolder}
+          onOpenToSide={explorerState.openToSide}
         />
       </div>
     </div>
@@ -1013,12 +1025,13 @@ export default function App() {
                   onSelectNote={handleSelectNote}
                   onDeleteNote={handleDeleteNote}
                   onRequestCreate={requestCreate}
-                  onRequestCreateFolder={() => { setCreateTab('section'); setCreateSection(''); setCreateOpen(true); }}
+                  onRequestCreateFolder={requestCreateFolder}
                   onRefresh={loadNotes}
                   view={view}
                   mode={sidebarMode}
                   repositoryName={repository.name}
-                  onGoHome={() => goHome()}
+                  folders={createdFolders}
+                  revealedFolder={revealedFolder}
                   tags={tags}
                   onSelectTag={setSelectedTag}
                   selectedTag={selectedTag}
@@ -1082,15 +1095,6 @@ export default function App() {
           {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
         </div>
 
-        <CreateModal
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          sections={sections}
-          initialSection={createSection}
-          initialTab={createTab}
-          onCreateNote={createNote}
-          onCreateSection={createSectionFolder}
-        />
         <CommandPalette
           recents={recents}
           onOpenRepo={openRepository}

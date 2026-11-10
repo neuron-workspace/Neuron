@@ -7,7 +7,7 @@ interface NoteTabsProps {
   activeTab: string;
   onSelect: (note: string) => void;
   onClose: (note: string) => void;
-  onCreate: () => void;
+  onNewTab: () => void;
   onNewBrowser: () => void;
   /** Show a note beside the editor. Notes only: a web page or a canvas has no side view. */
   onOpenToSide?: (note: string) => void;
@@ -22,7 +22,7 @@ function noteLabel(path: string) {
   return path.split('/').pop()?.replace(/\.(md|mdx)$/, '') ?? path;
 }
 
-export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate, onNewBrowser, onOpenToSide }: NoteTabsProps) {
+export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onNewTab, onNewBrowser, onOpenToSide }: NoteTabsProps) {
   return (
     <nav aria-label="Open notes" className="flex h-8 bg-[var(--surface)] min-w-0 flex-1 items-stretch overflow-x-auto whitespace-nowrap">
       {tabs.map((note) => {
@@ -72,10 +72,11 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate,
       })}
       <button
         type="button"
-        aria-label="Create note"
-        title="Create note"
+        aria-label="New tab"
+        data-workspace-home
+        title="New tab"
         className="interactive grid h-[18px] w-[18px] self-center mx-1 shrink-0 place-items-center text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
-        onClick={onCreate}
+        onClick={onNewTab}
       >
         <Plus className="h-3 w-3" />
       </button>

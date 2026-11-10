@@ -44,7 +44,7 @@ test('tab strip stays 32px on workspace home and when opening a note', async ({ 
   const row = tabs.locator('..');
   await expect(tabs).toBeVisible();
   await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
-  await expect(tabs.getByRole('button', { name: 'Create note', exact: true })).toBeVisible();
+  await expect(tabs.getByRole('button', { name: 'New tab', exact: true })).toBeVisible();
   await expect(tabs.getByRole('button', { name: 'Open website tab' })).toBeVisible();
   await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
   const homeHeight = await tabs.evaluate((node) => node.getBoundingClientRect().height);

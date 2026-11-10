@@ -89,6 +89,19 @@ check('a folder whose name prefixes another is not confused with it', () => {
   assert.deepEqual(files.map((f) => f.name), ['a.md']);
 });
 
+check('names sort naturally without case sensitivity', () => {
+  const listing = listFolder(['note10.md', 'Note2.md', 'note1.md'], '');
+  assert.deepEqual(listing.files.map(file => file.name), ['note1.md', 'Note2.md', 'note10.md']);
+});
+
+check('known empty directories appear without synthetic files', () => {
+  const listing = listFolder(['Research/plan.md'], '', ['Empty', 'Research/drafts']);
+  assert.deepEqual(listing.folders.map(folder => folder.name), ['Empty', 'Research']);
+  assert.equal(listing.folders[0].count, 0);
+  assert.deepEqual(listFolder([], 'Research', ['Research/drafts']).folders.map(folder => folder.name), ['drafts']);
+  assert.deepEqual(listFolder([], 'Empty', ['Empty']), { folders: [], files: [] });
+});
+
 // --- navigation ----------------------------------------------------------------
 check('the parent of a nested path is its folder', () => {
   assert.equal(parentFolder('projects/website/plan.md'), 'projects/website');
