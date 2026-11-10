@@ -206,7 +206,7 @@ export default function TitleBar(props: TitleBarProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div data-layout-switcher-slot className="titlebar-no-drag flex shrink-0 items-center">{props.layoutSwitcher}</div>
+        <div data-layout-switcher-slot className="titlebar-no-drag mr-1 flex shrink-0 items-center">{props.layoutSwitcher}</div>
       </div>
     </header>
   );

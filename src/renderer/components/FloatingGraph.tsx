@@ -34,13 +34,13 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
   // null means "parked top-right" of the editor. Dragging switches to window
   // coordinates, so it can float over any part of the app: terminal, panels, sidebar.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   const startDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     const box = boxRef.current?.getBoundingClientRect();
     if (!box) return;
-    drag.current = { dx: event.clientX - box.left, dy: event.clientY - box.top };
+    drag.current = { dx: event.clientX - box.left, dy: event.clientY - box.top, moved: false };
     setPos({ x: box.left, y: box.top });
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -54,12 +54,14 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
     const x = Math.min(Math.max(event.clientX - d.dx, EDGE), window.innerWidth - SIZE - EDGE);
     const y = Math.min(Math.max(event.clientY - d.dy, TOP), window.innerHeight - SIZE - EDGE);
     setPos({ x, y });
+    d.moved = true;
     report(FLOAT_DRAG_EVENT, event);
   };
 
   const endDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     // Over a highlighted dock this docks the graph; anywhere else it stays floating.
-    if (drag.current) report(FLOAT_DROP_EVENT, event);
+    // A press with no movement is not a drop: the grip rests near an edge by default.
+    if (drag.current?.moved) report(FLOAT_DROP_EVENT, event);
     drag.current = null;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* never captured */ }
   };

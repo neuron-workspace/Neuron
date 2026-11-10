@@ -13,7 +13,12 @@ export const FLOAT_DRAG_EVENT = 'neuron:float-drag';
 export const FLOAT_DROP_EVENT = 'neuron:float-drop';
 
 /** Which dock a pointer is over: the outer bands of the workbench. The middle is none. */
-export function dockBand(rect: { left: number; top: number; width: number; height: number }, x: number, y: number, allowBottom = true): Dock | null {
+export function dockBand(rect: { left: number; top: number; width: number; height: number }, x: number, y: number, allowBottom = true, edge?: number): Dock | null {
+  // A fixed margin, for something that floats: it rests near an edge without
+  // docking, and docks only when pushed right up to it.
+  if (edge !== undefined) {
+    return allowBottom && y > rect.top + rect.height - edge ? 'bottom' : x < rect.left + edge ? 'left' : x > rect.left + rect.width - edge ? 'right' : null;
+  }
   const fx = (x - rect.left) / rect.width;
   const fy = (y - rect.top) / rect.height;
   return allowBottom && fy > 0.72 ? 'bottom' : fx < 0.22 ? 'left' : fx > 0.78 ? 'right' : null;

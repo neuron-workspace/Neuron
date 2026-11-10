@@ -142,4 +142,10 @@ assert.equal(dockBand(box, 600, 620), 'bottom');
 assert.equal(dockBand(box, 600, 300), null);
 assert.equal(dockBand(box, 150, 620), 'bottom', 'the bottom band wins its corners');
 assert.equal(dockBand(box, 150, 620, false), 'left', 'the sidebar has no bottom dock');
+// A floating panel docks only when pushed to within a fixed margin of an edge.
+assert.equal(dockBand(box, 1050, 200, true, 40), null);
+assert.equal(dockBand(box, 1075, 200, true, 40), 'right');
+assert.equal(dockBand(box, 120, 200, true, 40), 'left');
+assert.equal(dockBand(box, 600, 630, true, 40), 'bottom');
+assert.equal(dockBand(box, 600, 560, true, 40), null);
 console.log('layout: all checks passed');

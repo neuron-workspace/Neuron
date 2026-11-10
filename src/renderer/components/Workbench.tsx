@@ -42,7 +42,7 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
       const root = rootRef.current;
       const { x, y } = (event as CustomEvent<{ x: number; y: number }>).detail;
       if (!root || !latest.current.panels.some((p) => panelKey(p) === GRAPH_PANEL_KEY)) return null;
-      return dockBand(root.getBoundingClientRect(), x, y);
+      return dockBand(root.getBoundingClientRect(), x, y, true, 40);
     };
     const onDrag = (event: Event) => { setDrag('float'); setHover(band(event)); };
     const onDrop = (event: Event) => {
@@ -127,7 +127,11 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
   // Where a drag would land, from the pointer alone: the outer bands of the
   // workbench are the three docks, and the middle means "put it back".
   const targetAt = (event: DragEvent, kind: 'panel' | 'sidebar' | 'float' | null = drag): Dock | null => {
-    const target = dockBand(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, kind === 'panel');
+    // Over a dock that is already open, that dock is the target: its lower half
+    // would otherwise count as the bottom band and open a slot under the pointer.
+    const card = kind === 'panel' ? (event.target as HTMLElement).closest?.('[data-dock-group]') : null;
+    const over = card?.getAttribute('data-dock-group')?.split(':')[0] as Dock | undefined;
+    const target = over ?? dockBand(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, kind === 'panel');
     return kind === 'sidebar' && target === layout.sidebarSide ? null : target;
   };
   const dockOpen = (dock: Dock) => layout[(dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel'];

@@ -25,10 +25,11 @@ test('a note opens beside the editor, edits there reach the file, and the split 
 
   // Editing in the side pane writes its own file, not the main pane's.
   await side(page).getByRole('button', { name: 'Live', exact: true }).click();
-  const heading = side(page).locator('h1[data-live-text]').first();
-  await heading.click();
+  await side(page).locator('article.preview-prose h1').first().click();
   await page.keyboard.press('End');
-  await page.keyboard.type(' v2');
+  await page.keyboard.insertText(' v2');
+  // Live commits a line when focus leaves it.
+  await side(page).getByRole('button', { name: 'Swap panes', exact: true }).focus();
   await expect.poll(() => readFileSync(join(workspace, 'projects', 'Website refresh.mdx'), 'utf-8')).toMatch(/^# .* v2$/m);
   expect(readFileSync(join(workspace, 'projects', 'Mobile app.mdx'), 'utf-8')).not.toContain(' v2');
 
@@ -47,9 +48,9 @@ test('the same note in both panes stays in step, and a tab opens to the side fro
   await expect(side(page)).toBeVisible();
 
   await page.locator('main').getByRole('button', { name: 'Live', exact: true }).click();
-  const heading = page.locator('main h1[data-live-text]').first();
-  await heading.click();
+  await page.locator('main article.preview-prose h1').first().click();
   await page.keyboard.press('End');
-  await page.keyboard.type(' shared');
+  await page.keyboard.insertText(' shared');
+  await page.locator('main').getByRole('button', { name: 'Live', exact: true }).focus();
   await expect(side(page).locator('h1').first()).toContainText('shared');
 });
