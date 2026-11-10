@@ -14,6 +14,8 @@ import { isMac, platform } from '../lib/platform';
 import { formatChord } from '../lib/keybindings';
 
 interface TitleBarProps {
+  /** Saved-layouts control, rendered at the right of the bar. */
+  layoutSwitcher?: React.ReactNode;
   repository: RepositoryInfo | null;
   recents: RepositoryInfo[];
   activeNote: string | null;
@@ -204,7 +206,7 @@ export default function TitleBar(props: TitleBarProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div data-layout-switcher-slot className="titlebar-no-drag flex shrink-0 items-center" />
+        <div data-layout-switcher-slot className="titlebar-no-drag flex shrink-0 items-center">{props.layoutSwitcher}</div>
       </div>
     </header>
   );

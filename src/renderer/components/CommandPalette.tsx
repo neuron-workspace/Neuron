@@ -1,6 +1,6 @@
 import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
-import type { WorkbenchLayout } from '../lib/layout';
+import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
 import { parentFolder, sharedName } from './TitleBar';
@@ -24,6 +24,8 @@ function Shortcut({ chord }: { chord?: string }) {
 
 interface CommandPaletteProps {
   layout: WorkbenchLayout;
+  savedLayouts?: SavedLayout[];
+  onApplySavedLayout?: (id: string) => void;
   onLayoutChange: (patch: Partial<WorkbenchLayout>) => void;
   onResetLayout: () => void;
   open: boolean;
@@ -49,7 +51,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -95,6 +97,9 @@ export default function CommandPalette({ layout, onLayoutChange, onResetLayout, 
           <CommandItem disabled={layout.sidebarSide === 'left'} onSelect={() => { onLayoutChange({ sidebarSide: 'left' }); close(); }}><PanelsTopLeft /> Move sidebar to the left</CommandItem>
           <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
           <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
+          {savedLayouts.map((saved) => (
+            <CommandItem key={saved.id} onSelect={() => { onApplySavedLayout?.(saved.id); close(); }}><PanelsTopLeft /> Layout: switch to {saved.name}</CommandItem>
+          ))}
         </CommandGroup>
 
         {commands.length > 0 && (

@@ -153,3 +153,45 @@ export function movePanel<T extends PlaceablePanel>(panels: T[], layout: Workben
   }
   return next;
 }
+
+/** A named arrangement of the workbench: what is visible and where panels sit. */
+export interface SavedLayout { id: string; name: string; layout: WorkbenchLayout }
+export const MAX_SAVED_LAYOUTS = 20;
+export const MAX_LAYOUT_NAME = 40;
+
+/** Why a name cannot be used, in words for the person typing it, or null. */
+export function layoutNameError(name: string, existing: SavedLayout[], exceptId?: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return 'Enter a name.';
+  if (trimmed.length > MAX_LAYOUT_NAME) return `Keep the name to ${MAX_LAYOUT_NAME} characters.`;
+  if (existing.some((l) => l.id !== exceptId && l.name.toLowerCase() === trimmed.toLowerCase())) return 'That name is already used.';
+  return null;
+}
+
+/** Same structure? Zen and which tab is selected are not part of an arrangement. */
+export function sameLayout(a: WorkbenchLayout, b: WorkbenchLayout): boolean {
+  const shape = (l: WorkbenchLayout) => {
+    const { zen: _zen, activePanels: _active, panels, ...flags } = l;
+    return JSON.stringify([Object.entries(flags).sort(), Object.entries(panels).sort(([x], [y]) => x.localeCompare(y))]);
+  };
+  return shape(a) === shape(b);
+}
+
+export function resolveSavedLayouts(stored: unknown): SavedLayout[] {
+  const result: SavedLayout[] = [];
+  if (!Array.isArray(stored)) return result;
+  for (const item of stored) {
+    if (result.length >= MAX_SAVED_LAYOUTS) break;
+    if (!isObject(item) || typeof item.id !== 'string' || !item.id || typeof item.name !== 'string') continue;
+    if (result.some((l) => l.id === item.id) || layoutNameError(item.name, result)) continue;
+    result.push({ id: item.id, name: item.name.trim(), layout: resolveLayout(item.layout) });
+  }
+  return result;
+}
+
+/** Starting points for a profile that has never saved a layout. Ordinary layouts once seeded. */
+export const SEED_LAYOUTS: SavedLayout[] = [
+  { id: 'seed-writing', name: 'Writing', layout: { ...DEFAULT_LAYOUT } },
+  { id: 'seed-review', name: 'Review', layout: { ...DEFAULT_LAYOUT, rightPanel: true } },
+  { id: 'seed-focus', name: 'Focus', layout: { ...DEFAULT_LAYOUT, sidebar: false, statusBar: false } },
+];

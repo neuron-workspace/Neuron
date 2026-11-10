@@ -31,7 +31,8 @@ import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
-import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
+import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, type SavedLayout, type WorkbenchLayout } from './lib/layout';
+import LayoutSwitcher from './components/LayoutSwitcher';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
 import { ExplorerProvider } from './lib/explorer-state';
 import {
@@ -170,6 +171,45 @@ export default function App() {
   const sidebarOpen = layout.sidebar;
   const rightPanelOpen = layout.rightPanel;
   const bottomPanelOpen = layout.bottomPanel;
+  // Saved layouts: named arrangements to switch between. Structure only; open
+  // notes and unsaved edits are untouched by switching.
+  const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
+  const [activeLayoutId, setActiveLayoutId] = useState<string | null>(null);
+  useEffect(() => {
+    void Promise.all([
+      window.electronAPI?.settings.get<unknown>('savedLayouts'),
+      window.electronAPI?.settings.get<unknown>('activeLayoutId'),
+    ]).then(([stored, active]) => {
+      // Seed only a profile that has never had the key; an emptied list stays empty.
+      const list = stored == null ? SEED_LAYOUTS : resolveSavedLayouts(stored);
+      if (stored == null) void window.electronAPI?.settings.set('savedLayouts', list);
+      setSavedLayouts(list);
+      setActiveLayoutId(typeof active === 'string' && list.some((l) => l.id === active) ? active : null);
+    });
+  }, []);
+  const storeLayouts = (list: SavedLayout[], active: string | null) => {
+    setSavedLayouts(list); setActiveLayoutId(active);
+    void window.electronAPI?.settings.set('savedLayouts', list);
+    void window.electronAPI?.settings.set('activeLayoutId', active);
+  };
+  const snapshotLayout = (): WorkbenchLayout => ({ ...layoutRef.current, zen: false });
+  const applySavedLayout = (id: string) => {
+    const saved = savedLayouts.find((l) => l.id === id);
+    if (!saved) return;
+    zenPrevRef.current = null;
+    commitLayout(resolveLayout(saved.layout));
+    storeLayouts(savedLayouts, id);
+  };
+  const activeSavedLayout = savedLayouts.find((l) => l.id === activeLayoutId) ?? null;
+  const layoutSwitcher = (
+    <LayoutSwitcher layouts={savedLayouts} activeId={activeLayoutId}
+      modified={!!activeSavedLayout && !sameLayout(layout, activeSavedLayout.layout)}
+      onApply={applySavedLayout}
+      onSave={(name) => { const id = 'layout-' + Date.now().toString(36); storeLayouts([...savedLayouts, { id, name, layout: snapshotLayout() }], id); }}
+      onUpdate={() => storeLayouts(savedLayouts.map((l) => (l.id === activeLayoutId ? { ...l, layout: snapshotLayout() } : l)), activeLayoutId)}
+      onDelete={(id) => storeLayouts(savedLayouts.filter((l) => l.id !== id), null)}
+      onReset={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {}, activePanels: {} }); }} />
+  );
   const setSidebarOpen = (fn: (v: boolean) => boolean) => patchLayout({ sidebar: fn(layoutRef.current.sidebar) });
   const setRightPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ rightPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.rightPanel) });
   const graphOverlayOpen = layout.graphOverlay;
@@ -889,6 +929,7 @@ export default function App() {
       <TooltipProvider delayDuration={300}>
         <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
           <TitleBar
+            layoutSwitcher={layoutSwitcher}
             repository={repository}
             recents={recents}
             activeNote={view === 'notes' ? selectedNote : null}
@@ -1019,6 +1060,8 @@ export default function App() {
           layout={layout}
           onLayoutChange={patchLayout}
           onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}
+          savedLayouts={savedLayouts}
+          onApplySavedLayout={applySavedLayout}
           bindings={bindings}
         />
       </TooltipProvider>

@@ -11,7 +11,7 @@ const tmp = join(root, 'tools/.layout.tmp.mjs');
 writeFileSync(tmp, code);
 let helpers;
 try { helpers = await import(pathToFileURL(tmp)); } finally { rmSync(tmp); }
-const { DEFAULT_LAYOUT, resolveLayout, placePanels, movePanel, panelKey } = helpers;
+const { DEFAULT_LAYOUT, resolveLayout, placePanels, movePanel, panelKey, resolveSavedLayouts, sameLayout, layoutNameError, dockBand, SEED_LAYOUTS } = helpers;
 
 for (const input of [undefined, null, false, 42, 'junk', []]) assert.deepEqual(resolveLayout(input), DEFAULT_LAYOUT);
 assert.equal(resolveLayout({}).sidebarCollapsed, false);
@@ -101,4 +101,45 @@ assert.equal(movePanel(panels, splitAfter, 'p:a', 'right', undefined, 5), splitA
 const emptied = movePanel(panels, movePanel(panels, { ...DEFAULT_LAYOUT, bottomPanel: true }, 'p:a', 'right'), 'p:b', 'right');
 assert.equal(emptied.bottomPanel, false);
 assert.deepEqual(groups(resolveLayout(JSON.parse(JSON.stringify(three)))), groups(three));
+
+// Saved layouts.
+assert.deepEqual(resolveSavedLayouts(null), []);
+assert.deepEqual(resolveSavedLayouts('junk'), []);
+const saved = resolveSavedLayouts([
+  { id: 'a', name: '  Writing  ', layout: { sidebar: false, panels: { 'p:a': { dock: 'left', order: 0 }, junk: 1 } } },
+  { id: 'a', name: 'Same id', layout: {} },
+  { id: 'b', name: 'writing', layout: {} },
+  { id: 'c', name: '', layout: {} },
+  { id: 'd', name: 'x'.repeat(41), layout: {} },
+  { id: '', name: 'No id', layout: {} },
+  { id: 'e', name: 7, layout: {} },
+  null, 'junk',
+  { id: 'f', name: 'Review', layout: 'junk' },
+]);
+assert.deepEqual(saved.map((l) => [l.id, l.name]), [['a', 'Writing'], ['f', 'Review']]);
+assert.equal(saved[0].layout.sidebar, false);
+assert.deepEqual(saved[0].layout.panels, { 'p:a': { dock: 'left', order: 0, group: 0 } });
+assert.deepEqual(saved[1].layout, DEFAULT_LAYOUT);
+assert.equal(resolveSavedLayouts(Array.from({ length: 30 }, (_, i) => ({ id: 'l' + i, name: 'Layout ' + i, layout: {} }))).length, 20);
+assert.equal(layoutNameError('  ', saved), 'Enter a name.');
+assert.match(layoutNameError('x'.repeat(41), saved), /40 characters/);
+assert.equal(layoutNameError('REVIEW', saved), 'That name is already used.');
+assert.equal(layoutNameError('REVIEW', saved, 'f'), null, 'renaming a layout to its own name is allowed');
+assert.equal(layoutNameError('Research', saved), null);
+// Zen and the selected tab are not part of an arrangement; everything else is.
+assert.equal(sameLayout(DEFAULT_LAYOUT, { ...DEFAULT_LAYOUT, zen: true, activePanels: { 'right:0': 'p:c' } }), true);
+assert.equal(sameLayout(DEFAULT_LAYOUT, { ...DEFAULT_LAYOUT, sidebar: false }), false);
+assert.equal(sameLayout(splitAfter, splitBefore), false);
+assert.equal(sameLayout(splitAfter, resolveLayout(JSON.parse(JSON.stringify(splitAfter)))), true);
+assert.deepEqual(SEED_LAYOUTS.map((l) => l.name), ['Writing', 'Review', 'Focus']);
+assert.deepEqual(resolveSavedLayouts(JSON.parse(JSON.stringify(SEED_LAYOUTS))), SEED_LAYOUTS);
+
+// Dock bands: the outer parts of the workbench are docks, the middle is none.
+const box = { left: 100, top: 50, width: 1000, height: 600 };
+assert.equal(dockBand(box, 150, 200), 'left');
+assert.equal(dockBand(box, 1050, 200), 'right');
+assert.equal(dockBand(box, 600, 620), 'bottom');
+assert.equal(dockBand(box, 600, 300), null);
+assert.equal(dockBand(box, 150, 620), 'bottom', 'the bottom band wins its corners');
+assert.equal(dockBand(box, 150, 620, false), 'left', 'the sidebar has no bottom dock');
 console.log('layout: all checks passed');
