@@ -25,6 +25,10 @@ function Shortcut({ chord }: { chord?: string }) {
 interface CommandPaletteProps {
   layout: WorkbenchLayout;
   savedLayouts?: SavedLayout[];
+  sideNoteOpen?: boolean;
+  canOpenToSide?: boolean;
+  onOpenToSide?: () => void;
+  onCloseSide?: () => void;
   onApplySavedLayout?: (id: string) => void;
   onLayoutChange: (patch: Partial<WorkbenchLayout>) => void;
   onResetLayout: () => void;
@@ -51,7 +55,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -97,6 +101,8 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
           <CommandItem disabled={layout.sidebarSide === 'left'} onSelect={() => { onLayoutChange({ sidebarSide: 'left' }); close(); }}><PanelsTopLeft /> Move sidebar to the left</CommandItem>
           <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
           <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
+          <CommandItem disabled={!canOpenToSide} onSelect={() => { onOpenToSide?.(); close(); }}><PanelsTopLeft /> Open current note to the side</CommandItem>
+          {sideNoteOpen && <CommandItem onSelect={() => { onCloseSide?.(); close(); }}><PanelsTopLeft /> Close side pane</CommandItem>}
           {savedLayouts.map((saved) => (
             <CommandItem key={saved.id} onSelect={() => { onApplySavedLayout?.(saved.id); close(); }}><PanelsTopLeft /> Layout: switch to {saved.name}</CommandItem>
           ))}

@@ -33,6 +33,8 @@ import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, type SavedLayout, type WorkbenchLayout } from './lib/layout';
 import LayoutSwitcher from './components/LayoutSwitcher';
+import SideNote from './components/SideNote';
+import { Panel as SplitPanel, PanelGroup as SplitGroup, PanelResizeHandle as SplitHandle } from 'react-resizable-panels';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
 import { ExplorerProvider } from './lib/explorer-state';
 import {
@@ -616,6 +618,42 @@ export default function App() {
     setView('notes');
   }, []);
 
+  // A second note beside the editor. Only its path is state here: its content
+  // is the main pane's when both show the same note, otherwise the workspace
+  // copy with any unsaved typing laid over it, so each file has one writer.
+  const [sideNote, setSideNote] = useState<string | null>(null);
+  const [sideDraft, setSideDraft] = useState<{ path: string; content: string } | null>(null);
+  const [sideSave, setSideSave] = useState<SaveState>('saved');
+  const sideVersion = useRef(0);
+  useEffect(() => {
+    void window.electronAPI?.settings.get<unknown>('editorSplit').then((stored) => {
+      if (typeof stored === 'string' && /\.(md|mdx)$/.test(stored)) setSideNote(stored);
+    });
+  }, []);
+  const openToSide = useCallback((path: string | null) => {
+    if (path !== null && !/\.(md|mdx)$/.test(path)) return;
+    setSideNote(path); setSideDraft(null); setSideSave('saved');
+    void window.electronAPI?.settings.set('editorSplit', path);
+  }, []);
+  // A deleted or renamed file, or another workspace, simply has no side pane.
+  const sidePath = sideNote && notes.includes(sideNote) ? sideNote : null;
+  const sideContent = !sidePath ? '' : sidePath === selectedNote ? noteContent
+    : sideDraft?.path === sidePath ? sideDraft.content : notesData.find((note) => note.path === sidePath)?.content ?? '';
+  const changeSideNote = async (value: string) => {
+    if (!sidePath || !window.electronAPI) return;
+    if (sidePath === selectedNote) { void handleContentChange(value); return; }
+    const path = sidePath;
+    const version = ++sideVersion.current;
+    setSideDraft({ path, content: value });
+    setSideSave('saving');
+    const result = await window.electronAPI.writeNote(path, value);
+    if (version !== sideVersion.current) return;
+    setSideSave(result.success ? 'saved' : 'error');
+    if (!result.success) { setNotice(`Changes to ?${path}? could not be saved.`); return; }
+    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
+    setSideDraft((draft) => (draft?.path === path && draft.content === value ? null : draft));
+  };
+
   const closeTab = useCallback((note: string) => {
     setOpenTabs((current) => {
       const index = current.indexOf(note);
@@ -804,7 +842,7 @@ export default function App() {
   const editorHeader = (
     <header className="shrink-0">
       <div className="pane-header editor-tab-header flex items-center">
-      <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
+      <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onOpenToSide={openToSide} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
       </div>
       {selectedNote && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
         <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
@@ -986,6 +1024,8 @@ export default function App() {
                   selectedTag={selectedTag}
                 />
               }>
+              <SplitGroup direction="horizontal" autoSaveId="neuron.editor.split" className="flex h-full min-h-0 min-w-0">
+              <SplitPanel id="editor-main" order={1} minSize={25} className="min-w-0">
               <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && shellConfig && !Surface && !browsing) && 'shell-card')}>
                 {notice && (
                   <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
@@ -1021,6 +1061,20 @@ export default function App() {
                   />
                 )}
               </main>
+              </SplitPanel>
+              {sidePath && view === 'notes' && !layout.zen && (
+                <>
+                  <SplitHandle className="resize-handle resize-handle-v" />
+                  <SplitPanel id="editor-side" order={2} minSize={20} defaultSize={50} className="min-w-0">
+                    <SideNote path={sidePath} content={sideContent} saveState={sidePath === selectedNote ? saveState : sideSave}
+                      colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} notes={notes} tags={tags}
+                      onChange={(value) => { void changeSideNote(value); }} onOpenNote={handleSelectNote}
+                      onSwap={() => { const main = selectedNote; handleSelectNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
+                      onClose={() => openToSide(null)} />
+                  </SplitPanel>
+                </>
+              )}
+              </SplitGroup>
             </Workbench>
             </div>
           )}
@@ -1062,6 +1116,10 @@ export default function App() {
           onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}
           savedLayouts={savedLayouts}
           onApplySavedLayout={applySavedLayout}
+          sideNoteOpen={!!sidePath}
+          canOpenToSide={!!selectedNote && /\.(md|mdx)$/.test(selectedNote)}
+          onOpenToSide={() => openToSide(selectedNote)}
+          onCloseSide={() => openToSide(null)}
           bindings={bindings}
         />
       </TooltipProvider>
