@@ -364,6 +364,26 @@ body.platform-darwin .status-bar {
 .preview-prose h3 { text-wrap: balance; letter-spacing: -0.02em; }
 .preview-prose p,
 .preview-prose li { text-wrap: pretty; }
+/* Reading rhythm. Every source line is its own element, so consecutive lines
+   sit tight and only a blank line in the source ([data-gap]) opens a gap. */
+.preview-prose > p,
+.preview-prose > ul,
+.preview-prose > ol { font-size: 15px; line-height: 1.7; margin-block: 0 !important; }
+.preview-prose > [data-gap] + p,
+.preview-prose > [data-gap] + ul,
+.preview-prose > [data-gap] + ol { margin-top: 0.85rem !important; }
+.preview-prose > ul + ul,
+.preview-prose > ol + ol { margin-top: 0.2rem !important; }
+.preview-prose > p + ul,
+.preview-prose > p + ol { margin-top: 0.35rem !important; }
+.preview-prose > h1 { font-size: 1.75rem; line-height: 1.25; margin: 2rem 0 0.5rem !important; }
+.preview-prose > h2 { font-size: 1.3rem; line-height: 1.3; margin: 1.9rem 0 0.4rem !important; }
+.preview-prose > h3 { font-size: 1.05rem; line-height: 1.4; margin: 1.4rem 0 0.3rem !important; }
+.preview-prose > h1:first-child,
+.preview-prose > h2:first-child,
+.preview-prose > h3:first-child { margin-top: 0 !important; }
+.preview-prose > blockquote { font-size: 15px; line-height: 1.7; font-style: normal; background: transparent; border-width: 0 0 0 0; border-radius: 0; padding: 0 0 0 1rem; box-shadow: inset 2px 0 0 var(--md-quote-border); }
+.preview-prose :not(pre) > code { font-size: 0.9em; padding: 0.1em 0.35em; border-radius: 4px; }
 
 .callout {
   border: 1px solid var(--divider);
@@ -384,7 +404,8 @@ body.platform-darwin .status-bar {
 .cm-editor,
 .cm-scroller { height: 100%; }
 .cm-editor { background: var(--canvas) !important; color: var(--ink-secondary); }
-.cm-gutters { background: var(--nav) !important; border-right: 1px solid var(--divider) !important; color: var(--ink-muted) !important; }
+.cm-gutters { background: var(--canvas) !important; border-right: 0 !important; color: var(--ink-muted) !important; }
+.cm-lineNumbers .cm-gutterElement { padding-inline: 12px 10px !important; font-size: 12px; }
 .cm-activeLine,
 .cm-activeLineGutter { background: color-mix(in oklch, var(--surface) 72%, transparent) !important; }
 .cm-selectionBackground { background: color-mix(in oklch, var(--accent) 22%, transparent) !important; }
@@ -393,7 +414,8 @@ body.platform-darwin .status-bar {
 
 /* Live uses Reading's elements and spacing; only editing chrome is added. */
 .live-text { cursor: text; white-space: pre-wrap; min-width: 1ch; }
-.live-text:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Drawn inside the element, so a scroll container or card edge never clips it. */
+.live-text:focus { outline: none; border-radius: 4px; background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
 .live-text:empty::before { content: attr(data-placeholder); opacity: 0.65; pointer-events: none; }
 .live-block { position: relative; }
 .live-edit-action { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 4px; padding: 0.25rem 0.5rem; font: inherit; cursor: pointer; }
@@ -402,7 +424,7 @@ body.platform-darwin .status-bar {
 .live-edit-button { position: absolute; top: 0.25rem; right: 0.25rem; z-index: 1; font-size: 0.75rem; line-height: 1.25rem; font-style: normal; font-weight: 400; opacity: 0; pointer-events: none; }
 .live-block:hover > .live-edit-button,
 .live-block:focus-within > .live-edit-button { opacity: 1; pointer-events: auto; }
-.live-block-editor:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.live-block-editor:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
 .live-block-editor .cm-editor { height: auto; }
 .live-block-editor .cm-scroller { height: auto !important; }
 .live-block-editor .cm-content { min-height: 4.5rem; }
@@ -558,28 +580,38 @@ html[data-theme='light'] .neuron-logo {
   z-index: calc(var(--z-overlay) + 1);
   display: grid;
   place-items: center;
-  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 8px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--accent) 8%, var(--canvas));
   color: var(--ink-secondary);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
 }
 .workbench-drop-zone[data-visible="true"] { opacity: 1; pointer-events: auto; }
 .workbench-drop-zone[data-hover="true"] {
-  border-style: solid;
   border-color: var(--accent);
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--accent) 16%, var(--canvas));
   color: var(--ink);
 }
-.workbench-drop-zone-left { left: 6px; top: 46px; bottom: 84px; width: 72px; }
-.workbench-drop-zone-right { right: 6px; top: 46px; bottom: 84px; width: 72px; }
-.workbench-drop-zone-bottom { left: 6px; right: 6px; bottom: 6px; height: 72px; }
-.workbench-drop-zone-left, .workbench-drop-zone-right { writing-mode: vertical-rl; }
+/* Dragging a panel or the sidebar: the destination opens as an empty slot that
+   pushes the layout aside, and the thing being moved looks lifted. */
+.dock-slot { flex: 0 0 0px; min-width: 0; min-height: 0; overflow: hidden; transition: flex-basis 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.dock-slot-v[data-hover="true"][data-open="false"] { flex-basis: 240px; }
+.dock-slot-h[data-hover="true"][data-open="false"] { flex-basis: 180px; }
+.dock-slot-fill { width: 100%; height: 100%; border-radius: var(--card-radius); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, var(--canvas)); }
+.dock-slot-v .dock-slot-fill { min-width: 232px; }
+.dock-slot-v[data-dock-zone="left"] { padding-right: var(--shell-gap); }
+.dock-slot-v[data-dock-zone="right"] { padding-left: var(--shell-gap); }
+.dock-slot-h { padding-top: var(--shell-gap); }
+.dock-slot[data-hover="false"], .dock-slot[data-open="true"] { padding: 0; }
+.drag-source { opacity: 0.45; transition: opacity 150ms ease-out; }
+.shell-card[data-drop-target] { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .workbench-drop-zone, .dock-slot, .drag-source { transition: none; }
+}
 /* Edge targets on one dock card: drop to split it into a new group. */
 /* Above the whole-dock targets, which would otherwise cover a card's edge. */
 .dock-split-zone { z-index: calc(var(--z-overlay) + 2); }

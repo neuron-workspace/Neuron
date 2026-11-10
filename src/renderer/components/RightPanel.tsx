@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { cn } from '../lib/utils';
 
 export default function PanelDock({
-  dock, group = 0, groupCount = 1, dragging = false, dockPanels, activeId, focusId = null, onActivate, onMove, onOpenMarketplace, onClose,
+  dock, group = 0, groupCount = 1, dragging = false, dragKey = null, dropTarget = false, dockPanels, activeId, focusId = null, onActivate, onMove, onOpenMarketplace, onClose,
 }: {
   dock: Dock;
   /** Position of this card among the dock's split groups. */
@@ -17,6 +17,10 @@ export default function PanelDock({
   groupCount?: number;
   /** A panel tab is being dragged somewhere in the workbench. */
   dragging?: boolean;
+  /** The tab being dragged, so its card can look picked up. */
+  dragKey?: string | null;
+  /** The pointer is over this dock: dropping lands here. */
+  dropTarget?: boolean;
   /** Tab to focus after a move or activation; never set on first render. */
   focusId?: string | null;
   dockPanels: { pluginId: string; view: PanelView }[];
@@ -67,7 +71,8 @@ export default function PanelDock({
     <aside
       aria-label={`${dockName} plugin peek` + (group > 0 ? `, group ${group + 1}` : '')}
       data-dock-group={dock + ':' + group}
-      className="shell-card relative flex h-full w-full flex-col"
+      data-drop-target={dropTarget || undefined}
+      className={cn('shell-card relative flex h-full w-full flex-col', !!dragKey && !!current && panelKey(current) === dragKey && 'drag-source')}
     >
       {current && (['before', 'after'] as const).map((edge) => (
         <div key={edge} aria-label={`Split ${splitWords[edge]} ${current.view.title}`} aria-hidden={!dragging}

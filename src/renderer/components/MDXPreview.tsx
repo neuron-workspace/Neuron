@@ -393,6 +393,10 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       if (line.trim() !== '' || (canEdit && !nested && (i === lines.length - 1 || blankLine === i))) {
         nodes.push(renderLine(line, i, canEdit));
         trailingParagraph = canEdit && i === lines.length - 1 && line.trim() === '';
+      } else if (i > 0 && lines[i - 1].trim() !== '') {
+        // Each source line is its own element, so without a marker a wrapped
+        // paragraph and two paragraphs look the same to the stylesheet.
+        nodes.push(<span key={'gap-' + i} hidden data-gap />);
       }
       i++;
     }

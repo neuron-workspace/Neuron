@@ -155,7 +155,7 @@ export default function TitleBar(props: TitleBarProps) {
       </div>
 
       <button aria-label="Search & commands" onClick={props.onOpenCommandPalette}
-        className="titlebar-no-drag interactive flex h-7 w-[240px] shrink-0 items-center gap-2 rounded-md border border-[var(--divider)] bg-[var(--canvas)] px-2.5 text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]">
+        className="titlebar-no-drag interactive flex h-8 w-[clamp(260px,38vw,560px)] shrink items-center gap-2 rounded-[10px] border border-[var(--divider)] bg-[var(--canvas)] px-2.5 text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]">
         <Search className="h-4 w-4 shrink-0" /><span>Search and commands</span>
         <kbd className="ml-auto text-[10px]">{formatChord('mod+k')}</kbd>
       </button>
