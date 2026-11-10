@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { usePlugins } from '../plugins/host';
-import { DOCKS, PANEL_MIME, SIDEBAR_MIME, movePanel, placePanels, type Dock, type WorkbenchLayout } from '../lib/layout';
+import { DOCKS, PANEL_MIME, SIDEBAR_MIME, activePanel, movePanel, panelKey, placePanels, type Dock, type GroupTarget, type WorkbenchLayout } from '../lib/layout';
 import PanelDock from './RightPanel';
 
 export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, sidebar, children }: {
@@ -14,7 +14,7 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
   const { panels } = usePlugins();
   const placed = placePanels(panels, layout);
   const sizes = useRef<Record<string, number>>({});
-  const [active, setActive] = useState<Record<Dock, string | null>>({ left: null, right: null, bottom: null });
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [drag, setDrag] = useState<'panel' | 'sidebar' | null>(null);
   const [hover, setHover] = useState<Dock | null>(null);
   const clearDrag = () => { setDrag(null); setHover(null); };
@@ -31,11 +31,11 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
     };
   }, []);
 
-  const move = (key: string, dock: Dock, index?: number) => {
-    const next = movePanel(panels, layout, key, dock, index);
+  const move = (key: string, dock: Dock, index?: number, group?: GroupTarget) => {
+    const next = movePanel(panels, layout, key, dock, index, group);
     if (next !== layout) {
       onLayoutChange(next);
-      setActive((prev) => ({ ...prev, [dock]: key }));
+      setFocusId(key);
     }
     clearDrag();
   };
@@ -45,12 +45,32 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
   };
   const accepts = (event: DragEvent, dock: Dock) => event.dataTransfer.types.includes(PANEL_MIME)
     || (dock !== 'bottom' && event.dataTransfer.types.includes(SIDEBAR_MIME));
-  const dockView = (dock: Dock) => (
-    <PanelDock dock={dock} dockPanels={placed[dock]} activeId={active[dock]}
-      onActivate={(key) => setActive((prev) => ({ ...prev, [dock]: key }))}
-      onMove={move} onOpenMarketplace={onOpenMarketplace}
-      onClose={() => onLayoutChange({ [`${dock}Panel`]: false })} />
-  );
+  const groupView = (dock: Dock, group: number, count: number) => {
+    const members = placed[dock][group] ?? [];
+    const current = activePanel(members, layout, dock, group);
+    return (
+      <PanelDock dock={dock} group={group} groupCount={count} dragging={drag === 'panel'} dockPanels={members}
+        activeId={current ? panelKey(current) : null} focusId={focusId}
+        onActivate={(key) => { onLayoutChange({ activePanels: { ...layout.activePanels, [dock + ':' + group]: key } }); setFocusId(key); }}
+        onMove={move} onOpenMarketplace={onOpenMarketplace}
+        onClose={() => onLayoutChange({ [`${dock}Panel`]: false })} />
+    );
+  };
+  // Split groups stack in the side docks and sit side by side in the bottom one.
+  const dockView = (dock: Dock) => {
+    const count = Math.max(1, placed[dock].length);
+    if (count === 1) return groupView(dock, 0, 1);
+    return (
+      <PanelGroup direction={dock === 'bottom' ? 'horizontal' : 'vertical'} autoSaveId={`neuron.dock.${dock}.${count}`} className="flex min-h-0 min-w-0">
+        {placed[dock].map((_, group) => (
+          <Fragment key={group}>
+            {group > 0 && <PanelResizeHandle className={'resize-handle ' + (dock === 'bottom' ? 'resize-handle-v' : 'resize-handle-h')} />}
+            <Panel id={`${dock}-group-${group}`} order={group} minSize={15} className="min-h-0 min-w-0">{groupView(dock, group, count)}</Panel>
+          </Fragment>
+        ))}
+      </PanelGroup>
+    );
+  };
   const center = (
     <PanelGroup direction="vertical" autoSaveId="neuron.shell.v" className="flex min-h-0 flex-col">
       <Panel id="center-row" order={1} minSize={30} className="min-h-0">
@@ -98,7 +118,9 @@ export default function Workbench({ layout, onLayoutChange, onOpenMarketplace, s
           </Fragment>
         ))}
       </PanelGroup>
-      {DOCKS.filter((dock) => dock !== 'bottom' || drag !== 'sidebar').map((dock) => (
+      {/* The sidebar cannot go to the bottom, and the side it is already on is not a
+          move. That target would also appear under the pointer as the drag starts. */}
+      {DOCKS.filter((dock) => drag !== 'sidebar' || (dock !== 'bottom' && dock !== layout.sidebarSide)).map((dock) => (
         <div key={dock} aria-label={dock[0].toUpperCase() + dock.slice(1) + ' dock'} aria-hidden={!drag}
           data-dock-zone={dock}
           className={'workbench-drop-zone workbench-drop-zone-' + dock}

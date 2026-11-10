@@ -128,8 +128,9 @@ test('changing the theme preset applies it to the document', async ({ page }) =>
   await expect(dialog).toBeVisible();
   await dialog.getByText('Open settings', { exact: false }).first().click();
 
-  await page.getByRole('button', { name: /^Light$/ }).first().click();
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme')), { timeout: 10_000 })
-    .toBe('light');
+  // Light is the default, so switching to it would prove nothing.
+  const theme = () => page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  await expect.poll(theme, { timeout: 10_000 }).toBe('light');
+  await page.getByRole('button', { name: /^Graphite$/ }).first().click();
+  await expect.poll(theme, { timeout: 10_000 }).toBe('dark');
 });

@@ -159,7 +159,7 @@ export default function Sidebar(props: SidebarProps) {
     const isConfirming = pendingDelete === file.path;
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }}>
           <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
@@ -181,7 +181,7 @@ export default function Sidebar(props: SidebarProps) {
     const isSelected = selectedNote === appPath && view === 'notes';
     return (
       <div key={node.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left" onClick={() => onSelectNote(appPath)}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => onSelectNote(appPath)}>
           <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate text-[12px] font-medium">{node.name}</span>
           <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-sans text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
@@ -199,7 +199,7 @@ export default function Sidebar(props: SidebarProps) {
     return (
       <div key={node.path}>
         <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" style={{ paddingLeft: `${8 + depth * 14}px` }}>
-          <button className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left" onClick={() => toggleFolder(node.path)}>
+          <button className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left" onClick={() => toggleFolder(node.path)}>
             <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)] transition-transform', isOpen && 'rotate-90')} />
             {isOpen ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink)]" /> : <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
             <span className="truncate text-[12px] font-medium">{node.name}</span>

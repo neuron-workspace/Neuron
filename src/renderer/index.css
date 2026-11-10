@@ -285,7 +285,7 @@ body.platform-darwin .status-bar {
 .field:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px var(--accent); }
 
 .note-row {
-  min-height: 34px;
+  min-height: 28px;
   border: 1px solid transparent;
   border-radius: 6px;
   color: var(--ink-secondary);
@@ -580,6 +580,13 @@ html[data-theme='light'] .neuron-logo {
 .workbench-drop-zone-right { right: 6px; top: 46px; bottom: 84px; width: 72px; }
 .workbench-drop-zone-bottom { left: 6px; right: 6px; bottom: 6px; height: 72px; }
 .workbench-drop-zone-left, .workbench-drop-zone-right { writing-mode: vertical-rl; }
+/* Edge targets on one dock card: drop to split it into a new group. */
+/* Above the whole-dock targets, which would otherwise cover a card's edge. */
+.dock-split-zone { z-index: calc(var(--z-overlay) + 2); }
+.dock-split-zone-v-before { left: 6px; right: 6px; top: 34px; height: 36px; }
+.dock-split-zone-v-after { left: 6px; right: 6px; bottom: 6px; height: 36px; }
+.dock-split-zone-h-before { left: 6px; top: 34px; bottom: 6px; width: 56px; writing-mode: vertical-rl; }
+.dock-split-zone-h-after { right: 6px; top: 34px; bottom: 6px; width: 56px; writing-mode: vertical-rl; }
 @media (prefers-reduced-motion: reduce) {
   .workbench-drop-zone { transition: none; }
 }

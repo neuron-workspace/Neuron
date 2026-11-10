@@ -9,7 +9,7 @@ interface RegisteredCommand { pluginId: string; command: PluginCommand }
 // surface: a user who must discover and enable it first will do so *after*
 // losing the file, the one moment it cannot help. It stays switchable off like
 // any other plugin, and the journal keeps recording either way.
-const DEFAULT_ENABLED = new Set(['version-history']);
+const DEFAULT_ENABLED = new Set(['version-history', 'graph']);
 
 /** Secret fields are the ones the manifest declares as passwords. */
 function secretFieldsOf(catalog: PluginModule[], id: string): string[] {

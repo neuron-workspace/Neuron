@@ -1,21 +1,28 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Blocks, MoreHorizontal, PanelBottomClose, PanelLeftClose, PanelRightClose } from 'lucide-react';
 import { usePlugins } from '../plugins/host';
 import { Button } from './ui/button';
-import { DOCKS, PANEL_MIME, panelKey, type Dock } from '../lib/layout';
+import { DOCKS, PANEL_MIME, panelKey, type Dock, type GroupTarget } from '../lib/layout';
 import type { PanelView } from '../plugins/types';
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from './ui/context-menu';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './ui/dropdown-menu';
 import { cn } from '../lib/utils';
 
 export default function PanelDock({
-  dock, dockPanels, activeId, onActivate, onMove, onOpenMarketplace, onClose,
+  dock, group = 0, groupCount = 1, dragging = false, dockPanels, activeId, focusId = null, onActivate, onMove, onOpenMarketplace, onClose,
 }: {
   dock: Dock;
+  /** Position of this card among the dock's split groups. */
+  group?: number;
+  groupCount?: number;
+  /** A panel tab is being dragged somewhere in the workbench. */
+  dragging?: boolean;
+  /** Tab to focus after a move or activation; never set on first render. */
+  focusId?: string | null;
   dockPanels: { pluginId: string; view: PanelView }[];
   activeId: string | null;
   onActivate: (key: string) => void;
-  onMove: (key: string, dock: Dock, index?: number) => void;
+  onMove: (key: string, dock: Dock, index?: number, group?: GroupTarget) => void;
   onOpenMarketplace: () => void;
   onClose: () => void;
 }) {
@@ -23,20 +30,25 @@ export default function PanelDock({
   const current = dockPanels.find((p) => panelKey(p) === activeId) ?? dockPanels[0] ?? null;
   const CloseIcon = dock === 'bottom' ? PanelBottomClose : dock === 'left' ? PanelLeftClose : PanelRightClose;
   const headerRef = useRef<HTMLElement>(null);
+  const [splitHover, setSplitHover] = useState<'before' | 'after' | null>(null);
+  useEffect(() => { if (!dragging) setSplitHover(null); }, [dragging]);
   useEffect(() => {
-    if (!activeId) return;
+    if (!focusId || !dockPanels.some((p) => panelKey(p) === focusId)) return;
     const frame = requestAnimationFrame(() => {
       headerRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [activeId]);
+  }, [focusId]);
 
   const actions = (key: string) => {
     const index = dockPanels.findIndex((p) => panelKey(p) === key);
     return [
       ...DOCKS.map((target) => ({ label: 'Move to ' + target + ' dock', disabled: target === dock, run: () => onMove(key, target) })),
-      { label: 'Move earlier', disabled: index <= 0, run: () => onMove(key, dock, index - 1) },
-      { label: 'Move later', disabled: index >= dockPanels.length - 1, run: () => onMove(key, dock, index + 1) },
+      { label: 'Move earlier', disabled: index <= 0, run: () => onMove(key, dock, index - 1, group) },
+      { label: 'Move later', disabled: index >= dockPanels.length - 1, run: () => onMove(key, dock, index + 1, group) },
+      { label: 'Split into its own group', disabled: dockPanels.length < 2 || groupCount >= 8, run: () => onMove(key, dock, undefined, { group, edge: 'after' }) },
+      { label: 'Join previous group', disabled: group <= 0, run: () => onMove(key, dock, undefined, group - 1) },
+      { label: 'Join next group', disabled: group >= groupCount - 1, run: () => onMove(key, dock, undefined, group + 1) },
     ];
   };
   const drop = (event: React.DragEvent, before?: string) => {
@@ -46,14 +58,40 @@ export default function PanelDock({
     const key = event.dataTransfer.getData(PANEL_MIME);
     if (key === before) return;
     const remaining = dockPanels.filter((p) => panelKey(p) !== key);
-    onMove(key, dock, before ? remaining.findIndex((p) => panelKey(p) === before) : undefined);
+    onMove(key, dock, before ? remaining.findIndex((p) => panelKey(p) === before) : undefined, group);
   };
+  const splitWords = dock === 'bottom' ? { before: 'left of', after: 'right of' } : { before: 'above', after: 'below' };
+  const dockName = dock === 'bottom' ? 'Bottom' : dock === 'left' ? 'Left' : 'Side';
 
   return (
     <aside
-      aria-label={`${dock === 'bottom' ? 'Bottom' : dock === 'left' ? 'Left' : 'Side'} plugin peek`}
-      className="shell-card flex h-full w-full flex-col"
+      aria-label={`${dockName} plugin peek` + (group > 0 ? `, group ${group + 1}` : '')}
+      data-dock-group={dock + ':' + group}
+      className="shell-card relative flex h-full w-full flex-col"
     >
+      {current && (['before', 'after'] as const).map((edge) => (
+        <div key={edge} aria-label={`Split ${splitWords[edge]} ${current.view.title}`} aria-hidden={!dragging}
+          data-split-zone={`${dock}:${group}:${edge}`}
+          className={`workbench-drop-zone dock-split-zone dock-split-zone-${dock === 'bottom' ? 'h' : 'v'}-${edge}`}
+          data-visible={dragging} data-hover={splitHover === edge}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes(PANEL_MIME)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            setSplitHover(edge);
+          }}
+          onDragLeave={() => setSplitHover(null)}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes(PANEL_MIME)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setSplitHover(null);
+            onMove(event.dataTransfer.getData(PANEL_MIME), dock, undefined, { group, edge });
+          }}>
+          {`Split ${splitWords[edge]}`}
+        </div>
+      ))}
       <header ref={headerRef} className="pane-header dock-header flex items-center justify-between gap-1 border-b px-2">
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           aria-label="Panel tabs"
