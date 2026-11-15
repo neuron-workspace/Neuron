@@ -71,6 +71,8 @@ test('the prompt path is never split, on first open and after a drag of resizes'
 
 test('the shell and the terminal agree on the width, on first open and after a resize', async ({ app, page }) => {
   test.setTimeout(120_000);
+  // The terminal is a dock panel, closed until asked for.
+  await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
   const pane = page.locator('[data-cols]').first();
   await expect(pane).toBeVisible();
   // A fresh shell needs its prompt before it reads input; cold CI is slow.

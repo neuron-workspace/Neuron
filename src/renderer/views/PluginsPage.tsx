@@ -104,8 +104,8 @@ function PluginRow({
   const Icon = meta.icon;
   const myPanels = panels.filter((p) => p.pluginId === manifest.id);
   const placed = placePanels(myPanels, layout);
-  const sidePanels = [...placed.left, ...placed.right];
-  const bottomPanels = placed.bottom;
+  const sidePanels = [...placed.left, ...placed.right].flat();
+  const bottomPanels = placed.bottom.flat();
   const myCommands = commands.filter((c) => c.pluginId === manifest.id);
   const needsConfig = enabled && !!manifest.configSchema?.length && Object.keys(getConfig(manifest.id)).length === 0;
 

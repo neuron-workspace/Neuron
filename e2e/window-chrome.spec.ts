@@ -39,26 +39,26 @@ async function paletteCommand(page: Page, command: string) {
   await expect(dialog).toBeHidden();
 }
 
-test('tab strip stays 28px on workspace home and when opening a note', async ({ page }) => {
+test('tab strip stays 32px on workspace home and when opening a note', async ({ page }) => {
   const tabs = page.getByRole('navigation', { name: 'Open notes' });
   const row = tabs.locator('..');
   await expect(tabs).toBeVisible();
   await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
-  await expect(tabs.getByRole('button', { name: 'Create note', exact: true })).toBeVisible();
+  await expect(tabs.getByRole('button', { name: 'New tab', exact: true })).toBeVisible();
   await expect(tabs.getByRole('button', { name: 'Open website tab' })).toBeVisible();
-  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
   const homeHeight = await tabs.evaluate((node) => node.getBoundingClientRect().height);
   expect(homeHeight).toBeGreaterThan(0);
-  expect(homeHeight).toBeLessThanOrEqual(28);
+  expect(homeHeight).toBeLessThanOrEqual(32);
 
   await openNote(page, 'getting-started.mdx');
   await expect(tabs.getByRole('button', { name: 'Close getting-started' })).toBeVisible();
-  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
   await expect.poll(() => tabs.evaluate((node) => node.getBoundingClientRect().height)).toBe(homeHeight);
 
   await tabs.getByRole('button', { name: 'Close getting-started' }).click();
   await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
-  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(28);
+  await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
 });
 
 test('native overlay keeps toolbar actions clear of window controls', async ({ page }) => {
@@ -122,7 +122,7 @@ for (const maximized of [false, true]) {
       await expect(bar).toBeHidden();
       await expect(content).toBeVisible();
       await expect.poll(() => content.evaluate((node) => node.getBoundingClientRect().top)).toBe(0);
-      await expect.poll(() => page.locator('main').evaluate((node) => node.getBoundingClientRect().top)).toBe(0);
+      await expect.poll(() => page.locator('main').evaluate((node) => node.getBoundingClientRect().top)).toBe(8);
 
       // All toolbar actions, including the former menu-only ones, remain searchable.
       await page.keyboard.press(paletteShortcut);
@@ -131,15 +131,15 @@ for (const maximized of [false, true]) {
       for (const command of [
         'Open folder…', 'Create workspace…', 'Plugins & integrations',
         'Hide sidebar', 'Show left dock', 'Show right dock', 'Show bottom dock', 'Show workspace graph',
-        'Hide activity bar', maximized ? 'Show status bar' : 'Hide status bar', 'Zen mode',
+        'Collapse sidebar to icons', maximized ? 'Show status bar' : 'Hide status bar', 'Zen mode',
         'Move sidebar to the right', 'Reset layout',
       ]) {
         await dialog.getByRole('combobox').fill(command);
         await expect(dialog.getByRole('option', { name: command })).toBeVisible();
       }
       await page.keyboard.press('Escape');
-      await paletteCommand(page, 'Hide activity bar');
-      await paletteCommand(page, 'Show activity bar');
+      await paletteCommand(page, 'Collapse sidebar to icons');
+      await paletteCommand(page, 'Expand sidebar');
       await expect.poll(() => content.evaluate((node) => node.getBoundingClientRect().top)).toBe(0);
     } finally {
       await setFullScreen(app, false);
@@ -203,15 +203,21 @@ test('theme changes reach the native overlay and invalid colors are ignored', as
     };
   });
 
-  await paletteCommand(page, 'Open settings');
-  for (const name of ['Light', 'Nord', 'Graphite']) {
-    const button = page.getByRole('group', { name: 'Application theme' }).getByRole('button', { name: new RegExp('^' + name) });
+  // Settings is its own window; the theme chosen there has to reach this
+  // window's page and, through it, this window's native buttons.
+  const [settings] = await Promise.all([app.waitForEvent('window'), paletteCommand(page, 'Open settings')]);
+  await settings.waitForLoadState('domcontentloaded');
+  const read = () => {
+    const style = getComputedStyle(document.documentElement);
+    return { color: style.getPropertyValue('--nav').trim(), symbolColor: style.getPropertyValue('--ink').trim() };
+  };
+  for (const name of ['Nord', 'Light', 'Graphite']) {
+    const button = settings.getByRole('group', { name: 'Application theme' }).getByRole('button', { name: new RegExp('^' + name) });
     await button.click();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
-    const colors = await page.evaluate(() => {
-      const style = getComputedStyle(document.documentElement);
-      return { color: style.getPropertyValue('--nav').trim(), symbolColor: style.getPropertyValue('--ink').trim() };
-    });
+    const chosen = await settings.evaluate(read);
+    await expect.poll(() => page.evaluate(read)).toEqual(chosen);
+    const colors = await page.evaluate(read);
     await expect.poll(() => app.evaluate(() =>
       (globalThis as unknown as { overlayCalls: unknown[] }).overlayCalls.at(-1),
     )).toEqual(colors);

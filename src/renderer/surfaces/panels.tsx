@@ -5,7 +5,6 @@ import { Segmented, type SegmentedOption } from '../components/ui/segmented';
 import Editor from '../components/Editor';
 import GraphCanvas from '../components/GraphCanvas';
 import MDXPreview from '../components/MDXPreview';
-import XtermTerminal from '../components/XtermTerminal';
 import WorkspaceExplorer from '../views/WorkspaceExplorer';
 import { useExplorer, type ExplorerState } from '../lib/explorer-state';
 import type { SurfaceProps } from './index';
@@ -74,7 +73,7 @@ export type EditMode = 'reading' | 'live' | 'split';
 /** The one place the three view modes are named, shared with App's own switch
     so a note does not offer "Reading view" in one shell and "reading" in the
     other. */
-/** Element id of the slot in App's tab row that the editor panel's view-mode
+/** Element id of the slot in App's note header that the editor panel's view-mode
     switch renders into, so it costs no row of its own. */
 export const EDITOR_MODE_SLOT = 'editor-mode-slot';
 
@@ -97,6 +96,11 @@ function ExplorerPane({ explorer }: { explorer: ExplorerState }) {
       onOpenFile={explorer.openFile}
       recents={explorer.recents}
       onClearRecents={explorer.clearRecents}
+      folders={explorer.folders}
+      notesData={explorer.notesData}
+      onCreateNote={explorer.createNote}
+      onCreateFolder={explorer.createFolder}
+      onOpenToSide={explorer.openToSide}
     />
   );
 }
@@ -132,7 +136,7 @@ function EditorPanel({ surface }: PanelContext) {
   if (isText) {
     return (
       <div className="flex h-full flex-col">
-        <div className="border-b border-[var(--divider)] px-3 py-1 font-mono text-[11px] text-[var(--ink-muted)]">
+        <div className="border-b border-[var(--divider)] px-3 py-1 font-sans text-[11px] text-[var(--ink-muted)]">
           {selectedNote}
         </div>
         <div className="min-h-0 flex-1">
@@ -142,7 +146,7 @@ function EditorPanel({ surface }: PanelContext) {
     );
   }
 
-  const mode = modes[selectedNote] ?? 'reading';
+  const mode = modes[selectedNote] ?? explorer?.editorModes[selectedNote] ?? 'reading';
   const setMode = (next: EditMode) => setModes((prev) => ({ ...prev, [selectedNote]: next }));
   const scheme = colorScheme ?? 'dark';
   // Wiki-links need the note list and a way to open one. Both already arrive
@@ -185,7 +189,7 @@ function TreePanel({ surface }: PanelContext) {
         <button
           key={note.path}
           type="button"
-          className="interactive block w-full truncate rounded px-2 py-1.5 text-left font-mono text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+          className="interactive block w-full truncate rounded px-2 py-1.5 text-left font-sans text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
           onClick={() => surface.onSelectNote(note.path)}
         >
           {note.path}
@@ -195,14 +199,6 @@ function TreePanel({ surface }: PanelContext) {
   );
 }
 
-function TerminalPanel({ spec }: PanelContext) {
-  // A terminal declared by the workspace layout is its own terminal, separate
-  // from the one in the panel rail. Keying it by the layout's own id keeps a
-  // layout with two terminal panes honest -- two panes, two shells -- and stops
-  // it sharing a shell with the plugin panel, which made both echo each other.
-  const id = typeof spec.id === 'string' ? spec.id : 'layout';
-  return <XtermTerminal sessionKey={`layout:${id}`} />;
-}
 
 function PreviewPanel({ spec, surface }: PanelContext) {
   const path = typeof spec.path === 'string' ? spec.path : surface.selectedNote;
@@ -213,6 +209,5 @@ function PreviewPanel({ spec, surface }: PanelContext) {
 registerPanel('editor', EditorPanel);
 registerPanel('tree', TreePanel);
 registerPanel('graph', GraphPanel);
-registerPanel('terminal', TerminalPanel);
 registerPanel('preview', PreviewPanel);
 registerPanel('note', PreviewPanel);

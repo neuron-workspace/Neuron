@@ -1,3 +1,4 @@
+import { cn } from './lib/utils';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -8,7 +9,8 @@ import StatusBar from './components/StatusBar';
 import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
-import CreateModal from './components/CreateModal';
+import { nextUntitled } from './lib/untitled';
+import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
 import RepositoriesPage from './views/RepositoriesPage';
@@ -30,15 +32,17 @@ import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
-import { DEFAULT_LAYOUT, resolveLayout, type WorkbenchLayout } from './lib/layout';
+import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, type SavedLayout, type WorkbenchLayout } from './lib/layout';
+import LayoutSwitcher from './components/LayoutSwitcher';
+import SideNote from './components/SideNote';
+import { Panel as SplitPanel, PanelGroup as SplitGroup, PanelResizeHandle as SplitHandle } from 'react-resizable-panels';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
 import { ExplorerProvider } from './lib/explorer-state';
 import {
   addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
 } from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
-import ActivityRail, { type SidebarMode } from './components/ActivityRail';
-import { parseFrontmatter, normalizeStringList } from './lib/frontmatter';
+import { type SidebarMode } from './components/ActivityRail';
 
 interface PropertiesSettings { removeEmpty: boolean; showInReading: boolean; collapsedByDefault: boolean }
 const DEFAULT_PROPERTIES_SETTINGS: PropertiesSettings = { removeEmpty: true, showInReading: true, collapsedByDefault: false };
@@ -117,12 +121,17 @@ export default function App() {
   //
   // `atHome` is deliberately its own flag rather than being inferred from
   // `selectedNote === null`. Having no file open implies the explorer, but the
-  // reverse is not true: clicking the workspace title must show it WITHOUT
+  // reverse is not true: opening a new tab must show it WITHOUT
   // closing anyone's tabs, so home has to be a place you can navigate to while
   // a note is still open. Conflating the two is how the explorer either refuses
   // to appear or refuses to go away.
   const [atHome, setAtHome] = useState(false);
   const [explorerFolder, setExplorerFolder] = useState('');
+  // listNotes returns files only; retain newly created empty directories per workspace.
+  const [createdFolders, setCreatedFolders] = useState<string[]>([]);
+  const foldersLoadedFor = useRef<string | null>(null);
+  const [revealedFolder, setRevealedFolder] = useState<string | null>(null);
+  const creatingUntitled = useRef(false);
   const [explorerRecents, setExplorerRecents] = useState<RecentEntry[]>([]);
 
   // Workbench layout: which shell regions are visible. Persisted per user.
@@ -161,6 +170,24 @@ export default function App() {
     });
   }, []);
 
+  // Settings and the workspace manager are about the app, not this workspace,
+  // so they open in a window of their own.
+  const remoteAppearance = useRef<string | null>(null);
+  const utilityWindow = useMemo(() => {
+    const page = new URLSearchParams(window.location.search).get('window');
+    return page === 'settings' || page === 'workspaces' ? page : null;
+  }, []);
+  const openGlobalPage = useCallback((page: 'settings' | 'workspaces') => {
+    if (window.electronAPI?.windowControls?.openPage) void window.electronAPI.windowControls.openPage(page);
+    else setView(page === 'settings' ? 'settings' : 'repositories');
+  }, []);
+  // Another window changed a shared setting: take the new value.
+  useEffect(() => window.electronAPI?.settings.onChanged?.((key) => {
+    if (key === 'appearance') void window.electronAPI.settings.get<Appearance>('appearance').then((stored) => { const next = normalizeAppearance(stored); remoteAppearance.current = JSON.stringify(next); applyTheme(next); setAppearance(next); });
+    if (key === 'keybindings') void window.electronAPI.settings.get<Bindings>('keybindings').then((stored) => setBindings(resolveBindings(stored)));
+    if (key === 'properties') void window.electronAPI.settings.get<Partial<PropertiesSettings>>('properties').then((stored) => { if (stored) setPropsSettings({ ...DEFAULT_PROPERTIES_SETTINGS, ...stored }); });
+  }), []);
+
   const updatePropsSettings = useCallback((next: PropertiesSettings) => {
     setPropsSettings(next);
     void window.electronAPI?.settings.set('properties', next);
@@ -169,6 +196,45 @@ export default function App() {
   const sidebarOpen = layout.sidebar;
   const rightPanelOpen = layout.rightPanel;
   const bottomPanelOpen = layout.bottomPanel;
+  // Saved layouts: named arrangements to switch between. Structure only; open
+  // notes and unsaved edits are untouched by switching.
+  const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
+  const [activeLayoutId, setActiveLayoutId] = useState<string | null>(null);
+  useEffect(() => {
+    void Promise.all([
+      window.electronAPI?.settings.get<unknown>('savedLayouts'),
+      window.electronAPI?.settings.get<unknown>('activeLayoutId'),
+    ]).then(([stored, active]) => {
+      // Seed only a profile that has never had the key; an emptied list stays empty.
+      const list = stored == null ? SEED_LAYOUTS : resolveSavedLayouts(stored);
+      if (stored == null) void window.electronAPI?.settings.set('savedLayouts', list);
+      setSavedLayouts(list);
+      setActiveLayoutId(typeof active === 'string' && list.some((l) => l.id === active) ? active : null);
+    });
+  }, []);
+  const storeLayouts = (list: SavedLayout[], active: string | null) => {
+    setSavedLayouts(list); setActiveLayoutId(active);
+    void window.electronAPI?.settings.set('savedLayouts', list);
+    void window.electronAPI?.settings.set('activeLayoutId', active);
+  };
+  const snapshotLayout = (): WorkbenchLayout => ({ ...layoutRef.current, zen: false });
+  const applySavedLayout = (id: string) => {
+    const saved = savedLayouts.find((l) => l.id === id);
+    if (!saved) return;
+    zenPrevRef.current = null;
+    commitLayout(resolveLayout(saved.layout));
+    storeLayouts(savedLayouts, id);
+  };
+  const activeSavedLayout = savedLayouts.find((l) => l.id === activeLayoutId) ?? null;
+  const layoutSwitcher = (
+    <LayoutSwitcher layouts={savedLayouts} activeId={activeLayoutId}
+      modified={!!activeSavedLayout && !sameLayout(layout, activeSavedLayout.layout)}
+      onApply={applySavedLayout}
+      onSave={(name) => { const id = 'layout-' + Date.now().toString(36); storeLayouts([...savedLayouts, { id, name, layout: snapshotLayout() }], id); }}
+      onUpdate={() => storeLayouts(savedLayouts.map((l) => (l.id === activeLayoutId ? { ...l, layout: snapshotLayout() } : l)), activeLayoutId)}
+      onDelete={(id) => storeLayouts(savedLayouts.filter((l) => l.id !== id), null)}
+      onReset={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {}, activePanels: {} }); }} />
+  );
   const setSidebarOpen = (fn: (v: boolean) => boolean) => patchLayout({ sidebar: fn(layoutRef.current.sidebar) });
   const setRightPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ rightPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.rightPanel) });
   const graphOverlayOpen = layout.graphOverlay;
@@ -183,9 +249,6 @@ export default function App() {
     patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createSection, setCreateSection] = useState('');
-  const [createTab, setCreateTab] = useState<'note' | 'section'>('note');
   const [wide, setWide] = useState(true);
   const [bindings, setBindings] = useState<Bindings>(DEFAULT_BINDINGS);
   const [surfaceSourceMode, setSurfaceSourceMode] = useState<Record<string, boolean>>({});
@@ -221,6 +284,9 @@ export default function App() {
 
   useEffect(() => {
     if (!appearanceReady || !window.electronAPI) return;
+    // A theme another window chose is already saved. Saving it again from here
+    // would echo back and could overwrite a newer choice made over there.
+    if (remoteAppearance.current === JSON.stringify(appearance)) return;
     void window.electronAPI.settings.set('appearance', appearance).then((result) => {
       if (!result.success) setNotice('Appearance settings could not be saved.');
     });
@@ -244,18 +310,24 @@ export default function App() {
     (async () => { await reloadRepoState(); setRepoReady(true); })();
     return window.electronAPI.repository.onChanged(() => { void reloadRepoState(); });
   }, [reloadRepoState]);
+  // The workspace manager lists what other windows open and forget.
+  useEffect(() => {
+    if (utilityWindow !== 'workspaces') return;
+    const refresh = () => { void reloadRepoState(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [utilityWindow, reloadRepoState]);
 
   const createRepository = useCallback(async () => {
-    const repo = await window.electronAPI?.repository.create();
-    if (repo) { setRepository(repo); void reloadRepoState(); }
+    // The folder may open in its own window, so ask what this window shows now.
+    if (await window.electronAPI?.repository.create()) void reloadRepoState();
   }, [reloadRepoState]);
   const openRepository = useCallback(async () => {
-    const repo = await window.electronAPI?.repository.open();
-    if (repo) { setRepository(repo); void reloadRepoState(); }
+    if (await window.electronAPI?.repository.open()) void reloadRepoState();
   }, [reloadRepoState]);
   const switchRepository = useCallback(async (dir: string) => {
     const result = await window.electronAPI?.repository.switch(dir);
-    if (result?.success && result.repository) { setRepository(result.repository); setView('notes'); void reloadRepoState(); }
+    if (result?.success) void reloadRepoState();
   }, [reloadRepoState]);
 
   // --- Notes ----------------------------------------------------------------
@@ -290,18 +362,7 @@ export default function App() {
 
   useEffect(() => {
       const allTags = new Set<string>();
-      notesData.forEach((note) => {
-        // Body #tags…
-        const tagRegex = /(?:^|\s)#([A-Za-z0-9_-]+)(?=\s|$|\.|,)/g;
-        let match;
-        while ((match = tagRegex.exec(note.content)) !== null) {
-          const tag = match[1];
-          if (!/^[0-9a-fA-F]{3,6}$/.test(tag) && !/^\d+$/.test(tag)) allTags.add(tag);
-        }
-        // …plus frontmatter tags (scalar or list form).
-        const fm = parseFrontmatter(note.content);
-        if (fm.valid && fm.data.tags != null) normalizeStringList(fm.data.tags).forEach((t) => allTags.add(t));
-      });
+      notesData.forEach(note => noteTags(note.content).forEach(tag => allTags.add(tag)));
       setTags(Array.from(allTags).sort((a, b) => a.localeCompare(b)));
   }, [notesData]);
 
@@ -310,6 +371,7 @@ export default function App() {
   // would sync someone's browsing history to every other machine.
   useEffect(() => {
     setExplorerFolder('');
+    setRevealedFolder(null);
     if (!repository) { setExplorerRecents([]); return; }
     let cancelled = false;
     void window.electronAPI?.settings.get<unknown>(recentsKey(repository.path)).then((stored) => {
@@ -363,6 +425,7 @@ export default function App() {
           if (removed(candidate)) versions.set(candidate, pendingVersion + 1);
         }
         setNotes(current => current.filter(n => !removed(n)));
+        setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
         setOpenTabs(current => current.filter(n => !removed(n)));
         setSelectedNote(current => current !== null && removed(current) ? null : current);
@@ -438,6 +501,26 @@ export default function App() {
     if (folder) setExplorerRecents((current) => addRecent(current, { path: folder, kind: 'folder' }));
   }, []);
 
+  useEffect(() => {
+    foldersLoadedFor.current = null;
+    setCreatedFolders([]);
+    if (!repository) return;
+    let cancelled = false;
+    void window.electronAPI.settings.get<unknown>('explorer.folders:' + repository.path).then(stored => {
+      if (cancelled) return;
+      const folders = Array.isArray(stored) ? stored.filter((path): path is string => typeof path === 'string' && !!path) : [];
+      foldersLoadedFor.current = repository.path;
+      setCreatedFolders(current => [...new Set([...folders, ...current])]);
+    }).catch(() => { if (!cancelled) setNotice('Could not load saved empty folders.'); });
+    return () => { cancelled = true; };
+  }, [repository]);
+
+  useEffect(() => {
+    if (!repository || foldersLoadedFor.current !== repository.path) return;
+    void window.electronAPI.settings.set('explorer.folders:' + repository.path, createdFolders)
+      .catch(() => setNotice('Could not remember empty folders.'));
+  }, [repository, createdFolders]);
+
   const clearExplorerRecents = useCallback(() => setExplorerRecents([]), []);
 
   // The file list, minus the workspace's own configuration.
@@ -459,51 +542,38 @@ export default function App() {
     [notes],
   );
 
-  // One state object for both empty editor areas: the plain shell's pane and
-  // the layout shell's `editor` panel. Two consumers, one folder and one Recent
-  // list, so they cannot drift apart.
-  const explorerState = useMemo(() => ({
-    atHome,
-    repositoryName: repository?.name ?? 'Workspace',
-    // notesData, not notes: it is the list already filtered of `.neuron/`, so
-    // the explorer cannot offer to open the workspace's own configuration --
-    // which the sidebar and graph both hide. Using the raw list listed .neuron
-    // as the first folder in the workspace.
-    paths: explorerPaths,
-    folder: explorerFolder,
-    navigate: navigateExplorer,
-    openFile: handleSelectNote,
-    recents: explorerRecents,
-    clearRecents: clearExplorerRecents,
-  }), [atHome, repository, explorerPaths, explorerFolder, navigateExplorer, handleSelectNote, explorerRecents, clearExplorerRecents]);
-
   const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
-    const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '').replace(/[-_]/g, ' ');
-    const body = content ?? `# ${title}\n\nStart writing here. Link another note with [[Note name]].\n`;
-    const result = await window.electronAPI.writeNote(relativePath, body);
-    if (!result.success) { setNotice(`Could not create “${relativePath}”. ${result.error ?? ''}`.trim()); return false; }
-    await loadNotes();
-    setSelectedNote(relativePath);
-    setOpenTabs((current) => current.includes(relativePath) ? current : [...current, relativePath]);
-    setView('notes');
-    setSaveState('saved');
-    return true;
-  }, [loadNotes]);
-
-  const createSectionFolder = useCallback(async (path: string, firstNoteName?: string): Promise<boolean> => {
-    if (!window.electronAPI) return false;
-    const result = await window.electronAPI.createSection(path);
-    if (!result.success) { setNotice(`Could not create section “${path}”. ${result.error ?? ''}`.trim()); return false; }
-    if (firstNoteName) {
-      let file = firstNoteName.trim();
-      if (!/\.(md|mdx)$/.test(file)) file += '.mdx';
-      await createNote(`${path}/${file}`);
-    } else {
+    try {
+      const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '');
+      const body = content ?? '# ' + title + '\n\n';
+      const result = await window.electronAPI.writeNote(relativePath, body);
+      if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
       await loadNotes();
+      handleSelectNote(relativePath);
+      setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
+      setSaveState('saved');
+      return true;
+    } catch {
+      setNotice('Could not create “' + relativePath + '”.');
+      return false;
     }
-    return true;
-  }, [createNote, loadNotes]);
+  }, [loadNotes, handleSelectNote]);
+
+  const createSectionFolder = useCallback(async (path: string): Promise<boolean> => {
+    if (!window.electronAPI) return false;
+    try {
+      const result = await window.electronAPI.createSection(path);
+      if (!result.success) { setNotice('Could not create folder “' + path + '”. ' + (result.error ?? '')); return false; }
+      setCreatedFolders(current => current.includes(path) ? current : [...current, path]);
+      await loadNotes();
+      setRevealedFolder(path);
+      return true;
+    } catch {
+      setNotice('Could not create folder “' + path + '”.');
+      return false;
+    }
+  }, [loadNotes]);
 
   const handleDeleteNote = useCallback(async (note: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
@@ -530,11 +600,26 @@ export default function App() {
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
   }, [selectedNote]);
 
-  const requestCreate = useCallback((section?: string) => {
-    setCreateTab('note');
-    setCreateSection(section ?? '');
-    setCreateOpen(true);
-  }, []);
+  const requestCreate = useCallback(async () => {
+    if (creatingUntitled.current) return;
+    creatingUntitled.current = true;
+    try {
+      const paths = await window.electronAPI.listNotes();
+      await createNote(nextUntitled([...paths, ...createdFolders], ''), '# Untitled\n\n');
+    } catch { setNotice('Could not create a note.'); }
+    finally { creatingUntitled.current = false; }
+  }, [createNote, createdFolders]);
+
+  const requestCreateFolder = useCallback(async () => {
+    if (creatingUntitled.current) return;
+    creatingUntitled.current = true;
+    try {
+      const paths = await window.electronAPI.listNotes();
+      await createSectionFolder(nextUntitled([...paths, ...createdFolders], '', 'Untitled folder', ''));
+      setSidebarMode('files');
+    } catch { setNotice('Could not create a folder.'); }
+    finally { creatingUntitled.current = false; }
+  }, [createSectionFolder, createdFolders]);
 
   // Create an .html view in the current note's folder.
   const createSurfaceFile = useCallback(async () => {
@@ -570,15 +655,58 @@ export default function App() {
   const openWebsite = useCallback(() => {
     const n = ++browserCounter.current;
     const url = `https://duckduckgo.com/#neuron-tab-${n}`;
-    setSelectedNote(url);
-    setOpenTabs((current) => (current.includes(url) ? current : [...current, url]));
-    setView('notes');
+    handleSelectNote(url);
+  }, [handleSelectNote]);
+
+  // A second note beside the editor. Only its path is state here: its content
+  // is the main pane's when both show the same note, otherwise the workspace
+  // copy with any unsaved typing laid over it, so each file has one writer.
+  const [sideNote, setSideNote] = useState<string | null>(null);
+  const [sideDraft, setSideDraft] = useState<{ path: string; content: string } | null>(null);
+  const [sideSave, setSideSave] = useState<SaveState>('saved');
+  const sideVersion = useRef(0);
+  useEffect(() => {
+    void window.electronAPI?.settings.get<unknown>('editorSplit').then((stored) => {
+      if (typeof stored === 'string' && /\.(md|mdx)$/.test(stored)) setSideNote(stored);
+    });
   }, []);
+  const openToSide = useCallback((path: string | null) => {
+    if (path !== null && !/\.(md|mdx)$/.test(path)) return;
+    setSideNote(path); setSideDraft(null); setSideSave('saved');
+    void window.electronAPI?.settings.set('editorSplit', path);
+  }, []);
+  const explorerState = useMemo(() => ({
+    atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerPaths,
+    folders: createdFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
+    openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder,
+    editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
+  }), [atHome, repository, explorerPaths, createdFolders, notesData, explorerFolder, navigateExplorer,
+    handleSelectNote, openToSide, createNote, createSectionFolder, editorModes, explorerRecents, clearExplorerRecents]);
+
+  // A deleted or renamed file, or another workspace, simply has no side pane.
+  const sidePath = sideNote && notes.includes(sideNote) ? sideNote : null;
+  const sideContent = !sidePath ? '' : sidePath === selectedNote ? noteContent
+    : sideDraft?.path === sidePath ? sideDraft.content : notesData.find((note) => note.path === sidePath)?.content ?? '';
+  const changeSideNote = async (value: string) => {
+    if (!sidePath || !window.electronAPI) return;
+    if (sidePath === selectedNote) { void handleContentChange(value); return; }
+    const path = sidePath;
+    const version = ++sideVersion.current;
+    setSideDraft({ path, content: value });
+    setSideSave('saving');
+    const result = await window.electronAPI.writeNote(path, value);
+    if (version !== sideVersion.current) return;
+    setSideSave(result.success ? 'saved' : 'error');
+    if (!result.success) { setNotice(`Changes to ?${path}? could not be saved.`); return; }
+    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
+    setSideDraft((draft) => (draft?.path === path && draft.content === value ? null : draft));
+  };
 
   const closeTab = useCallback((note: string) => {
     setOpenTabs((current) => {
       const index = current.indexOf(note);
       const remaining = current.filter((tab) => tab !== note);
+      if (!remaining.length) { setExplorerFolder(''); setAtHome(true); }
       setSelectedNote((active) => {
         if (active !== note) return active;
         return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
@@ -642,25 +770,10 @@ export default function App() {
   // --- Derived --------------------------------------------------------------
   const filteredNotes = useMemo(
     () => (selectedTag
-      ? notesData.filter((note) => {
-          if (new RegExp(`(?:^|\\s)#${selectedTag}(?=\\s|$|\\.|,)`).test(note.content)) return true;
-          const fm = parseFrontmatter(note.content);
-          return fm.valid && fm.data.tags != null && normalizeStringList(fm.data.tags).includes(selectedTag);
-        }).map((note) => note.path)
+      ? notesData.filter(note => noteTags(note.content).includes(selectedTag)).map(note => note.path)
       : notes),
     [selectedTag, notesData, notes],
   );
-
-  const sections = useMemo(() => {
-    const set = new Set<string>();
-    for (const path of notes) {
-      const segments = path.split('/');
-      segments.pop();
-      let prefix = '';
-      for (const segment of segments) { prefix = prefix ? `${prefix}/${segment}` : segment; set.add(prefix); }
-    }
-    return Array.from(set).sort();
-  }, [notes]);
 
   const bridge = useMemo(() => ({
     activeNote: selectedNote,
@@ -761,10 +874,18 @@ export default function App() {
   const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
 
   const editorHeader = (
-    <header className="pane-header editor-tab-header flex items-center justify-between border-b">
-      <NoteTabs tabs={openTabs} activeTab={selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onCreate={() => requestCreate()} onNewBrowser={openWebsite} />
+    <header className="shrink-0">
+      <div className="pane-header editor-tab-header flex items-center">
+      <NoteTabs tabs={openTabs} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
+      </div>
+      {selectedNote && !atHome && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
+        <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
+          {selectedNote.includes('/') && <span>{selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1)}</span>}
+          <span className="text-[var(--ink-secondary)]">{selectedNote.split('/').pop()}</span>
+        </div>
+        {!browsing && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{saveLabel}</span>}
       {selectedNote && Surface ? (
-          <div className="flex h-full shrink-0 items-center border-l border-[var(--divider)] px-3">
+          <div className="flex shrink-0 items-center">
             <Segmented
               label="Surface mode"
               value={surfaceEditing ? 'source' : 'preview'}
@@ -776,8 +897,7 @@ export default function App() {
             />
           </div>
       ) : selectedNote && !browsing ? (
-          <div className="flex h-full shrink-0 items-center gap-3 border-l border-[var(--divider)] px-3">
-            {saveState === 'error' && <span role="status" className="text-[11px] text-[var(--danger)]">{saveLabel}</span>}
+          <div className="flex shrink-0 items-center gap-3">
             {/* Not in a layout workspace. There the editor is a panel that owns
                 its own view mode, so this switch drove nothing -- two identical
                 controls one above the other, and only the lower one worked. It
@@ -785,16 +905,17 @@ export default function App() {
                 text; giving them the same shape is what showed it. */}
             {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
             {/* In a layout workspace the editor panel owns the view mode and
-                renders its switch into this slot, so it shares the tab row
+                renders its switch into this slot, so it shares the note header
                 instead of taking a row of its own. */}
             {shellConfig && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
           </div>
       ) : null}
+      </div>}
     </header>
   );
 
 
-  // Home wins over the open note, which is what lets the workspace title show
+  // Home wins over the open note, which is what lets the New tab action show
   // the explorer without closing tabs -- they stay in `openTabs`, and clicking
   // one calls handleSelectNote, which clears `atHome` and brings it back.
   const notesView = selectedNote && !atHome ? (
@@ -832,6 +953,11 @@ export default function App() {
           onOpenFile={explorerState.openFile}
           recents={explorerState.recents}
           onClearRecents={explorerState.clearRecents}
+          folders={explorerState.folders}
+          notesData={explorerState.notesData}
+          onCreateNote={explorerState.createNote}
+          onCreateFolder={explorerState.createFolder}
+          onOpenToSide={explorerState.openToSide}
         />
       </div>
     </div>
@@ -851,9 +977,9 @@ export default function App() {
     // browser tabs are full-page documents, so let them fall through to notesView.
     mainContent = (
       <div className="flex h-full w-full flex-col">
-        {editorHeader}
         <div className="min-h-0 flex-1">
           <LayoutSurface
+            editorHeader={editorHeader}
             path={SHELL_CONFIG}
             content={shellConfig}
             notesData={notesData}
@@ -874,12 +1000,30 @@ export default function App() {
     mainContent = notesView;
   }
 
+  if (utilityWindow) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <div className="flex h-screen flex-col bg-[var(--nav)] font-sans text-[var(--ink)]" data-utility-window={utilityWindow}>
+          <header className="titlebar flex h-10 shrink-0 items-center px-4 text-[13px] font-medium text-[var(--ink-secondary)]">
+            {utilityWindow === 'settings' ? 'Settings' : 'Workspaces'}
+          </header>
+          <main className="shell-card mx-2 mb-2 min-h-0 flex-1 overflow-auto">
+            {utilityWindow === 'settings'
+              ? <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />
+              : <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />}
+          </main>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <PluginProvider catalog={builtinPlugins} bridge={bridge}>
       <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
-        <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}`}>
+        <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
           <TitleBar
+            layoutSwitcher={layoutSwitcher}
             repository={repository}
             recents={recents}
             activeNote={view === 'notes' ? selectedNote : null}
@@ -893,7 +1037,7 @@ export default function App() {
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
             onOpenMarketplace={() => setView('plugins')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
-            onOpenSettings={() => setView('settings')}
+            onOpenSettings={() => openGlobalPage('settings')}
             onSwitchRepo={switchRepository}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}
@@ -907,25 +1051,16 @@ export default function App() {
           ) : !repository ? (
             <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
           ) : (
-            <div className="flex min-h-0 min-w-0 overflow-hidden">
-              {layout.activityBar && (
-                <ActivityRail
-                  view={view}
-                  sidebarMode={sidebarMode}
-                  sidebarOpen={sidebarOpen}
-                  tagCount={tags.length}
-                  onSelectMode={(mode) => {
-                    if (view === 'notes' && sidebarOpen && sidebarMode === mode) { patchLayout({ sidebar: false }); return; }
-                    setSidebarMode(mode);
-                    setView('notes');
-                    if (!sidebarOpen) patchLayout({ sidebar: true });
-                  }}
-                  onNavigate={setView}
-                />
-              )}
+            <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
             <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => setView('plugins')}
               sidebar={
                 <Sidebar
+                  collapsed={layout.sidebarCollapsed}
+                  onToggleCollapsed={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
+                  onSelectMode={(mode) => { setSidebarMode(mode); setView('notes'); }}
+                  onNavigate={(next) => (next === 'settings' ? openGlobalPage('settings') : next === 'repositories' ? openGlobalPage('workspaces') : setView(next))}
+                  graphOpen={graphOverlayOpen}
+                  onToggleGraph={toggleGraphOverlay}
                   sidebarSide={layout.sidebarSide}
                   onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
                   notes={filteredNotes}
@@ -934,18 +1069,21 @@ export default function App() {
                   onSelectNote={handleSelectNote}
                   onDeleteNote={handleDeleteNote}
                   onRequestCreate={requestCreate}
-                  onRequestCreateFolder={() => { setCreateTab('section'); setCreateSection(''); setCreateOpen(true); }}
+                  onRequestCreateFolder={requestCreateFolder}
                   onRefresh={loadNotes}
                   view={view}
                   mode={sidebarMode}
                   repositoryName={repository.name}
-                  onGoHome={() => goHome()}
+                  folders={createdFolders}
+                  revealedFolder={revealedFolder}
                   tags={tags}
                   onSelectTag={setSelectedTag}
                   selectedTag={selectedTag}
                 />
               }>
-              <main className="canvas-surface relative flex h-full w-full min-w-0 flex-col overflow-hidden">
+              <SplitGroup direction="horizontal" autoSaveId="neuron.editor.split" className="flex h-full min-h-0 min-w-0">
+              <SplitPanel id="editor-main" order={1} minSize={25} className="min-w-0">
+              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && shellConfig && !Surface && !browsing) && 'shell-card')}>
                 {notice && (
                   <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
                     <span>{notice}</span>
@@ -980,6 +1118,20 @@ export default function App() {
                   />
                 )}
               </main>
+              </SplitPanel>
+              {sidePath && view === 'notes' && !layout.zen && (
+                <>
+                  <SplitHandle className="resize-handle resize-handle-v" />
+                  <SplitPanel id="editor-side" order={2} minSize={20} defaultSize={50} className="min-w-0">
+                    <SideNote path={sidePath} content={sideContent} saveState={sidePath === selectedNote ? saveState : sideSave}
+                      colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} notes={notes} tags={tags}
+                      onChange={(value) => { void changeSideNote(value); }} onOpenNote={handleSelectNote}
+                      onSwap={() => { const main = selectedNote; handleSelectNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
+                      onClose={() => openToSide(null)} />
+                  </SplitPanel>
+                </>
+              )}
+              </SplitGroup>
             </Workbench>
             </div>
           )}
@@ -987,15 +1139,6 @@ export default function App() {
           {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
         </div>
 
-        <CreateModal
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          sections={sections}
-          initialSection={createSection}
-          initialTab={createTab}
-          onCreateNote={createNote}
-          onCreateSection={createSectionFolder}
-        />
         <CommandPalette
           recents={recents}
           onOpenRepo={openRepository}
@@ -1006,7 +1149,7 @@ export default function App() {
           notes={notes}
           onSelectNote={handleSelectNote}
           onOpenMarketplace={() => setView('plugins')}
-          onOpenSettings={() => setView('settings')}
+          onOpenSettings={() => openGlobalPage('settings')}
           onCreate={() => requestCreate()}
           onCreateSurface={createSurfaceFile}
           onOpenWebsite={openWebsite}
@@ -1019,6 +1162,13 @@ export default function App() {
           layout={layout}
           onLayoutChange={patchLayout}
           onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}
+          savedLayouts={savedLayouts}
+          onApplySavedLayout={applySavedLayout}
+          onSearchNotes={() => { setView('notes'); patchLayout({ sidebar: true, sidebarCollapsed: false }); setSidebarMode('search'); }}
+          sideNoteOpen={!!sidePath}
+          canOpenToSide={!!selectedNote && /\.(md|mdx)$/.test(selectedNote)}
+          onOpenToSide={() => openToSide(selectedNote)}
+          onCloseSide={() => openToSide(null)}
           bindings={bindings}
         />
       </TooltipProvider>

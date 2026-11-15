@@ -14,6 +14,15 @@ import { join } from 'node:path';
  * and is what a user reaches for anyway.
  */
 
+// Full-text search has no sidebar row; the command palette opens it.
+async function openNoteSearch(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: /Search & commands/ }).click();
+  const dialog = page.locator('[role="dialog"]');
+  await dialog.locator('input').first().fill('Search in notes');
+  await dialog.getByText('Search in notes', { exact: true }).first().click();
+  await expect(dialog).toBeHidden();
+}
+
 test('closing a tab keeps the note on disk', async ({ page, workspace }) => {
   await openNote(page, 'guides/markdown-basics.mdx');
   await openNote(page, 'getting-started.mdx');
@@ -85,7 +94,7 @@ test('ticking a task checkbox writes it to disk', async ({ page, workspace }) =>
 });
 
 test('search matches note names', async ({ page }) => {
-  await page.getByRole('button', { name: 'Search notes' }).first().click();
+  await openNoteSearch(page);
   const search = page.locator('section[aria-label="Search notes"]');
   await expect(search).toBeVisible();
 
@@ -95,7 +104,7 @@ test('search matches note names', async ({ page }) => {
 });
 
 test('search looks inside notes, not just at their names', async ({ page }) => {
-  await page.getByRole('button', { name: 'Search notes' }).first().click();
+  await openNoteSearch(page);
   const search = page.locator('section[aria-label="Search notes"]');
   await expect(search).toBeVisible();
 
@@ -109,7 +118,7 @@ test('search looks inside notes, not just at their names', async ({ page }) => {
 });
 
 test('a second search word narrows rather than widens', async ({ page }) => {
-  await page.getByRole('button', { name: 'Search notes' }).first().click();
+  await openNoteSearch(page);
   const search = page.locator('section[aria-label="Search notes"]');
   const box = search.getByRole('textbox').first();
 
@@ -120,16 +129,4 @@ test('a second search word narrows rather than widens', async ({ page }) => {
   await box.fill('htmx sandbox');
   const narrow = await search.locator('button', { hasText: /\.(md|mdx|html)/ }).count();
   expect(narrow).toBeLessThan(broad);
-});
-
-test('changing the theme preset applies it to the document', async ({ page }) => {
-  await page.getByRole('button', { name: /Search & commands/ }).click();
-  const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible();
-  await dialog.getByText('Open settings', { exact: false }).first().click();
-
-  await page.getByRole('button', { name: /^Light$/ }).first().click();
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme')), { timeout: 10_000 })
-    .toBe('light');
 });

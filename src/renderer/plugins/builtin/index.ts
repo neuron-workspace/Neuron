@@ -8,6 +8,7 @@ import aiOpenai from './ai-openai';
 import aiGemini from './ai-gemini';
 import aiOpenrouter from './ai-openrouter';
 import versionHistory from './version-history';
+import graph from './graph';
 
 /** Built-in plugin catalog surfaced in the marketplace. */
 export const builtinPlugins: PluginModule[] = [
@@ -16,6 +17,7 @@ export const builtinPlugins: PluginModule[] = [
   dailyCalendar,
   versionHistory,
   terminal,
+  graph,
   automations,
   aiOpenai,
   aiGemini,

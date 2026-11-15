@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import {
-  PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search, Blocks,
+  PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search,
   FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Share2 } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
@@ -14,6 +14,8 @@ import { isMac, platform } from '../lib/platform';
 import { formatChord } from '../lib/keybindings';
 
 interface TitleBarProps {
+  /** Saved-layouts control, rendered at the right of the bar. */
+  layoutSwitcher?: React.ReactNode;
   repository: RepositoryInfo | null;
   recents: RepositoryInfo[];
   activeNote: string | null;
@@ -68,7 +70,7 @@ export function parentFolder(dir: string): string {
 }
 
 export default function TitleBar(props: TitleBarProps) {
-  const { repository, recents, activeNote } = props;
+  const { repository, recents } = props;
   // Scope native overlay safe areas and macOS typography to the host.
   useEffect(() => {
     document.body.classList.add(`platform-${platform}`);
@@ -113,20 +115,16 @@ export default function TitleBar(props: TitleBarProps) {
   return (
     <header
       className={cn(
-        'titlebar flex items-center justify-between border-b pr-0',
+        'titlebar flex items-center justify-between gap-3 pr-0',
         // Keep toolbar actions clear of macOS traffic lights.
         isMac ? 'pl-[78px]' : 'pl-2',
       )}
     >
-      <div className="flex min-w-0 items-center gap-1">
-        <IconButton label={props.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} active={props.sidebarOpen} onClick={props.onToggleSidebar}>
-          <PanelLeft className="h-4 w-4" />
-        </IconButton>
-
+      <div className="flex min-w-0 flex-1 items-center gap-1">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="titlebar-no-drag interactive flex min-h-[var(--control-sm)] min-w-0 items-center gap-1.5 rounded-md px-2 text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
-              <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
+              <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
               <span className="max-w-[160px] truncate text-xs font-medium">{repository?.name ?? 'No workspace'}</span>
               {repository?.cloud && <Cloud className="h-3 w-3 shrink-0 text-[var(--ink-muted)]" />}
               <ChevronDown className="h-3 w-3 shrink-0 text-[var(--ink-muted)]" />
@@ -152,30 +150,19 @@ export default function TitleBar(props: TitleBarProps) {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        <IconButton label={props.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} active={props.sidebarOpen} onClick={props.onToggleSidebar}>
+          <PanelLeft className="h-4 w-4" />
+        </IconButton>
 
-        {activeNote && (
-          <div className="hidden min-w-0 items-center gap-1.5 sm:flex">
-            <span className="text-[var(--ink-muted)]">/</span>
-            <span className="truncate font-mono text-[11px] text-[var(--ink-muted)]">{activeNote}</span>
-          </div>
-        )}
       </div>
 
-      <div className="flex shrink-0 items-center">
+      <button aria-label="Search & commands" onClick={props.onOpenCommandPalette}
+        className="titlebar-no-drag interactive flex h-8 w-[clamp(260px,38vw,560px)] shrink items-center gap-2 rounded-[10px] border border-[var(--divider)] bg-[var(--canvas)] px-2.5 text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]">
+        <Search className="h-4 w-4 shrink-0" /><span>Search and commands</span>
+        <kbd className="ml-auto text-[10px]">{formatChord('mod+k')}</kbd>
+      </button>
+      <div className="flex min-w-0 flex-1 items-center justify-end">
         <div className="mr-1 flex items-center gap-0.5">
-          <button
-            onClick={props.onOpenCommandPalette}
-            className="titlebar-no-drag interactive mr-1 flex h-7 items-center gap-2 rounded-md border border-[var(--divider)] bg-[var(--canvas)] px-2.5 text-[11px] text-[var(--ink-muted)] hover:text-[var(--ink)]"
-          >
-            <Search className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">Search & commands</span>
-            {/* Was hard-coded to the Mac glyph, so Windows and Linux were told to
-              press a key their keyboards do not have. */}
-          <kbd className="hidden rounded bg-[var(--surface)] px-1 font-mono text-[10px] md:inline">{formatChord('mod+k')}</kbd>
-          </button>
-          <IconButton label="Plugins & integrations" onClick={props.onOpenMarketplace}>
-            <Blocks className="h-4 w-4" />
-          </IconButton>
           {/* A persistent control, because the other two ways in are unreliable:
               the palette and Ctrl+Shift+G both go through a global keydown with
               no focus scopes, so neither fires while the terminal or a webview
@@ -202,7 +189,7 @@ export default function TitleBar(props: TitleBarProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Customize layout</DropdownMenuLabel>
-              <DropdownMenuCheckboxItem checked={props.layout.activityBar} onCheckedChange={(c) => props.onLayoutChange({ activityBar: !!c })}>Activity bar</DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={props.layout.sidebarCollapsed} onCheckedChange={(c) => props.onLayoutChange({ sidebar: true, sidebarCollapsed: !!c })}>Collapse sidebar to icons</DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={props.layout.sidebar} onCheckedChange={(c) => props.onLayoutChange({ sidebar: !!c })}>Sidebar</DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={props.layout.leftPanel} onCheckedChange={(c) => props.onLayoutChange({ leftPanel: !!c })}>Left panel</DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={props.layout.rightPanel} onCheckedChange={(c) => props.onLayoutChange({ rightPanel: !!c })}>Right panel</DropdownMenuCheckboxItem>
@@ -219,6 +206,7 @@ export default function TitleBar(props: TitleBarProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        <div data-layout-switcher-slot className="titlebar-no-drag mr-1 flex shrink-0 items-center">{props.layoutSwitcher}</div>
       </div>
     </header>
   );

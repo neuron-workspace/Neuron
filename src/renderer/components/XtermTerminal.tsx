@@ -5,14 +5,14 @@ import '@xterm/xterm/css/xterm.css';
 import { registerTerminalWriter } from '../lib/terminal-bus';
 import { createResizeSync } from '../lib/terminal-resize';
 
-// Fixed dark terminal palette. The app's theme tokens are oklch, which
-// xterm's color parser doesn't accept — and terminals read fine dark everywhere.
-const THEME = {
-  background: '#161616',
-  foreground: '#d4d4d4',
-  cursor: '#90d792',
-  selectionBackground: '#3a3a3a',
-};
+import { readVarHex } from '../lib/theme';
+
+const terminalTheme = () => ({
+  background: readVarHex('--canvas'),
+  foreground: readVarHex('--ink'),
+  cursor: readVarHex('--accent'),
+  selectionBackground: readVarHex('--surface-hover'),
+});
 
 /**
  * Interactive PTY terminal. Spawns a shell in the active repo via the main
@@ -54,8 +54,10 @@ export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?:
       fontFamily: 'JetBrains Mono, ui-monospace, monospace',
       fontSize: 13,
       cursorBlink: true,
-      theme: THEME,
+      theme: terminalTheme(),
     });
+    const themeObserver = new MutationObserver(() => { term.options.theme = terminalTheme(); });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme'] });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
@@ -167,6 +169,7 @@ export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?:
       if (readyTimer) clearTimeout(readyTimer);
       unregister?.();
       ro.disconnect();
+      themeObserver.disconnect();
       offRepo();
       offData();
       offExit();
@@ -178,5 +181,5 @@ export default function XtermTerminal({ sessionKey = 'default' }: { sessionKey?:
     // the previous shell on screen under a new name.
   }, [sessionKey]);
 
-  return <div ref={containerRef} className="h-full w-full overflow-hidden p-1" style={{ background: THEME.background }} />;
+  return <div ref={containerRef} className="h-full w-full overflow-hidden p-1" style={{ background: 'var(--canvas)' }} />;
 }

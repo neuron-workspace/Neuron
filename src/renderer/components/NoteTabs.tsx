@@ -1,13 +1,16 @@
 import { FileCode2, Globe, Plus, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
 
 interface NoteTabsProps {
   tabs: string[];
   activeTab: string;
   onSelect: (note: string) => void;
   onClose: (note: string) => void;
-  onCreate: () => void;
+  onNewTab: () => void;
   onNewBrowser: () => void;
+  /** Show a note beside the editor. Notes only: a web page or a canvas has no side view. */
+  onOpenToSide?: (note: string) => void;
 }
 
 const isUrl = (s: string) => /^https?:\/\//.test(s);
@@ -19,17 +22,18 @@ function noteLabel(path: string) {
   return path.split('/').pop()?.replace(/\.(md|mdx)$/, '') ?? path;
 }
 
-export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate, onNewBrowser }: NoteTabsProps) {
+export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onNewTab, onNewBrowser, onOpenToSide }: NoteTabsProps) {
   return (
-    <nav aria-label="Open notes" className="flex h-full min-w-0 flex-1 items-stretch overflow-x-auto whitespace-nowrap">
+    <nav aria-label="Open notes" className="flex h-8 bg-[var(--surface)] min-w-0 flex-1 items-stretch overflow-x-auto whitespace-nowrap">
       {tabs.map((note) => {
         const active = note === activeTab;
         return (
+          <ContextMenu key={note}>
+          <ContextMenuTrigger asChild>
           <div
-            key={note}
             className={cn(
               'group flex min-w-[8rem] max-w-[13rem] shrink-0 items-center border-r border-[var(--divider)]',
-              active ? 'bg-[var(--canvas)] text-[var(--ink)]' : 'text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink-secondary)]',
+              active ? 'bg-[var(--canvas)] text-[var(--ink)] shadow-[inset_0_-2px_var(--accent)]' : 'text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink-secondary)]',
             )}
           >
             <button
@@ -41,9 +45,9 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate,
               onAuxClick={(event) => { if (event.button === 1) onClose(note); }}
             >
               {isUrl(note)
-                ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--accent-strong)]')} />
-                : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--accent-strong)]')} />}
-              <span className="truncate font-mono">{noteLabel(note)}</span>
+                ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />
+                : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />}
+              <span className="truncate font-sans">{noteLabel(note)}</span>
             </button>
             <button
               type="button"
@@ -58,14 +62,21 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onCreate,
               <X className="h-3 w-3" />
             </button>
           </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem disabled={!onOpenToSide || !/\.(md|mdx)$/.test(note)} onSelect={() => onOpenToSide?.(note)}>Open to the side</ContextMenuItem>
+            <ContextMenuItem onSelect={() => onClose(note)}>Close tab</ContextMenuItem>
+          </ContextMenuContent>
+          </ContextMenu>
         );
       })}
       <button
         type="button"
-        aria-label="Create note"
-        title="Create note"
+        aria-label="New tab"
+        data-workspace-home
+        title="New tab"
         className="interactive grid h-[18px] w-[18px] self-center mx-1 shrink-0 place-items-center text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
-        onClick={onCreate}
+        onClick={onNewTab}
       >
         <Plus className="h-3 w-3" />
       </button>

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { GripVertical, X } from 'lucide-react';
 import GraphCanvas from './GraphCanvas';
 import type { NoteData } from './GraphCanvas';
+import { FLOAT_DRAG_EVENT, FLOAT_DROP_EVENT } from '../lib/layout';
 
 interface FloatingGraphProps {
   notesData: NoteData[];
@@ -14,6 +15,9 @@ const SIZE = 248;
 /** Clears the 42px .pane-header tab strip inside this same <main>. */
 const DEFAULT_TOP = 52;
 const EDGE = 12;
+/** Keeps the grip below the title bar, where a press would drag the window instead. */
+const TOP = 44;
+const report = (type: string, event: React.PointerEvent) => window.dispatchEvent(new CustomEvent(type, { detail: { x: event.clientX, y: event.clientY } }));
 
 /**
  * A square map of the whole workspace, floating over the editor.
@@ -27,34 +31,37 @@ const EDGE = 12;
  * canvas and the whole square is graph.
  */
 export default function FloatingGraph({ notesData, selectedNote, onSelectNote, onClose }: FloatingGraphProps) {
-  // null means "parked top-right"; dragging switches to explicit coordinates so
-  // the panel stays put when the window resizes until the user moves it again.
+  // null means "parked top-right" of the editor. Dragging switches to window
+  // coordinates, so it can float over any part of the app: terminal, panels, sidebar.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   const startDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     const box = boxRef.current?.getBoundingClientRect();
-    const parent = boxRef.current?.offsetParent?.getBoundingClientRect();
-    if (!box || !parent) return;
-    drag.current = { dx: event.clientX - box.left, dy: event.clientY - box.top };
-    setPos({ x: box.left - parent.left, y: box.top - parent.top });
+    if (!box) return;
+    drag.current = { dx: event.clientX - box.left, dy: event.clientY - box.top, moved: false };
+    setPos({ x: box.left, y: box.top });
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
   const onDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     const d = drag.current;
-    const parent = boxRef.current?.offsetParent?.getBoundingClientRect();
-    if (!d || !parent) return;
-    // Kept inside the editor region: a panel dragged off-screen cannot be
-    // dragged back, and there is no "reset position" control to rescue it.
-    const x = Math.min(Math.max(event.clientX - parent.left - d.dx, EDGE), parent.width - SIZE - EDGE);
-    const y = Math.min(Math.max(event.clientY - parent.top - d.dy, EDGE), parent.height - SIZE - EDGE);
+    if (!d) return;
+    // Kept inside the window: a panel dragged off-screen cannot be dragged
+    // back, and there is no "reset position" control to rescue it.
+    const x = Math.min(Math.max(event.clientX - d.dx, EDGE), window.innerWidth - SIZE - EDGE);
+    const y = Math.min(Math.max(event.clientY - d.dy, TOP), window.innerHeight - SIZE - EDGE);
     setPos({ x, y });
+    d.moved = true;
+    report(FLOAT_DRAG_EVENT, event);
   };
 
   const endDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    // Over a highlighted dock this docks the graph; anywhere else it stays floating.
+    // A press with no movement is not a drop: the grip rests near an edge by default.
+    if (drag.current?.moved) report(FLOAT_DROP_EVENT, event);
     drag.current = null;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* never captured */ }
   };
@@ -67,7 +74,7 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
       // hover-revealed close button of the panel it floats over -- so reaching
       // for the graph's own close button revealed that one on the way and
       // clicked it instead, if it landed at all.
-      className="pointer-events-auto absolute z-[var(--z-overlay)] overflow-hidden rounded-lg border divider-color bg-[var(--surface)] shadow-lg"
+      className={'pointer-events-auto z-[var(--z-overlay)] shell-card ' + (pos ? 'fixed' : 'absolute')}
       style={pos
         ? { left: pos.x, top: pos.y, width: SIZE, height: SIZE }
         : { right: EDGE, top: DEFAULT_TOP, width: SIZE, height: SIZE }}

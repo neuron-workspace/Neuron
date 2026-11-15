@@ -16,7 +16,7 @@ const saveText: Record<SaveState, string> = {
 // already say which workspace is open, and a third copy was one too many.
 export default function StatusBar({ activeNote, saveState }: StatusBarProps) {
   return (
-    <footer className="status-bar flex select-none items-center justify-between px-3 font-sans text-[11px] text-[var(--ink-muted)]">
+    <footer className="status-bar flex select-none items-center justify-between px-3 font-sans text-xs text-[var(--ink-muted)]">
       <div className="flex min-w-0 items-center gap-3">
         {activeNote && (
           <span className={`flex items-center gap-1.5 ${saveState === 'error' ? 'text-[var(--danger)]' : ''}`}>

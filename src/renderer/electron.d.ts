@@ -110,6 +110,7 @@ export interface ElectronAPI {
   // Window controls
   windowControls: {
     setOverlayColors: (colors: { color: string; symbolColor: string }) => Promise<void>;
+    openPage: (page: 'settings' | 'workspaces') => Promise<{ success: boolean }>;
     onMenuCommand: (callback: (command: string) => void) => () => void;
     chromeState: () => Promise<WindowChromeState>;
     toggleFullScreen: () => Promise<void>;
@@ -120,6 +121,7 @@ export interface ElectronAPI {
   settings: {
     get: <T = unknown>(key: string) => Promise<T | null>;
     set: (key: string, value: unknown) => Promise<{ success: boolean }>;
+    onChanged: (callback: (key: string) => void) => () => void;
     /** Store a secret in the main process. There is no getter, deliberately. */
     setSecret: (scope: string, field: string, value: string) => Promise<{ success: boolean; error?: string }>;
     hasSecret: (scope: string, field: string) => Promise<boolean>;

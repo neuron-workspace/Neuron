@@ -3,6 +3,32 @@ import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { EditorView } from '@codemirror/view';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
+
+// Source colours come from the app theme. The stock CodeMirror themes paint
+// Markdown in their own reds and greens, which fight every preset.
+const sourceHighlight = syntaxHighlighting(HighlightStyle.define([
+  { tag: [t.heading1, t.heading2, t.heading3, t.heading4, t.heading5, t.heading6], color: 'var(--md-heading)', fontWeight: '600' },
+  { tag: [t.processingInstruction, t.meta, t.contentSeparator, t.quote], color: 'var(--ink-muted)' },
+  { tag: t.strong, color: 'var(--md-bold)', fontWeight: '600' },
+  { tag: t.emphasis, fontStyle: 'italic' },
+  { tag: t.strikethrough, textDecoration: 'line-through' },
+  { tag: [t.link, t.url], color: 'var(--md-link)' },
+  { tag: t.monospace, color: 'var(--md-code)' },
+  { tag: [t.keyword, t.operatorKeyword, t.modifier, t.tagName], color: 'var(--accent-strong)' },
+  { tag: [t.string, t.attributeValue, t.regexp], color: 'var(--ink)' },
+  { tag: [t.number, t.bool, t.atom, t.null], color: 'var(--accent)' },
+  { tag: [t.propertyName, t.attributeName, t.typeName, t.className], color: 'var(--ink-secondary)' },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: 'var(--ink-muted)', fontStyle: 'italic' },
+  { tag: [t.punctuation, t.bracket, t.angleBracket], color: 'var(--ink-muted)' },
+  { tag: t.invalid, color: 'var(--danger)' },
+]));
+// Built once each: a new extension object per render would reconfigure the editor on every keystroke.
+const sourceThemes = {
+  dark: EditorView.theme({ '&': { color: 'var(--md-text)' } }, { dark: true }),
+  light: EditorView.theme({ '&': { color: 'var(--md-text)' } }, { dark: false }),
+};
 
 interface EditorProps {
   value: string;
@@ -48,8 +74,9 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
         aria-label="Note source"
         value={value}
         height={autoHeight ? 'auto' : '100%'}
-        theme={colorScheme}
+        theme={sourceThemes[colorScheme]}
         extensions={[
+          sourceHighlight,
           markdown({
             base: markdownLanguage,
             codeLanguages: languages,
@@ -70,7 +97,7 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
           dropCursor: true,
           allowMultipleSelections: true,
           indentOnInput: true,
-          syntaxHighlighting: true,
+          syntaxHighlighting: false,
           bracketMatching: true,
           closeBrackets: true,
           autocompletion: true,
