@@ -80,7 +80,7 @@ elements.
 Neuron supports these MDX components:
 
 - `<Badge text="..." type="info|success|warning|error" />`
-- `<Callout type="info|success|warning|error" title="...">...</Callout>`
+- `<Callout type="info|success|warning|error" title="...">...</Callout>` (also `note`, `tip`/`done`, `caution`, `danger`; any other type renders as info)
 - `<DbView path="@Planner.db" view="table|board|card" />`
 
 `DbView` is a read-only embed of a workspace-root-relative `.db` file. Edit the

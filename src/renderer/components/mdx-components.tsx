@@ -1,10 +1,9 @@
-import { AlertCircle, Info, CheckCircle, AlertTriangle } from 'lucide-react';
+import { CircleCheck, CircleX, Info, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { CALLOUT_LABELS, calloutKind, type CalloutKind } from '../lib/callout-kind';
 
-export type SemanticType = 'success' | 'warning' | 'error' | 'info';
+export type SemanticType = CalloutKind;
 
-export function parseSemanticType(value: string | undefined): SemanticType {
-  return value === 'success' || value === 'warning' || value === 'error' ? value : 'info';
-}
+export const parseSemanticType = calloutKind;
 
 interface BadgeProps {
   type?: SemanticType;
@@ -27,23 +26,31 @@ interface CalloutProps {
   children: React.ReactNode;
 }
 
+const CALLOUT_ICONS: Record<CalloutKind, LucideIcon> = {
+  success: CircleCheck, info: Info, warning: TriangleAlert, error: CircleX,
+};
+
+/** Takes its colour from the enclosing `.callout[data-callout-kind]`. */
+export function CalloutIcon({ kind, className }: { kind: CalloutKind; className?: string }) {
+  const Icon = CALLOUT_ICONS[kind];
+  return <Icon aria-hidden="true" strokeWidth={1.75} className={className ? 'callout-icon ' + className : 'callout-icon'} />;
+}
+
 export function Callout({ type = 'info', title, children }: CalloutProps) {
-  const config = {
-    info: { border: 'surface-info', text: 'text-info', icon: Info },
-    success: { border: 'surface-success', text: 'text-accent', icon: CheckCircle },
-    warning: { border: 'surface-warning', text: 'text-warning', icon: AlertTriangle },
-    error: { border: 'surface-danger', text: 'text-danger', icon: AlertCircle },
-  };
-  const active = config[type];
-  const Icon = active.icon;
+  const kind = calloutKind(type);
   return (
-    <div className={`callout ${active.border} p-4 my-4 font-sans`}>
-      <div className="flex items-start space-x-3">
-        <Icon className={`h-5 w-5 shrink-0 ${active.text} mt-0.5`} />
-        <div>
-          {title && <h5 className={`font-semibold text-sm ${active.text} mb-1`}>{title}</h5>}
-          <div className="text-secondary text-sm leading-6">{children}</div>
-        </div>
+    <div
+      role="note"
+      // A title already names the box; without one the kind is otherwise only a colour.
+      aria-label={title ? undefined : CALLOUT_LABELS[kind]}
+      data-callout-kind={kind}
+      className="callout my-4 flex items-start gap-2.5 px-3.5 py-3 font-sans"
+    >
+      {/* Centred on the first line: the 20px title, or else the body's 28px line. */}
+      <CalloutIcon kind={kind} className={title ? 'mt-0.5' : 'mt-1.5'} />
+      <div className="callout-body min-w-0 flex-1">
+        {title && <div className="callout-title">{title}</div>}
+        {children}
       </div>
     </div>
   );

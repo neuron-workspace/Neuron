@@ -34,7 +34,7 @@ test('layout components render, nest, and re-parse their children', async ({ pag
   // A Callout re-parses its children too. It used to render them as one raw
   // string, so a list came out as literal dashes and `code` as literal
   // backticks -- which is most of what a callout is used for.
-  const callout = doc.locator('div', { hasText: 'Not built yet' }).last();
+  const callout = doc.locator('.callout', { hasText: 'Not built yet' }).last();
   expect(await callout.locator('li').count()).toBeGreaterThan(0);
 
   // No component tag survived as literal prose, and no backtick did either:
@@ -45,6 +45,36 @@ test('layout components render, nest, and re-parse their children', async ({ pag
   expect(text).not.toContain('<Card');
   expect(text).not.toContain('<Stat');
   expect(text).not.toContain('`');
+});
+
+test('each callout kind renders with its own kind and an icon', async ({ page, workspace }) => {
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  writeFileSync(join(workspace, 'callout-kinds.mdx'), [
+    '<Callout type="tip" title="Done">', 'All set.', '</Callout>', '',
+    '<Callout type="note">', 'Untitled info.', '</Callout>', '',
+    '<Callout type="Caution" title="Careful">', 'Mind this.', '</Callout>', '',
+    '<Callout type="danger" title="Broke">', 'It failed.', '</Callout>', '',
+    '<Callout type="mystery" title="Unknown">', 'Falls back.', '</Callout>', '',
+  ].join('\n'));
+
+  await page.locator('button[aria-label="Refresh explorer"]').click();
+  await page.getByRole('button', { name: /Search & commands/ }).click();
+  const dialog = page.locator('[role="dialog"]');
+  await dialog.locator('input').first().fill('callout-kinds');
+  await dialog.getByText('callout-kinds', { exact: false }).first().click();
+  await expect(dialog).toBeHidden();
+
+  const callouts = page.locator('.preview-prose .callout');
+  await expect(callouts).toHaveCount(5);
+  const kinds = ['success', 'info', 'warning', 'error', 'info'];
+  for (const [i, kind] of kinds.entries()) {
+    await expect(callouts.nth(i)).toHaveAttribute('data-callout-kind', kind);
+    await expect(callouts.nth(i).locator('svg.callout-icon[aria-hidden="true"]')).toHaveCount(1);
+  }
+  // Without a title the kind is the box's only name.
+  await expect(page.getByRole('note', { name: 'Info', exact: true })).toBeVisible();
+  await expect(callouts.nth(0)).not.toHaveAttribute('aria-label', /./);
 });
 
 test('an unknown attribute value falls back instead of reaching the DOM', async ({ page, workspace }) => {

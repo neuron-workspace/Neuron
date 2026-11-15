@@ -4,6 +4,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Callout } from '@/components/mdx-components';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -94,6 +95,15 @@ export default function ComponentGallery() {
             <AlertTitle>Heads up</AlertTitle>
             <AlertDescription>This is a themed alert message.</AlertDescription>
           </Alert>
+        </Section>
+
+        <Section title="Callout">
+          <div className="max-w-md">
+            <Callout type="success" title="Saved">Every change is on disk.</Callout>
+            <Callout type="info">Notes are plain files in this folder.</Callout>
+            <Callout type="warning" title="Unsaved changes">Closing now loses them.</Callout>
+            <Callout type="error" title="Could not save">The file is read-only.</Callout>
+          </div>
         </Section>
 
         <Section title="Form controls">
