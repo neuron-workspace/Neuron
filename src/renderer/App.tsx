@@ -42,7 +42,15 @@ import {
   addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
 } from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
+import { useTerminalToggle } from './lib/useTerminalToggle';
 import { type SidebarMode } from './components/ActivityRail';
+
+/** Hands the terminal toggle to the global shortcut handler. Renders nothing. */
+function TerminalShortcut({ toggleRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
+  const { toggle } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
+  toggleRef.current = toggle;
+  return null;
+}
 
 interface PropertiesSettings { removeEmpty: boolean; showInReading: boolean; collapsedByDefault: boolean }
 const DEFAULT_PROPERTIES_SETTINGS: PropertiesSettings = { removeEmpty: true, showInReading: true, collapsedByDefault: false };
@@ -248,6 +256,9 @@ export default function App() {
     const dock = layoutRef.current.panels['terminal:terminal.panel']?.dock ?? 'bottom';
     patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
+  // The plugin list lives below App (inside PluginProvider), so the shortcut
+  // reaches the terminal toggle through this ref, filled by <TerminalShortcut />.
+  const toggleTerminalRef = useRef<(() => void) | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [wide, setWide] = useState(true);
   const [bindings, setBindings] = useState<Bindings>(DEFAULT_BINDINGS);
@@ -827,6 +838,7 @@ export default function App() {
         case 'toggle-sidebar': setSidebarOpen((v) => !v); break;
         case 'toggle-right': setRightPanelOpen((v) => !v); break;
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
+        case 'toggle-terminal': toggleTerminalRef.current?.(); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
         case 'toggle-graph': toggleGraphOverlay(); break;
         case 'toggle-fullscreen': void window.electronAPI.windowControls.toggleFullScreen(); break;
@@ -1136,7 +1148,8 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => setView('plugins')} terminalChord={bindings['toggle-terminal']} />}
+          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => setView('plugins')} />
         </div>
 
         <CommandPalette

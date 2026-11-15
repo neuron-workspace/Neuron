@@ -116,6 +116,36 @@ export function activePanel<T extends PlaceablePanel>(group: T[], layout: Workbe
   return group.find((panel) => panelKey(panel) === layout.activePanels[dock + ':' + index]) ?? group[0];
 }
 
+/** The built-in Terminal plugin's panel. */
+export const TERMINAL_PANEL_KEY = 'terminal:terminal.panel';
+
+/** Where the terminal sits right now, or null when the plugin registers no panel (it is disabled). */
+function terminalSpot<T extends PlaceablePanel>(panels: T[], layout: WorkbenchLayout) {
+  const placed = placePanels(panels, layout);
+  for (const dock of DOCKS) {
+    for (let group = 0; group < placed[dock].length; group++) {
+      const members = placed[dock][group];
+      if (members.some((panel) => panelKey(panel) === TERMINAL_PANEL_KEY)) return { dock, group, selected: panelKey(activePanel(members, layout, dock, group)!) };
+    }
+  }
+  return null;
+}
+
+/** Shown means all three: the plugin is on, its dock is open, and its tab is the selected one. */
+export function terminalVisible<T extends PlaceablePanel>(panels: T[], layout: WorkbenchLayout): boolean {
+  const spot = terminalSpot(panels, layout);
+  return !!spot && layout[(spot.dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel'] && spot.selected === TERMINAL_PANEL_KEY;
+}
+
+/** The layout change that shows the terminal, or hides it if it is already shown. Null when the plugin is off. */
+export function terminalTogglePatch<T extends PlaceablePanel>(panels: T[], layout: WorkbenchLayout): Partial<WorkbenchLayout> | null {
+  const spot = terminalSpot(panels, layout);
+  if (!spot) return null;
+  const flag = (spot.dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel';
+  if (terminalVisible(panels, layout)) return { [flag]: false };
+  return { [flag]: true, activePanels: { ...layout.activePanels, [spot.dock + ':' + spot.group]: TERMINAL_PANEL_KEY } };
+}
+
 /** Index is within the destination group after removing the moving panel.
  * Edge targets address groups before removal, so emptying a source cannot shift the target. */
 export function movePanel<T extends PlaceablePanel>(panels: T[], layout: WorkbenchLayout, key: string, dock: Dock, index?: number, group: GroupTarget = 0): WorkbenchLayout {

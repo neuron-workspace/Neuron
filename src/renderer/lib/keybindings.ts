@@ -16,6 +16,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: 'toggle-sidebar', label: 'Toggle sidebar', default: 'mod+b' },
   { id: 'toggle-right', label: 'Toggle side panel', default: 'mod+j' },
   { id: 'toggle-bottom', label: 'Toggle bottom panel', default: 'mod+`' },
+  { id: 'toggle-terminal', label: 'Toggle terminal', default: 'mod+shift+`' },
   { id: 'toggle-zen', label: 'Toggle zen mode', default: 'alt+z' },
   { id: 'toggle-graph', label: 'Toggle workspace graph', default: 'mod+shift+g' },
   { id: 'toggle-fullscreen', label: 'Toggle full screen', default: 'f11' },
@@ -31,7 +32,9 @@ export const DEFAULT_BINDINGS: Bindings = Object.fromEntries(KEY_ACTIONS.map((a)
 
 /** Build a normalized chord from a keyboard event, or null for modifier-only presses. */
 export function eventToChord(e: KeyboardEvent): string | null {
-  const key = e.key;
+  // Shift turns ` into ~ on a US keyboard, which would make a shift+` chord
+  // impossible to match; the physical key is the stable name for it.
+  const key = e.shiftKey && e.code === 'Backquote' ? '`' : e.key;
   if (['Control', 'Meta', 'Alt', 'Shift', 'Dead'].includes(key)) return null;
   const parts: string[] = [];
   if (e.ctrlKey || e.metaKey) parts.push('mod');

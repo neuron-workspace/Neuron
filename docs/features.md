@@ -381,6 +381,7 @@ default configurable shortcuts in version 0.4.3:
 | Toggle sidebar | `Mod+B` |
 | Toggle side panel | `Mod+J` |
 | Toggle bottom panel | `` Mod+` `` |
+| Toggle terminal | `` Mod+Shift+` `` |
 | Toggle zen mode | `Alt+Z` |
 
 Open **Settings → Keyboard shortcuts**, select a binding, and press a new key

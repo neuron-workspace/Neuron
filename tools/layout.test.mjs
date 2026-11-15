@@ -148,4 +148,51 @@ assert.equal(dockBand(box, 1075, 200, true, 40), 'right');
 assert.equal(dockBand(box, 120, 200, true, 40), 'left');
 assert.equal(dockBand(box, 600, 630, true, 40), 'bottom');
 assert.equal(dockBand(box, 600, 560, true, 40), null);
+// The terminal toggle: shown means plugin on, dock open and its tab selected.
+const { TERMINAL_PANEL_KEY, terminalVisible, terminalTogglePatch } = helpers;
+assert.equal(TERMINAL_PANEL_KEY, 'terminal:terminal.panel');
+const term = { pluginId: 'terminal', view: { id: 'terminal.panel', location: 'bottom' } };
+const other = { pluginId: 'p', view: { id: 'a', location: 'bottom' } };
+const both = [other, term];
+const apply = (layout, patch) => ({ ...layout, ...patch });
+// Plugin off: no panel is registered, so there is nothing to show or hide.
+assert.equal(terminalVisible([other], DEFAULT_LAYOUT), false);
+assert.equal(terminalTogglePatch([other], DEFAULT_LAYOUT), null);
+// Bottom dock closed: toggling opens it and selects the terminal tab.
+assert.equal(terminalVisible([term], DEFAULT_LAYOUT), false);
+assert.deepEqual(terminalTogglePatch([term], DEFAULT_LAYOUT), { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+// Dock open but another tab selected: not visible; toggling selects the terminal and leaves the dock open.
+const otherTab = { ...DEFAULT_LAYOUT, bottomPanel: true, activePanels: { 'bottom:0': 'p:a' } };
+assert.equal(terminalVisible(both, otherTab), false);
+const selectPatch = terminalTogglePatch(both, otherTab);
+assert.deepEqual(selectPatch, { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+// Open and selected: visible; toggling closes the dock only.
+const shown = apply(otherTab, selectPatch);
+assert.equal(terminalVisible(both, shown), true);
+assert.deepEqual(terminalTogglePatch(both, shown), { bottomPanel: false });
+assert.equal(terminalVisible(both, apply(shown, { bottomPanel: false })), false);
+// With no stored selection the first tab of the group counts as selected.
+assert.equal(terminalVisible([term, other], { ...DEFAULT_LAYOUT, bottomPanel: true }), true);
+assert.equal(terminalVisible(both, { ...DEFAULT_LAYOUT, bottomPanel: true }), false);
+// Moved to the right dock: that dock's flag decides, not the bottom one.
+const right = resolveLayout({ panels: { [TERMINAL_PANEL_KEY]: { dock: 'right', order: 0 } }, bottomPanel: true });
+assert.equal(terminalVisible([term], right), false);
+assert.deepEqual(terminalTogglePatch([term], right), { rightPanel: true, activePanels: { 'right:0': TERMINAL_PANEL_KEY } });
+assert.equal(terminalVisible([term], { ...right, rightPanel: true }), true);
+assert.deepEqual(terminalTogglePatch([term], { ...right, rightPanel: true }), { rightPanel: false });
+// In a split group: the selection is per group, and an existing selection elsewhere is kept.
+const split = resolveLayout({
+  rightPanel: true,
+  panels: { 'p:a': { dock: 'right', order: 0, group: 0 }, [TERMINAL_PANEL_KEY]: { dock: 'right', order: 0, group: 1 } },
+  activePanels: { 'right:0': 'p:a' },
+});
+assert.equal(terminalVisible(both, split), true, 'alone in its own group, so selected there');
+const stacked = resolveLayout({
+  rightPanel: true,
+  panels: { 'p:a': { dock: 'right', order: 0, group: 1 }, [TERMINAL_PANEL_KEY]: { dock: 'right', order: 1, group: 1 }, 'q:b': { dock: 'right', order: 0, group: 0 } },
+  activePanels: { 'right:0': 'q:b', 'right:1': 'p:a' },
+});
+const third = { pluginId: 'q', view: { id: 'b' } };
+assert.equal(terminalVisible([other, term, third], stacked), false);
+assert.deepEqual(terminalTogglePatch([other, term, third], stacked), { rightPanel: true, activePanels: { 'right:0': 'q:b', 'right:1': TERMINAL_PANEL_KEY } });
 console.log('layout: all checks passed');

@@ -1,10 +1,11 @@
-import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
+import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, TerminalSquare } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
 import { parentFolder, sharedName } from './TitleBar';
 import { formatChord, type Bindings } from '../lib/keybindings';
+import { useTerminalToggle } from '../lib/useTerminalToggle';
 
 /**
  * The chord for a command, shown on the right of its row.
@@ -59,6 +60,7 @@ interface CommandPaletteProps {
 
 export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
+  const terminal = useTerminalToggle(layout, onLayoutChange, onOpenMarketplace);
   const close = () => onOpenChange(false);
 
   return (
@@ -95,6 +97,7 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
           <CommandItem onSelect={() => { onLayoutChange({ statusBar: !layout.statusBar }); close(); }}><PanelsTopLeft /> {layout.statusBar ? 'Hide' : 'Show'} status bar</CommandItem>
           <CommandItem onSelect={() => { close(); void window.electronAPI.windowControls.toggleFullScreen(); }}><Focus /> Toggle full screen<Shortcut chord={bindings['toggle-fullscreen']} /></CommandItem>
           <CommandItem onSelect={() => { onLayoutChange({ zen: !layout.zen }); close(); }}><Focus /> {layout.zen ? 'Exit zen mode' : 'Zen mode'}<Shortcut chord={bindings['toggle-zen']} /></CommandItem>
+          <CommandItem onSelect={() => { terminal.toggle(); close(); }}><TerminalSquare /> Toggle terminal<Shortcut chord={bindings['toggle-terminal']} /></CommandItem>
           {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
             <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
               <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}
