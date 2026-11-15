@@ -1,6 +1,8 @@
 // Workbench layout state: which shell regions are visible and where each panel
 // lives. Persisted via the settings bridge (never localStorage) under the
 // 'layout' key.
+import type { WorkspacePanels } from '../surfaces/layout';
+
 export type Dock = 'left' | 'right' | 'bottom';
 export const DOCKS: Dock[] = ['left', 'right', 'bottom'];
 export const PANEL_MIME = 'application/x-neuron-panel';
@@ -144,6 +146,50 @@ export function terminalTogglePatch<T extends PlaceablePanel>(panels: T[], layou
   const flag = (spot.dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel';
   if (terminalVisible(panels, layout)) return { [flag]: false };
   return { [flag]: true, activePanels: { ...layout.activePanels, [spot.dock + ':' + spot.group]: TERMINAL_PANEL_KEY } };
+}
+
+/**
+ * The layout change for a workspace's starting arrangement (.neuron/layout.json),
+ * or null when there is nothing to change. A missing setting leaves the person's
+ * own arrangement alone, and with the Terminal plugin off (no panel registered)
+ * the terminal setting is ignored.
+ */
+export function workspacePanelsPatch<T extends PlaceablePanel>(panels: T[], layout: WorkbenchLayout, settings: WorkspacePanels): Partial<WorkbenchLayout> | null {
+  if (layout.zen) return null;
+  let next: WorkbenchLayout = { ...layout };
+  if (settings.sidebar?.open !== undefined) next.sidebar = settings.sidebar.open;
+  if (settings.sidebar?.side) next.sidebarSide = settings.sidebar.side;
+  const terminal = settings.terminal;
+  const spot = terminal ? terminalSpot(panels, layout) : null;
+  if (terminal && spot) {
+    if (terminal.dock && terminal.dock !== spot.dock) {
+      const wasVisible = terminalVisible(panels, layout);
+      const target = placePanels(panels, layout)[terminal.dock][0];
+      const flag = (terminal.dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel';
+      next = movePanel(panels, next, TERMINAL_PANEL_KEY, terminal.dock);
+      // Moving opens the destination dock and selects the terminal there. A
+      // move on its own should not change what is showing, so undo that unless
+      // the terminal was on screen before.
+      if (!wasVisible) {
+        next[flag] = layout[flag];
+        const before = target && activePanel(target, layout, terminal.dock, 0);
+        if (before) next.activePanels = { ...next.activePanels, [terminal.dock + ':0']: panelKey(before) };
+      }
+    }
+    if (terminal.open === true && !terminalVisible(panels, next)) {
+      next = { ...next, ...terminalTogglePatch(panels, next) };
+    } else if (terminal.open === false && terminalVisible(panels, next)) {
+      // Close the dock only when the terminal is all it shows: a dock split
+      // into groups is showing something else as well.
+      const now = terminalSpot(panels, next)!;
+      if (placePanels(panels, next)[now.dock].length === 1) next[(now.dock + 'Panel') as 'leftPanel' | 'rightPanel' | 'bottomPanel'] = false;
+    }
+  }
+  const patch: Partial<WorkbenchLayout> = {};
+  for (const key of Object.keys(next) as (keyof WorkbenchLayout)[]) {
+    if (JSON.stringify(next[key]) !== JSON.stringify(layout[key])) (patch as Record<string, unknown>)[key] = next[key];
+  }
+  return Object.keys(patch).length ? patch : null;
 }
 
 /** Index is within the destination group after removing the moving panel.

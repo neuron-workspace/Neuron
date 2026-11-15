@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 export const areas = [
   [/^(surfaces\/DbSurface\.tsx|components\/DbView\.tsx|lib\/(db|row-window)\.ts)$/, ['database', 'db-virtualization']],
   [/^(components\/(FloatingGraph|GraphCanvas|SigmaGraph)\.tsx|lib\/(graph-layout|knowledge-graph)\.ts)$/, ['graph']],
-  [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels']],
+  [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels', 'workspace-layout-config']],
   [/^(views\/WorkspaceExplorer\.tsx|lib\/(explorer-state\.tsx|workspace-explorer\.ts))$/, ['workspace-explorer']],
   [/^(surfaces\/MermaidSurface\.tsx|components\/MermaidDiagram\.tsx|lib\/mermaid\.ts)$/, ['mermaid']],
   [/^components\/(mdx-components|mdx-layout|MDXPreview|LiveEditor)\.tsx$/, ['flashcard', 'mdx-layout', 'rendering']],

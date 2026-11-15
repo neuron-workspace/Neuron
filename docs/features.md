@@ -31,7 +31,7 @@ The workspace watcher recognises these user-facing document types:
 | `index.html` | Folder mini-app entry point | HTML view inside a marked app folder |
 | `neuron.app.json` | Folder mini-app marker and manifest | Capabilities and allowed paths for `index.html` |
 | `.neuron/manifests/*.json` | View manifests | Capabilities and allowed paths for standalone `.html` views |
-| `.neuron/layout.json` | Workspace shell | JSON layout tree |
+| `.neuron/layout.json` | Workspace shell | JSON layout tree; starting sidebar and terminal |
 
 Neuron also watches the view platform's `.neuron` JSON, HTML, and CSS assets,
 plus legacy `neuron.config` and `*.neuron.json` sidecar manifests.
@@ -344,6 +344,41 @@ Drag panel tabs to the left, right, or bottom edge to move them, drop onto a tab
 JSON shell layout in `.neuron/layout.json`; open the command palette and choose
 **Use workspace layout**. See [File surfaces](custom-views.md) for the layout
 surface and [Design system](design-system.md) for the visual tokens.
+
+### Starting sidebar and terminal
+
+`.neuron/layout.json` can also say how the sidebar and the terminal start when
+the workspace opens. Both keys are optional, sit at the top level of the file,
+and can be the only thing in it (the main area then keeps its normal notes
+view). Each takes a state on its own:
+
+```json
+{ "sidebar": "open", "terminal": "closed" }
+```
+
+or an object with a state and a position:
+
+```json
+{
+  "sidebar":  { "state": "open",   "position": "right" },
+  "terminal": { "state": "closed", "position": "bottom" }
+}
+```
+
+- `state` is `"open"` or `"closed"`.
+- `sidebar.position` is `"left"` or `"right"`.
+- `terminal.position` is the dock: `"bottom"`, `"left"` or `"right"`.
+
+Values are not case-sensitive. Anything missing or not in these lists is
+ignored and leaves your own arrangement as it is. `"closed"` for the terminal
+closes its dock only when the terminal is the tab showing there, and the
+`terminal` key does nothing while the Terminal plugin is turned off.
+
+These are a starting arrangement, applied when the workspace opens in a window
+and again when you accept **Update view** after the file changes. You can still
+open, close and move everything afterwards, and nothing is written back to the
+file. Neuron asks about a changed file only when its content means something
+different: reformatting it or reordering its keys does not count.
 
 ## Browse a website without leaving a tab
 

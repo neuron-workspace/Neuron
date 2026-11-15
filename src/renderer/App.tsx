@@ -20,7 +20,7 @@ import SettingsPage from './views/SettingsPage';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { PluginProvider } from './plugins/host';
+import { PluginProvider, usePlugins } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
 import { getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
@@ -33,7 +33,8 @@ import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
-import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, type SavedLayout, type WorkbenchLayout } from './lib/layout';
+import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, workspacePanelsPatch, type SavedLayout, type WorkbenchLayout } from './lib/layout';
+import { hasLayoutTree, parseWorkspacePanels, sameJson } from './surfaces/layout';
 import LayoutSwitcher from './components/LayoutSwitcher';
 import SideNote from './components/SideNote';
 import { Panel as SplitPanel, PanelGroup as SplitGroup, PanelResizeHandle as SplitHandle } from 'react-resizable-panels';
@@ -50,6 +51,22 @@ import { type SidebarMode } from './components/ActivityRail';
 function TerminalShortcut({ toggleRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
   const { toggle } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
   toggleRef.current = toggle;
+  return null;
+}
+
+/**
+ * Applies the sidebar and terminal settings of .neuron/layout.json once the
+ * stored layout and the plugin panels are both in, then reports it is done.
+ * Renders nothing; it lives inside PluginProvider to see the panel list.
+ */
+function WorkspacePanelsApplier({ content, layoutReady, layout, onLayoutChange, onDone }: { content: string | null; layoutReady: boolean; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onDone: () => void }) {
+  const { panels, panelsReady } = usePlugins();
+  useEffect(() => {
+    if (content === null || !layoutReady || !panelsReady) return;
+    const patch = workspacePanelsPatch(panels, layout, parseWorkspacePanels(content));
+    if (patch) onLayoutChange(patch);
+    onDone();
+  }, [content, layoutReady, panelsReady, panels, layout, onLayoutChange, onDone]);
   return null;
 }
 
@@ -170,10 +187,14 @@ export default function App() {
     commitLayout(next);
   }, [commitLayout]);
 
+  // The workspace's starting arrangement waits for this, or the stored layout
+  // arriving afterwards would replace it.
+  const [layoutReady, setLayoutReady] = useState(!window.electronAPI);
   useEffect(() => {
     void window.electronAPI?.settings.get<Partial<WorkbenchLayout>>('layout').then((stored) => {
       if (stored) setLayout(resolveLayout(stored));
-    });
+      setLayoutReady(true);
+    }).catch(() => setLayoutReady(true));
     void window.electronAPI?.settings.get<Partial<PropertiesSettings>>('properties').then((stored) => {
       if (stored) setPropsSettings({ ...DEFAULT_PROPERTIES_SETTINGS, ...stored });
     });
@@ -266,6 +287,24 @@ export default function App() {
   const [surfaceSourceMode, setSurfaceSourceMode] = useState<Record<string, boolean>>({});
   const [shellConfig, setShellConfig] = useState<string | null>(null);
   const [pendingShellConfig, setPendingShellConfig] = useState<string | null>(null);
+  // The applied content, readable from the file watcher, and kept in step as it
+  // is set so a watcher event for our own write already compares against it.
+  const shellConfigRef = useRef<string | null>(null);
+  const adoptShellConfig = useCallback((content: string | null) => {
+    shellConfigRef.current = content;
+    setShellConfig(content);
+  }, []);
+  // Offer the changed file only when its meaning differs from what is applied.
+  const offerShellConfig = useCallback((content: string) => {
+    setPendingShellConfig(sameJson(shellConfigRef.current ?? '', content) ? null : content);
+  }, []);
+  // Content whose sidebar and terminal settings are still to be applied.
+  const [workspacePanels, setWorkspacePanels] = useState<string | null>(null);
+  const clearWorkspacePanels = useCallback(() => setWorkspacePanels(null), []);
+  // Which workspace this window last opened, so its settings apply once per open.
+  const openedWorkspace = useRef<string | null>(null);
+  // A file holding only the sidebar and terminal keys keeps the notes view.
+  const layoutShell = shellConfig && hasLayoutTree(shellConfig) ? shellConfig : null;
   const [propsSettings, setPropsSettings] = useState<PropertiesSettings>(DEFAULT_PROPERTIES_SETTINGS);
 
   const saveVersion = useRef(0);
@@ -408,21 +447,31 @@ export default function App() {
   }, [notes]);
 
   useEffect(() => {
-    if (!repository || !window.electronAPI) { setShellConfig(null); return; }
+    if (!repository || !window.electronAPI) { adoptShellConfig(null); openedWorkspace.current = null; return; }
     let cancelled = false;
+    // This effect also re-runs when the same workspace is merely reloaded; only
+    // a newly opened one gets its starting arrangement.
+    const opened = openedWorkspace.current !== repository.path;
     void (async () => {
       let content = await window.electronAPI.readNote(SHELL_CONFIG);
       if (content.startsWith('Error:')) {
         // Migrate the legacy root-level neuron.config into .neuron/layout.json.
         const legacy = await window.electronAPI.readNote('neuron.config');
-        if (legacy.startsWith('Error:')) { if (!cancelled) setShellConfig(null); return; }
+        if (legacy.startsWith('Error:')) {
+          if (!cancelled) { adoptShellConfig(null); openedWorkspace.current = repository.path; }
+          return;
+        }
+        if (!cancelled) adoptShellConfig(legacy);
         await window.electronAPI.writeNote(SHELL_CONFIG, legacy);
         content = legacy;
       }
-      if (!cancelled) setShellConfig(content);
+      if (cancelled) return;
+      adoptShellConfig(content);
+      openedWorkspace.current = repository.path;
+      if (opened) setWorkspacePanels(content);
     })();
     return () => { cancelled = true; };
-  }, [repository]);
+  }, [repository, adoptShellConfig]);
 
   useEffect(() => {
     if (!window.electronAPI?.onNotesChanged) return;
@@ -463,15 +512,15 @@ export default function App() {
       if (path !== SHELL_CONFIG) return;
       void window.electronAPI?.readNote(SHELL_CONFIG).then((content) => {
         if (content.startsWith('Error:')) {
-          setShellConfig(null);
+          adoptShellConfig(null);
           setPendingShellConfig(null);
           return;
         }
-        setPendingShellConfig(content);
+        offerShellConfig(content);
       });
     });
     return () => { cancelled = true; unsubscribe(); };
-  }, [repository]);
+  }, [repository, adoptShellConfig, offerShellConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -608,9 +657,9 @@ export default function App() {
     if (version !== saveVersion.current) return;
     openNoteRef.current.saving = false;
     setSaveState(result.success ? 'saved' : 'error');
-    if (result.success && selectedNote === SHELL_CONFIG) setPendingShellConfig(value);
+    if (result.success && selectedNote === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
-  }, [selectedNote]);
+  }, [selectedNote, offerShellConfig]);
 
   const requestCreate = useCallback(async () => {
     if (creatingUntitled.current) return;
@@ -643,14 +692,15 @@ export default function App() {
   }, [selectedNote, notes, createNote]);
 
   const toggleShell = useCallback(async () => {
-    if (shellConfig) { setShellConfig(null); return; }
+    if (layoutShell) { adoptShellConfig(null); return; }
     if (!window.electronAPI) return;
     const existing = await window.electronAPI.readNote(SHELL_CONFIG);
     const missing = existing.startsWith('Error:');
+    // Adopted before the write, so the watcher event for it finds nothing new.
+    adoptShellConfig(missing ? NEURON_CONFIG_TEMPLATE : existing);
     if (missing) await window.electronAPI.writeNote(SHELL_CONFIG, NEURON_CONFIG_TEMPLATE);
-    setShellConfig(missing ? NEURON_CONFIG_TEMPLATE : existing);
     setView('notes');
-  }, [shellConfig]);
+  }, [layoutShell, adoptShellConfig]);
 
   // Pull Chrome's cookies into the in-app browser session (stay logged in).
   const importChromeLogins = useCallback(async () => {
@@ -916,11 +966,11 @@ export default function App() {
                 controls one above the other, and only the lower one worked. It
                 was invisible while this was a dropdown and the other a row of
                 text; giving them the same shape is what showed it. */}
-            {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
+            {!layoutShell && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
             {/* In a layout workspace the editor panel owns the view mode and
                 renders its switch into this slot, so it shares the note header
                 instead of taking a row of its own. */}
-            {shellConfig && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
+            {layoutShell && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
           </div>
       ) : null}
       </div>}
@@ -985,7 +1035,7 @@ export default function App() {
     mainContent = <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />;
   } else if (view === 'gallery') {
     mainContent = <ComponentGallery />;
-  } else if (shellConfig && !Surface && !browsing) {
+  } else if (layoutShell && !Surface && !browsing) {
     // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
     // browser tabs are full-page documents, so let them fall through to notesView.
     mainContent = (
@@ -994,7 +1044,7 @@ export default function App() {
           <LayoutSurface
             editorHeader={editorHeader}
             path={SHELL_CONFIG}
-            content={shellConfig}
+            content={layoutShell}
             notesData={notesData}
             onSelectNote={handleSelectNote}
             selectedNote={selectedNote}
@@ -1096,7 +1146,7 @@ export default function App() {
               }>
               <SplitGroup direction="horizontal" autoSaveId="neuron.editor.split" className="flex h-full min-h-0 min-w-0">
               <SplitPanel id="editor-main" order={1} minSize={25} className="min-w-0">
-              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && shellConfig && !Surface && !browsing) && 'shell-card')}>
+              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && layoutShell && !Surface && !browsing) && 'shell-card')}>
                 {notice && (
                   <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="error" />
@@ -1108,7 +1158,7 @@ export default function App() {
                   <div role="status" data-callout-kind="info" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="info" />
                     <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
-                    <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { setShellConfig(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
+                    <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { adoptShellConfig(pendingShellConfig); setWorkspacePanels(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
                     <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Not now</button>
                   </div>
                 )}
@@ -1153,6 +1203,7 @@ export default function App() {
 
           {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => setView('plugins')} terminalChord={bindings['toggle-terminal']} />}
           <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => setView('plugins')} />
+          <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 
         <CommandPalette
@@ -1171,7 +1222,7 @@ export default function App() {
           onOpenWebsite={openWebsite}
           onOpenGallery={() => setView('gallery')}
           onToggleShell={toggleShell}
-          shellActive={!!shellConfig}
+          shellActive={!!layoutShell}
           onToggleGraph={toggleGraphOverlay}
           graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}

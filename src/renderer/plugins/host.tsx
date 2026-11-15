@@ -43,6 +43,8 @@ interface PluginContextValue {
   setConfig: (id: string, config: Record<string, string>) => void;
   runtimeFor: (pluginId: string) => HostRuntime;
   ready: boolean;
+  /** The enabled plugins have registered their panels at least once. */
+  panelsReady: boolean;
 }
 
 const PluginContext = createContext<PluginContextValue | null>(null);
@@ -53,6 +55,7 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
   const [state, setState] = useState<PluginState>({ enabled: {}, config: {} });
   const [ready, setReady] = useState(false);
   const [panels, setPanels] = useState<RegisteredPanel[]>([]);
+  const [panelsReady, setPanelsReady] = useState(false);
   const [commands, setCommands] = useState<RegisteredCommand[]>([]);
   const [mdxComponents, setMdxComponents] = useState<Record<string, ComponentType<Record<string, unknown>>>>({});
 
@@ -187,6 +190,7 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
     }
 
     setPanels(nextPanels);
+    setPanelsReady(true);
     setCommands(nextCommands);
     setMdxComponents(nextMdx);
 
@@ -206,8 +210,9 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
       setConfig,
       runtimeFor,
       ready,
+      panelsReady,
     }),
-    [catalog, panels, commands, mdxComponents, isEnabled, setEnabled, getConfig, setConfig, runtimeFor, ready],
+    [catalog, panels, commands, mdxComponents, isEnabled, setEnabled, getConfig, setConfig, runtimeFor, ready, panelsReady],
   );
 
   return <PluginContext.Provider value={value}>{children}</PluginContext.Provider>;

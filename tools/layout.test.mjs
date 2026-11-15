@@ -195,4 +195,109 @@ const stacked = resolveLayout({
 const third = { pluginId: 'q', view: { id: 'b' } };
 assert.equal(terminalVisible([other, term, third], stacked), false);
 assert.deepEqual(terminalTogglePatch([other, term, third], stacked), { rightPanel: true, activePanels: { 'right:0': 'q:b', 'right:1': TERMINAL_PANEL_KEY } });
+
+// .neuron/layout.json: the sidebar and terminal keys, and the meaning-not-text comparison.
+const surfaces = await transform(readFileSync(join(root, 'src/renderer/surfaces/layout.ts'), 'utf8'), { loader: 'ts', format: 'esm' });
+const surfacesTmp = join(root, 'tools/.surfaces-layout.tmp.mjs');
+writeFileSync(surfacesTmp, surfaces.code);
+let surfaceHelpers;
+try { surfaceHelpers = await import(pathToFileURL(surfacesTmp)); } finally { rmSync(surfacesTmp); }
+const { parseWorkspacePanels, parseLayout, hasLayoutTree, sameJson } = surfaceHelpers;
+const json = (value) => JSON.stringify(value);
+// Short form and long form.
+assert.deepEqual(parseWorkspacePanels(json({ sidebar: 'open', terminal: 'closed' })), { sidebar: { open: true }, terminal: { open: false } });
+assert.deepEqual(parseWorkspacePanels(json({ sidebar: { state: 'open', position: 'right' }, terminal: { state: 'closed', position: 'bottom' } })),
+  { sidebar: { open: true, side: 'right' }, terminal: { open: false, dock: 'bottom' } });
+// Case and surrounding space do not matter.
+assert.deepEqual(parseWorkspacePanels(json({ sidebar: '  CLOSED ', terminal: { state: 'Open', position: ' Left' } })), { sidebar: { open: false }, terminal: { open: true, dock: 'left' } });
+// Junk types and unknown values are dropped; what is valid beside them is kept.
+for (const value of [true, 1, null, [], ['open'], 'shown', '', { state: 1 }, { state: ['open'] }, { position: 'bottom' }]) {
+  assert.deepEqual(parseWorkspacePanels(json({ sidebar: value })), {}, 'junk sidebar ' + json(value));
+}
+for (const position of ['top', 'up', 'center', 'TOP', 1, null]) {
+  assert.deepEqual(parseWorkspacePanels(json({ terminal: { position } })), {}, 'unknown terminal position ' + json(position));
+}
+assert.deepEqual(parseWorkspacePanels(json({ terminal: { state: 'open', position: 'top' } })), { terminal: { open: true } });
+assert.deepEqual(parseWorkspacePanels(json({ sidebar: { state: 'nope', position: 'right' } })), { sidebar: { side: 'right' } });
+// Extra keys are ignored, at the top level and inside a setting.
+assert.deepEqual(parseWorkspacePanels(json({ theme: 'dark', sidebar: { state: 'closed', width: 300 }, statusBar: 'closed' })), { sidebar: { open: false } });
+// A file with only the new keys has no layout tree; one with only the old tree has no settings.
+const onlyKeys = json({ sidebar: 'closed' });
+assert.equal(parseLayout(onlyKeys), null);
+assert.equal(hasLayoutTree(onlyKeys), false);
+const onlyTree = json({ direction: 'vertical', children: [{ size: 100, panel: { type: 'editor' } }] });
+assert.deepEqual(parseWorkspacePanels(onlyTree), {});
+assert.equal(hasLayoutTree(onlyTree), true);
+assert.notEqual(parseLayout(onlyTree), null);
+const bothParts = json({ direction: 'vertical', children: [{ size: 100, panel: { type: 'editor' } }], terminal: 'open' });
+assert.deepEqual(parseWorkspacePanels(bothParts), { terminal: { open: true } });
+assert.deepEqual(parseLayout(bothParts).children, JSON.parse(onlyTree).children, 'the panel tree is read as before');
+// Not JSON, or not an object: no settings, and the layout view still explains the problem.
+for (const text of ['', '{', 'sidebar: closed', '[]', '"open"', 'null', '42']) assert.deepEqual(parseWorkspacePanels(text), {}, 'not settings: ' + text);
+assert.equal(hasLayoutTree('{'), true);
+assert.equal(hasLayoutTree('[]'), true);
+// sameJson: meaning, not text.
+assert.equal(sameJson('{"a":1,"b":[1,2]}', '{\n  "b": [ 1, 2 ],\n  "a": 1\n}\n'), true, 'whitespace and key order do not count');
+assert.equal(sameJson('{"a":{"y":1,"x":2}}', '{"a":{"x":2,"y":1}}'), true, 'nested key order does not count');
+assert.equal(sameJson('[1,2]', '[2,1]'), false, 'array order counts');
+assert.equal(sameJson('{"a":[{"x":1},{"y":2}]}', '{"a":[{"y":2},{"x":1}]}'), false);
+assert.equal(sameJson('{"a":1}', '{"a":"1"}'), false, 'a number is not a string');
+assert.equal(sameJson('{"a":1}', '{"a":1,"b":null}'), false);
+assert.equal(sameJson('{"__proto__":{"a":1}}', '{"__proto__":{"a":2}}'), false, 'a __proto__ key is compared like any other');
+assert.equal(sameJson('{"a":1}', '{"a":1'), false, 'invalid is never the same as valid');
+assert.equal(sameJson('{"a":1', '{"a":1'), true, 'identical invalid text is the same');
+assert.equal(sameJson('{"a":1', '{"a": 1'), false, 'different invalid text is not');
+
+// Applying the settings to the window's layout.
+const { workspacePanelsPatch } = helpers;
+const docked = (list, layout) => Object.fromEntries(Object.entries(placePanels(list, layout)).map(([dock, g]) => [dock, g.map((members) => members.map(panelKey))]));
+// Sidebar: open/closed and side, and nothing when it already matches.
+assert.deepEqual(workspacePanelsPatch(both, DEFAULT_LAYOUT, { sidebar: { open: false } }), { sidebar: false });
+assert.equal(workspacePanelsPatch(both, DEFAULT_LAYOUT, { sidebar: { open: true } }), null);
+assert.deepEqual(workspacePanelsPatch(both, DEFAULT_LAYOUT, { sidebar: { side: 'right' } }), { sidebarSide: 'right' });
+assert.deepEqual(workspacePanelsPatch(both, { ...DEFAULT_LAYOUT, sidebar: false }, { sidebar: { open: true, side: 'right' } }), { sidebar: true, sidebarSide: 'right' });
+assert.equal(workspacePanelsPatch(both, DEFAULT_LAYOUT, {}), null);
+// Terminal open: its dock opens with its tab selected.
+assert.deepEqual(workspacePanelsPatch(both, otherTab, { terminal: { open: true } }), { activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+assert.deepEqual(workspacePanelsPatch([term], DEFAULT_LAYOUT, { terminal: { open: true } }), { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+assert.equal(workspacePanelsPatch(both, shown, { terminal: { open: true } }), null, 'already shown');
+// Terminal closed: the dock closes when the terminal is its selected tab...
+assert.deepEqual(workspacePanelsPatch(both, shown, { terminal: { open: false } }), { bottomPanel: false });
+// ...and not when the person has another tab selected there.
+assert.equal(workspacePanelsPatch(both, otherTab, { terminal: { open: false } }), null);
+// ...nor when the dock is split and another group shows something else.
+assert.equal(workspacePanelsPatch(both, split, { terminal: { open: false } }), null);
+// Plugin disabled: no terminal panel is registered, so the terminal key is ignored.
+assert.equal(workspacePanelsPatch([other], DEFAULT_LAYOUT, { terminal: { open: true, dock: 'right' } }), null);
+assert.deepEqual(workspacePanelsPatch([other], DEFAULT_LAYOUT, { sidebar: { open: false }, terminal: { open: true } }), { sidebar: false });
+// Position only: the terminal moves, and what is on screen stays as it was.
+const movedHidden = apply(DEFAULT_LAYOUT, workspacePanelsPatch(both, DEFAULT_LAYOUT, { terminal: { dock: 'right' } }));
+assert.deepEqual(docked(both, movedHidden).right, [[TERMINAL_PANEL_KEY]]);
+assert.equal(movedHidden.rightPanel, false, 'a hidden terminal stays hidden');
+assert.equal(terminalVisible(both, movedHidden), false);
+const movedShown = apply(shown, workspacePanelsPatch(both, shown, { terminal: { dock: 'right' } }));
+assert.equal(terminalVisible(both, movedShown), true, 'a shown terminal stays shown, in its new dock');
+assert.equal(movedShown.rightPanel, true);
+assert.equal(movedShown.bottomPanel, true, 'the other tab keeps the bottom dock it is in');
+// Moving into a dock the person is using keeps their selected tab there.
+const busyRight = { ...DEFAULT_LAYOUT, rightPanel: true, activePanels: { 'right:0': 'q:b' } };
+const movedBusy = apply(busyRight, workspacePanelsPatch([other, term, third], busyRight, { terminal: { dock: 'right' } }));
+assert.deepEqual(docked([other, term, third], movedBusy).right, [['q:b', TERMINAL_PANEL_KEY]]);
+assert.equal(movedBusy.activePanels['right:0'], 'q:b');
+assert.equal(movedBusy.rightPanel, true);
+// Position and state together.
+const movedOpen = apply(DEFAULT_LAYOUT, workspacePanelsPatch(both, DEFAULT_LAYOUT, { terminal: { open: true, dock: 'right' } }));
+assert.equal(terminalVisible(both, movedOpen), true);
+assert.deepEqual(docked(both, movedOpen).right, [[TERMINAL_PANEL_KEY]]);
+const movedClosed = apply(shown, workspacePanelsPatch(both, shown, { terminal: { open: false, dock: 'left' } }));
+assert.deepEqual(docked(both, movedClosed).left, [[TERMINAL_PANEL_KEY]]);
+assert.equal(terminalVisible(both, movedClosed), false);
+assert.equal(movedClosed.leftPanel, false);
+// The dock it is already in: nothing to move.
+assert.equal(workspacePanelsPatch(both, DEFAULT_LAYOUT, { terminal: { dock: 'bottom' } }), null);
+// Zen: nothing is applied.
+assert.equal(workspacePanelsPatch(both, { ...DEFAULT_LAYOUT, zen: true }, { sidebar: { open: false }, terminal: { open: true } }), null);
+// End to end, from the file text.
+assert.deepEqual(workspacePanelsPatch(both, DEFAULT_LAYOUT, parseWorkspacePanels(json({ sidebar: 'closed', terminal: { state: 'open', position: 'top' } }))),
+  { sidebar: false, bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
 console.log('layout: all checks passed');
