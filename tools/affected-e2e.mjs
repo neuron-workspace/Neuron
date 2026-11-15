@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 // Paths are relative to src/renderer. Areas may overlap: take every match.
 export const areas = [
-  [/^(surfaces\/DbSurface\.tsx|components\/DbView\.tsx|lib\/(db|row-window)\.ts)$/, ['database', 'db-virtualization']],
+  [/^(surfaces\/DbSurface\.tsx|components\/(DbView|db\/DbCards)\.tsx|lib\/(db|row-window)\.ts)$/, ['database', 'database-views', 'db-virtualization']],
   [/^(components\/(FloatingGraph|GraphCanvas|SigmaGraph)\.tsx|lib\/(graph-layout|knowledge-graph)\.ts)$/, ['graph']],
   [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels', 'workspace-layout-config']],
   [/^(views\/WorkspaceExplorer\.tsx|lib\/(explorer-state\.tsx|workspace-explorer\.ts))$/, ['workspace-explorer']],

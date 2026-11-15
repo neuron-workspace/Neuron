@@ -1,27 +1,22 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Database } from 'lucide-react';
-import { parseDb, type DbFile, type DbOption, type DbProperty } from '../lib/db';
+import { boardColumns, MAX_CARDS, parseDb, resolveView, visibleRows, type DbFile, type DbProperty, type DbViewMode } from '../lib/db';
+import { BoardColumnHeader, CardLimitNote, Chip, DbCard } from './db/DbCards';
 
 // Read-only inline embed of a .db database inside MDX, via <DbView path="@Foo.db" />.
 // It reads the referenced file over the same IPC bridge the DbSurface editor uses
 // and re-reads on external change, so an embedded table stays live. Multi-table
 // files use the stable map key: <DbView path="@Planner.db" table="tasks" />.
+// Without a `view` prop it follows the view saved in the file; the prop only
+// overrides the mode.
 
-export type DbViewMode = 'table' | 'board' | 'card';
-
-function normalizeMode(value: string | undefined): DbViewMode {
-  const v = (value ?? '').toLowerCase();
+function normalizeMode(value: string | undefined): DbViewMode | null {
+  if (value === undefined) return null;
+  const v = value.toLowerCase();
   if (v === 'board' || v === 'kanban') return 'board';
-  if (v === 'card' || v === 'cards' || v === 'gallery') return 'card';
+  // "card" and "cards" are the names older notes used for the gallery.
+  if (v === 'card' || v === 'cards' || v === 'gallery') return 'gallery';
   return 'table';
-}
-
-function Chip({ option }: { option: DbOption }) {
-  return (
-    <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: `${option.color}2e`, color: option.color }}>
-      {option.name || '…'}
-    </span>
-  );
 }
 
 function cellNodes(prop: DbProperty, value: unknown): React.ReactNode {
@@ -49,7 +44,7 @@ interface DbViewProps { path: string; view?: string; table?: string }
 
 export default function DbView({ path, view, table }: DbViewProps) {
   const rel = path.replace(/^@/, '');
-  const mode = normalizeMode(view);
+  const modeOverride = normalizeMode(view);
   const [db, setDb] = useState<DbFile | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'missing' | 'invalid'>('loading');
@@ -81,13 +76,6 @@ export default function DbView({ path, view, table }: DbViewProps) {
       ? `${rel} contains multiple tables. Add table="${tableIds[0]}" to <DbView />.`
       : null;
 
-  const boardGroup = useMemo(() => {
-    if (!doc) return null;
-    const { order, properties } = doc.schema;
-    const wanted = doc.view?.groupBy;
-    return (wanted && properties[wanted]?.type === 'select' ? wanted : order.find((pid) => properties[pid].type === 'select')) ?? null;
-  }, [doc]);
-
   if (state !== 'ready' || !doc || selectionError) {
     const msg = state === 'loading' ? 'Loading database…'
       : state === 'missing' ? `No database found at ${rel}`
@@ -102,70 +90,51 @@ export default function DbView({ path, view, table }: DbViewProps) {
   const { order, properties } = doc.schema;
   const fileTitle = rel.split('/').pop()!.replace(/\.db$/i, '');
   const title = tableIds.length > 1 ? `${fileTitle} / ${doc.name}` : fileTitle;
-  const titleProp = order.find((pid) => properties[pid].type === 'text') ?? order[0];
+  const resolved = resolveView(doc);
+  const mode = modeOverride ?? resolved.mode;
+  const rows = visibleRows(doc);
+  const shown = rows.slice(0, MAX_CARDS);
 
   const header = (
     <div className="mb-2 flex items-center gap-1.5 font-sans text-xs font-medium text-[var(--ink-muted)]">
       <Database className="h-3.5 w-3.5 text-[var(--accent-strong)]" /> {title}
-      <span className="ml-auto">{doc.rows.length} rows</span>
+      <span className="ml-auto">{rows.length === doc.rows.length ? `${rows.length} rows` : `${rows.length} / ${doc.rows.length} rows`}</span>
     </div>
   );
 
-  if (mode === 'board' && boardGroup) {
-    const groupProp = properties[boardGroup];
+  const board = mode === 'board' ? boardColumns(doc, shown) : null;
+  if (board?.groupBy) {
+    const groupName = properties[board.groupBy].name;
     return (
-      <div className="my-4 font-sans">
+      <div className="my-4 font-sans" data-db-embed-mode="board">
         {header}
         <div className="flex items-start gap-3 overflow-x-auto pb-2">
-          {[...(groupProp.options ?? []), null].map((option) => {
-            const colId = option?.id ?? '';
-            const rows = doc.rows.filter((r) => (r.values[boardGroup] ?? '') === colId);
-            if (!option && rows.length === 0) return null;
-            return (
-              <div key={colId || '__none'} className="w-56 shrink-0 rounded-lg bg-[var(--surface)] p-2">
-                <div className="mb-2 flex items-center gap-2 px-1 text-xs">
-                  {option ? <Chip option={option} /> : <span className="text-[var(--ink-muted)]">No {groupProp.name.toLowerCase()}</span>}
-                  <span className="ml-auto text-[var(--ink-muted)]">{rows.length}</span>
-                </div>
-                <div className="space-y-1.5">
-                  {rows.map((row) => (
-                    <div key={row.id} className="rounded-md bg-[var(--canvas)] p-2.5 text-sm text-[var(--md-text)]">
-                      <div>{String(row.values[titleProp] ?? '') || 'Untitled'}</div>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                        {order.filter((pid) => pid !== boardGroup && pid !== titleProp).map((pid) => <span key={pid}>{cellNodes(properties[pid], row.values[pid])}</span>)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === 'card') {
-    return (
-      <div className="my-4 font-sans">
-        {header}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-          {doc.rows.map((row) => (
-            <div key={row.id} className="rounded-lg bg-[var(--surface)] p-3">
-              <div className="text-sm font-medium text-[var(--md-text)]">{String(row.values[titleProp] ?? '') || 'Untitled'}</div>
-              <div className="mt-2 flex flex-wrap items-center gap-1">
-                {order.filter((pid) => pid !== titleProp).map((pid) => <span key={pid}>{cellNodes(properties[pid], row.values[pid])}</span>)}
-              </div>
+          {board.columns.filter((column) => column.option || column.rows.length > 0).map((column) => (
+            <div key={column.id || '__none'} className="flex w-[272px] shrink-0 flex-col gap-3" role="group" aria-label={column.option?.name ?? `No ${groupName}`}>
+              <BoardColumnHeader column={column} groupName={groupName} count={column.rows.length} />
+              {column.rows.map((row) => <DbCard key={row.id} table={doc} row={row} view={resolved} variant="board" />)}
             </div>
           ))}
         </div>
+        <CardLimitNote total={rows.length} />
       </div>
     );
   }
 
-  // table (default)
+  if (mode === 'gallery') {
+    return (
+      <div className="my-4 font-sans" data-db-embed-mode="gallery">
+        {header}
+        <div className="grid items-start gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+          {shown.map((row) => <DbCard key={row.id} table={doc} row={row} view={resolved} variant="gallery" />)}
+        </div>
+        <CardLimitNote total={rows.length} />
+      </div>
+    );
+  }
+
   return (
-    <div className="my-4 font-sans">
+    <div className="my-4 font-sans" data-db-embed-mode="table">
       {header}
       <div className="overflow-x-auto rounded-md border border-[var(--divider)]">
         <table className="w-full border-collapse text-sm text-[var(--md-text)]">
@@ -177,7 +146,7 @@ export default function DbView({ path, view, table }: DbViewProps) {
             </tr>
           </thead>
           <tbody>
-            {doc.rows.map((row) => (
+            {rows.map((row) => (
               <tr key={row.id} className="border-b border-[var(--divider)] last:border-b-0">
                 {order.map((pid) => (
                   <td key={pid} className="px-3 py-2 align-top text-xs leading-5">{cellNodes(properties[pid], row.values[pid])}</td>

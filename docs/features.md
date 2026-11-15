@@ -81,7 +81,7 @@ Neuron supports these MDX components:
 
 - `<Badge text="..." type="info|success|warning|error" />`
 - `<Callout type="info|success|warning|error" title="...">...</Callout>` (also `note`, `tip`/`done`, `caution`, `danger`; any other type renders as info)
-- `<DbView path="@Planner.db" view="table|board|card" />`
+- `<DbView path="@Planner.db" view="table|board|gallery" />` (without `view` it uses the mode saved in the file; `card` still means gallery)
 
 `DbView` is a read-only embed of a workspace-root-relative `.db` file. Edit the
 database in its own tab. Unknown MDX components produce a visible compilation
@@ -240,10 +240,13 @@ edits rows and the schema. Property types are text, number, checkbox, date,
 URL, select, and multi-select; select options carry colors. The surface also
 supports row search, one persisted filter, and ascending/descending sorting.
 
-**Board** groups rows by a select property and lets you drag a card between
-columns. **Cards** is a gallery. Board and Cards show summaries; cell editing
-happens in Table mode. View mode, grouping, sort, and filter state are stored in
-the `.db` file along with the rows. External file changes refresh the surface.
+**Board** groups rows by a select property. Drag a card to another column or
+to a new place in its column, or use its context menu (Shift+F10) to do the
+same from the keyboard. **Gallery** shows the rows as a grid of cards. Cards
+show a title, an optional text preview and the properties you pick under
+**Card properties**; open a card to edit every property of its row. View mode,
+grouping, sort, filter and card settings are stored in the `.db` file along
+with the rows. External file changes refresh the surface.
 Invalid JSON is not repaired automatically, and documents over 2 MB are
 refused. See [File surfaces](custom-views.md) for the format and safe-link
 rules.

@@ -145,4 +145,136 @@ for (const bad of ['{not json', JSON.stringify({ version: 2, tables: { tasks: { 
   assert.deepEqual(JSON.parse(m.serializeDb(parsed.db)).relations, dangling.relations);
 }
 
+// --- Board and gallery views -------------------------------------------------
+
+const viewFile = (view, rows) => ({
+  version: 2,
+  tables: {
+    tasks: {
+      name: 'Tasks',
+      schema: {
+        order: ['title', 'status', 'priority', 'due', 'owner', 'notes', 'done'],
+        properties: {
+          title: { name: 'Task', type: 'text' },
+          status: { name: 'Status', type: 'select', options: [
+            { id: 'todo', name: 'Todo', color: '#8b8b8b' },
+            { id: 'doing', name: 'In progress', color: '#528fd1' },
+            { id: 'done', name: 'Done', color: '#5aa06c' },
+          ] },
+          priority: { name: 'Priority', type: 'select', options: [{ id: 'high', name: 'High', color: '#c0705f' }] },
+          due: { name: 'Due', type: 'date' },
+          owner: { name: 'Owner', type: 'text' },
+          notes: { name: 'Notes', type: 'text' },
+          done: { name: 'Done', type: 'checkbox' },
+        },
+      },
+      ...(view ? { view } : {}),
+      rows: rows ?? [
+        { id: 'a', values: { title: 'Alpha', status: 'todo', due: '2026-09-03', owner: 'Ann', notes: 'A long enough note that it should count as preview text.' } },
+        { id: 'b', values: { title: 'Bravo', status: 'doing', due: '2026-09-01', owner: 'Bob', notes: '' } },
+        { id: 'c', values: { title: 'Charlie', status: 'todo', due: '2026-09-02', owner: 'Cy' } },
+        { id: 'd', values: { title: 'Delta', status: '', owner: 'Di' } },
+        { id: 'e', values: { title: 'Echo', status: 'gone', owner: 'Ed' } },
+      ],
+    },
+  },
+});
+const tableOf = (view, rows) => m.parseDb(JSON.stringify(viewFile(view, rows)), 'Views.db').db.tables.tasks;
+const ids = (rows) => rows.map((r) => r.id);
+
+// visibleRows: filter then sort, from the saved view only.
+{
+  assert.deepEqual(ids(m.visibleRows(tableOf())), ['a', 'b', 'c', 'd', 'e'], 'no view keeps file order');
+  assert.deepEqual(ids(m.visibleRows(tableOf({ filterProp: 'status', filterValue: 'todo' }))), ['a', 'c']);
+  assert.deepEqual(ids(m.visibleRows(tableOf({ filterProp: 'owner', filterValue: 'B' }))), ['b'], 'text filter ignores case');
+  assert.deepEqual(ids(m.visibleRows(tableOf({ sortBy: 'due' }))), ['d', 'e', 'b', 'c', 'a'], 'empty dates sort first ascending');
+  assert.deepEqual(ids(m.visibleRows(tableOf({ sortBy: 'title', sortDir: 'desc' }))), ['e', 'd', 'c', 'b', 'a']);
+  assert.deepEqual(ids(m.visibleRows(tableOf({ sortBy: 'missing', filterProp: 'missing', filterValue: 'x' }))), ['a', 'b', 'c', 'd', 'e'],
+    'a sort or filter on a deleted property is ignored');
+}
+
+// boardColumns: the no-value column first, then options in option order.
+{
+  const { groupBy, columns } = m.boardColumns(tableOf());
+  assert.equal(groupBy, 'status', 'defaults to the first select property');
+  assert.deepEqual(columns.map((c) => c.id), ['', 'todo', 'doing', 'done']);
+  assert.deepEqual(columns.map((c) => ids(c.rows)), [['d', 'e'], ['a', 'c'], ['b'], []], 'unknown option values land in the no-value column');
+  assert.equal(columns[0].option, null);
+  assert.equal(m.boardColumns(tableOf({ groupBy: 'priority' })).groupBy, 'priority');
+  assert.equal(m.boardColumns(tableOf({ groupBy: 'deleted' })).groupBy, 'status', 'an unknown groupBy falls back');
+  assert.equal(m.boardColumns(tableOf({ groupBy: 'owner' })).groupBy, 'status', 'a non-select groupBy falls back');
+  const sortedCols = m.boardColumns(tableOf({ sortBy: 'due', sortDir: 'desc' })).columns;
+  assert.deepEqual(ids(sortedCols[1].rows), ['a', 'c'], 'columns follow the sort');
+  const noSelect = tableOf();
+  const bare = { ...noSelect, schema: { ...noSelect.schema, order: ['title'], properties: { title: noSelect.schema.properties.title } } };
+  assert.deepEqual(m.boardColumns(bare), { groupBy: null, columns: [] });
+}
+
+// moveRow: between columns, before a row, to the end, no-ops, unknown ids.
+{
+  const table = tableOf();
+  const moved = m.moveRow(table, 'c', { group: 'done' });
+  assert.equal(moved.rows.find((r) => r.id === 'c').values.status, 'done');
+  assert.deepEqual(ids(moved.rows), ids(table.rows), 'a column change alone keeps the position');
+  assert.equal(table.rows.find((r) => r.id === 'c').values.status, 'todo', 'the input table is not mutated');
+
+  assert.deepEqual(ids(m.moveRow(table, 'c', { beforeRowId: 'a' }).rows), ['c', 'a', 'b', 'd', 'e']);
+  assert.deepEqual(ids(m.moveRow(table, 'a', { beforeRowId: 'd' }).rows), ['b', 'c', 'a', 'd', 'e']);
+  assert.deepEqual(ids(m.moveRow(table, 'a', { beforeRowId: null }).rows), ['b', 'c', 'd', 'e', 'a'], 'null moves to the end');
+  const both = m.moveRow(table, 'b', { group: 'todo', beforeRowId: 'a' });
+  assert.deepEqual(ids(both.rows), ['b', 'a', 'c', 'd', 'e']);
+  assert.equal(both.rows[0].values.status, 'todo');
+  assert.equal(m.moveRow(table, 'd', { group: '' }), table, 'already in the no-value column');
+  assert.equal(m.moveRow(table, 'e', { group: '' }), table, 'a stale value already counts as no value');
+  assert.equal(m.moveRow(table, 'b', { group: 'doing' }), table, 'same column is a no-op');
+  assert.equal(m.moveRow(table, 'b', { beforeRowId: 'c' }), table, 'already directly before is a no-op');
+  assert.equal(m.moveRow(table, 'b', { beforeRowId: 'b' }), table, 'before itself is a no-op');
+  assert.equal(m.moveRow(table, 'e', { beforeRowId: null }), table, 'already last is a no-op');
+  assert.equal(m.moveRow(table, 'zz', { group: 'done' }), table, 'unknown row');
+  assert.equal(m.moveRow(table, 'a', { beforeRowId: 'zz' }), table, 'unknown target row');
+  assert.equal(m.moveRow(table, 'a', { group: 'zz' }), table, 'unknown option');
+  assert.equal(m.moveRow(m.moveRow(table, 'd', { group: 'todo' }), 'd', { group: '' }).rows.find((r) => r.id === 'd').values.status, '');
+}
+
+// View validation is read-time only: the file keeps what it had.
+{
+  const stale = { mode: 'timeline', groupBy: 'gone', previewProp: 'gone', cardProps: ['gone', 'due', 'title', 'due', 'owner'] };
+  const table = tableOf(stale);
+  const view = m.resolveView(table);
+  assert.equal(view.mode, 'table', 'an unknown mode falls back to table');
+  assert.equal(view.groupBy, 'status');
+  assert.equal(view.previewProp, 'notes', 'a stale previewProp falls back to the default');
+  assert.deepEqual(view.cardProps, ['due', 'owner'], 'stale, title and repeated entries are ignored');
+  assert.deepEqual(table.view, stale, 'parsing leaves the stored view alone');
+  assert.equal(m.resolveView(tableOf({ mode: 'board' })).mode, 'board');
+  assert.equal(m.resolveView(tableOf({ mode: 'gallery' })).mode, 'gallery');
+  assert.equal(m.resolveView(tableOf({ previewProp: 'due' })).previewProp, 'notes', 'a non-text previewProp is ignored');
+  assert.equal(m.resolveView(tableOf({ previewProp: 'title' })).previewProp, 'notes', 'the title cannot be its own preview');
+  assert.equal(m.resolveView(tableOf({ previewProp: null })).previewProp, null, 'null turns the preview off');
+  assert.equal(m.resolveView(tableOf({ previewProp: 'owner' })).previewProp, 'owner');
+}
+
+// Defaults: the title is the first text property; three card properties after
+// it that are not the group-by (nor the preview); a preview only when values
+// average over 40 characters.
+{
+  const view = m.resolveView(tableOf());
+  assert.equal(view.titleProp, 'title');
+  assert.deepEqual(view.cardProps, ['priority', 'due', 'owner']);
+  assert.equal(view.previewProp, 'notes');
+  assert.deepEqual(m.resolveView(tableOf({ groupBy: 'priority' })).cardProps, ['status', 'due', 'owner']);
+  const short = tableOf(undefined, [{ id: 'a', values: { title: 'A', notes: 'Short.' } }, { id: 'b', values: { title: 'B', notes: 'x'.repeat(60) } }]);
+  assert.equal(m.resolveView(short).previewProp, null, 'average 33 characters is not a preview');
+  assert.deepEqual(m.resolveView(short).cardProps, ['priority', 'due', 'owner']);
+  assert.equal(m.resolveView(tableOf({ cardProps: [] })).cardProps.length, 0, 'an empty list means no properties');
+}
+
+// New view keys survive parse then serialize byte for byte.
+{
+  const text = JSON.stringify(viewFile({ mode: 'gallery', groupBy: 'status', cardProps: ['due', 'gone'], previewProp: 'notes', futureViewKey: { zoom: 2 } }), null, 2) + '\n';
+  assert.equal(m.serializeDb(m.parseDb(text, 'Views.db').db), text);
+  const nulled = JSON.stringify(viewFile({ mode: 'board', previewProp: null, cardProps: [] }), null, 2) + '\n';
+  assert.equal(m.serializeDb(m.parseDb(nulled, 'Views.db').db), nulled);
+}
+
 console.log('db: all checks passed');

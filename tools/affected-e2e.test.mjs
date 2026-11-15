@@ -16,11 +16,11 @@ check('the demo workspace every spec copies runs all specs', () => assert.equal(
 check('main and preload changes run all specs', () => {
   for (const p of ['src/main/main.ts', 'src/preload/index.ts']) assert.equal(select(p), 'all');
 });
-check('a mapped renderer file selects its area', () => assert.deepEqual(select('src/renderer/lib/db.ts'), expected('database', 'db-virtualization')));
+check('a mapped renderer file selects its area', () => assert.deepEqual(select('src/renderer/lib/db.ts'), expected('database', 'database-views', 'db-virtualization')));
 check('an unmapped renderer file runs all specs', () => assert.equal(select('src/renderer/App.tsx'), 'all'));
 check('docs only selects nothing', () => assert.deepEqual(select('docs/distribution.md', 'README.md'), []));
 check('tools only selects nothing', () => assert.deepEqual(select('tools/publish-gate.test.mjs'), []));
-check('two areas are unioned', () => assert.deepEqual(select('src/renderer/lib/db.ts', 'src/renderer/lib/graph-layout.ts'), expected('database', 'db-virtualization', 'graph')));
+check('two areas are unioned', () => assert.deepEqual(select('src/renderer/lib/db.ts', 'src/renderer/lib/graph-layout.ts'), expected('database', 'database-views', 'db-virtualization', 'graph')));
 check('package and shared config changes run all specs', () => {
   for (const p of ['package.json', 'package-lock.json', 'tsconfig.main.json', 'vite.config.ts', 'playwright.config.ts']) assert.equal(select(p), 'all');
 });

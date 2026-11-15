@@ -11,7 +11,8 @@
           "due",
           "project",
           "blocker",
-          "done"
+          "done",
+          "notes"
         ],
         "properties": {
           "title": {
@@ -80,6 +81,10 @@
           "done": {
             "name": "Done",
             "type": "checkbox"
+          },
+          "notes": {
+            "name": "Notes",
+            "type": "text"
           }
         }
       },
@@ -93,7 +98,8 @@
             "due": "2026-08-21",
             "project": "Website refresh",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "Covers DNS, redirects, analytics and the rollback plan. Share it with support before the content freeze."
           }
         },
         {
@@ -105,7 +111,8 @@
             "due": "2026-08-26",
             "project": "Website refresh",
             "blocker": "Legal is still reviewing the vendor terms",
-            "done": false
+            "done": false,
+            "notes": "The renewal price went up twelve percent. Legal wants the data-processing terms changed before anyone signs."
           }
         },
         {
@@ -117,7 +124,8 @@
             "due": "2026-08-27",
             "project": "Website refresh",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "Keep it under 600 words and lead with what changes for existing customers."
           }
         },
         {
@@ -129,7 +137,8 @@
             "due": "2026-09-04",
             "project": "Website refresh",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -141,7 +150,8 @@
             "due": "2026-08-18",
             "project": "Website refresh",
             "blocker": "",
-            "done": true
+            "done": true,
+            "notes": ""
           }
         },
         {
@@ -153,7 +163,8 @@
             "due": "2026-09-01",
             "project": "Website refresh",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -165,7 +176,8 @@
             "due": "2026-08-24",
             "project": "Help centre",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "Most support tickets start on this page.\nCut the install section down to three steps and link the video at the end."
           }
         },
         {
@@ -177,7 +189,8 @@
             "due": "2026-09-12",
             "project": "Help centre",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -189,7 +202,8 @@
             "due": "2026-08-21",
             "project": "Help centre",
             "blocker": "",
-            "done": true
+            "done": true,
+            "notes": ""
           }
         },
         {
@@ -201,7 +215,8 @@
             "due": "2026-09-19",
             "project": "Help centre",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -213,7 +228,8 @@
             "due": "2026-08-31",
             "project": "Help centre",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -225,7 +241,8 @@
             "due": "2026-08-22",
             "project": "Mobile app",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "Scrolling drops frames on lists over 200 items. Start with the image decoding on the main thread."
           }
         },
         {
@@ -237,7 +254,8 @@
             "due": "2026-08-28",
             "project": "Mobile app",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -249,7 +267,8 @@
             "due": "2026-09-20",
             "project": "Mobile app",
             "blocker": "Waiting on loaner handsets from IT",
-            "done": false
+            "done": false,
+            "notes": "We need two phones that are at least four years old to get numbers worth reporting."
           }
         },
         {
@@ -261,7 +280,8 @@
             "due": "2026-10-02",
             "project": "Mobile app",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -273,7 +293,8 @@
             "due": "2026-08-23",
             "project": "Customer research",
             "blocker": "",
-            "done": true
+            "done": true,
+            "notes": ""
           }
         },
         {
@@ -285,7 +306,8 @@
             "due": "2026-09-11",
             "project": "Customer research",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "Legal suggested 90 days. Check whether the research team needs anything longer for the quarterly review."
           }
         },
         {
@@ -297,7 +319,8 @@
             "due": "2026-08-13",
             "project": "Customer research",
             "blocker": "",
-            "done": true
+            "done": true,
+            "notes": ""
           }
         },
         {
@@ -309,7 +332,8 @@
             "due": "2026-08-20",
             "project": "Onboarding revamp",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -321,7 +345,8 @@
             "due": "2026-09-07",
             "project": "Onboarding revamp",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "New accounts land on a blank dashboard. Show the three sample notes and a link to the guide instead."
           }
         },
         {
@@ -333,7 +358,8 @@
             "due": "2026-08-08",
             "project": "Onboarding revamp",
             "blocker": "",
-            "done": true
+            "done": true,
+            "notes": ""
           }
         },
         {
@@ -345,7 +371,8 @@
             "due": "2026-09-02",
             "project": "Office move",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": "Rooms on the third floor go offline on the 5th. Move the standing bookings to the second floor first."
           }
         },
         {
@@ -357,7 +384,8 @@
             "due": "2026-09-08",
             "project": "Office move",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -369,7 +397,8 @@
             "due": "2026-09-16",
             "project": "Office move",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -381,7 +410,8 @@
             "due": "2026-09-05",
             "project": "Budget planning",
             "blocker": "",
-            "done": false
+            "done": false,
+            "notes": ""
           }
         },
         {
@@ -393,7 +423,8 @@
             "due": "2026-08-04",
             "project": "Budget planning",
             "blocker": "",
-            "done": true
+            "done": true,
+            "notes": ""
           }
         }
       ]

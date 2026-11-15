@@ -1,9 +1,12 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Settings2, Table2, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Settings2, SlidersHorizontal, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { addDbTable, drawableRelations, parseDb, serializeDb, updateDbTable, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type PropType } from '@/lib/db';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { BoardColumnHeader, CardLimitNote, Chip, DbCard, cardTitle, columnLabel } from '@/components/db/DbCards';
+import { addDbTable, boardColumns, displayValue, drawableRelations, MAX_CARDS, moveRow, parseDb, resolveView, serializeDb, updateDbTable, visibleRows as savedViewRows, type BoardColumn, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type DbViewMode, type PropType } from '@/lib/db';
 import { rowWindow } from '@/lib/row-window';
 import { Segmented } from '@/components/ui/segmented';
 import { registerSurface, type SurfaceProps } from './index';
@@ -62,24 +65,12 @@ function starterDoc(tableName: string): DbFile {
   return { format: 1, tables: { [tableName.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'table']: table }, relations: [], extra: {}, hadRelations: false };
 }
 
-function Chip({ option }: { option: DbOption }) {
-  return (
-    <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: `${option.color}2e`, color: option.color }}>
-      {option.name || '…'}
-    </span>
-  );
-}
-
-// Text shown for a cell — used for search matching and sorting.
-function displayValue(prop: DbProperty, value: unknown): string {
-  if (value === undefined || value === null) return '';
-  if (prop.type === 'select') return prop.options?.find((o) => o.id === value)?.name ?? '';
-  if (prop.type === 'multiselect') {
-    const ids = Array.isArray(value) ? value : [];
-    return ids.map((id) => prop.options?.find((o) => o.id === id)?.name ?? '').join(' ');
-  }
-  return String(value);
-}
+const ROW_MIME = 'text/neuron-row';
+// Header controls are plain buttons so the app-wide focus ring applies.
+const HEADER_BUTTON = 'interactive inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[var(--divider)] px-2.5 text-[12px] text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]';
+// `.field` is a full-width 34px form control; the toolbar needs compact ones sized to content.
+const TOOL_FIELD_BASE = 'field !min-h-0 !h-8 shrink-0 text-[12px]';
+const TOOL_FIELD = `${TOOL_FIELD_BASE} !w-auto px-2`;
 
 function SchemaOverview({ db, onOpen }: { db: DbFile; onOpen: (tableId: string) => void }) {
   const ids = Object.keys(db.tables);
@@ -161,8 +152,25 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const activePath = useRef(path);
   const dbRef = useRef<DbFile | null>(null);
   const selectedTableRef = useRef<string | null>(null);
+  // Board and gallery: the row open in the editor dialog, drag state, and the
+  // card to focus once a move or a closing dialog has settled.
+  const [editRowId, setEditRowId] = useState<string | null>(null);
+  // Text properties the row editor shows as a textarea; fixed when it opens so a
+  // field does not swap element (and lose focus) as its text crosses the limit.
+  const [longProps, setLongProps] = useState<string[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const [dragRowId, setDragRowId] = useState<string | null>(null);
+  const [dropTarget, setDropTargetState] = useState<{ column: string; beforeRowId: string | null } | null>(null);
+  const dropTargetRef = useRef<{ column: string; beforeRowId: string | null } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ rowId: string } | null>(null);
+  const pendingOpen = useRef<string | null>(null);
+  const stagedOnly = useRef(false);
+  const mainRef = useRef<HTMLElement>(null);
 
   const selectTable = (tableId: string | null) => {
+    // A reload from disk re-selects the same table; keep an open row editor then.
+    if (tableId !== selectedTableRef.current) setEditRowId(null);
     selectedTableRef.current = tableId;
     setSelectedTableState(tableId);
     setEditingProp(null);
@@ -171,6 +179,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
 
   const adopt = (next: DbFile | null, nextError: string | null) => {
     dbRef.current = next;
+    stagedOnly.current = false;
     setDbState(next);
     setError(nextError);
     const ids = next ? Object.keys(next.tables) : [];
@@ -214,6 +223,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const stageDb = (next: DbFile) => { dbRef.current = next; setDbState(next); };
   const writeDb = async (next: DbFile) => {
     stageDb(next);
+    stagedOnly.current = false;
     const text = serializeDb(next);
     const sequence = ++writeSequence.current;
     unsaved.current = true;
@@ -238,7 +248,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
     }
   };
   const replaceTable = (next: DbTable) => updateDbTable(dbRef.current!, selectedTableRef.current!, next);
-  const stage = (next: DbTable) => stageDb(replaceTable(next));
+  const stage = (next: DbTable) => { stageDb(replaceTable(next)); stagedOnly.current = true; };
   const write = (next: DbTable) => writeDb(replaceTable(next));
   const d = () => dbRef.current!.tables[selectedTableRef.current!]!;
   const flush = () => { if (dbRef.current && selectedTableRef.current) write(d()); };
@@ -334,40 +344,31 @@ export function DbSurface({ path, content }: SurfaceProps) {
   };
 
   // --- Derived, filtered + sorted rows (all client-side) ---------------------
+  // The saved filter and sort, then this session's search on top.
   const visibleRows = useMemo(() => {
     if (!doc) return [];
     const { order, properties } = doc.schema;
     const q = search.trim().toLowerCase();
-    let rows = doc.rows;
-    if (q) rows = rows.filter((r) => order.some((pid) => displayValue(properties[pid], r.values[pid]).toLowerCase().includes(q)));
-    const { filterProp, filterValue, sortBy, sortDir } = doc.view;
-    if (filterProp && properties[filterProp] && filterValue) {
-      const fp = properties[filterProp];
-      rows = rows.filter((r) => {
-        const v = r.values[filterProp];
-        if (fp.type === 'select') return v === filterValue;
-        if (fp.type === 'multiselect') return Array.isArray(v) && v.includes(filterValue);
-        return displayValue(fp, v).toLowerCase().includes(filterValue.toLowerCase());
-      });
-    }
-    if (sortBy && properties[sortBy]) {
-      const sp = properties[sortBy];
-      const dir = sortDir === 'desc' ? -1 : 1;
-      rows = [...rows].sort((a, b) => {
-        const x = displayValue(sp, a.values[sortBy]), y = displayValue(sp, b.values[sortBy]);
-        const nx = Number(x), ny = Number(y);
-        const cmp = x !== '' && y !== '' && !Number.isNaN(nx) && !Number.isNaN(ny) ? nx - ny : x.localeCompare(y);
-        return cmp * dir;
-      });
-    }
-    return rows;
+    const rows = savedViewRows(doc);
+    return q ? rows.filter((r) => order.some((pid) => displayValue(properties[pid], r.values[pid]).toLowerCase().includes(q))) : rows;
   }, [doc, search]);
+  const view = useMemo(() => (doc ? resolveView(doc) : null), [doc]);
 
   const tableScroll = useRef<HTMLDivElement>(null);
   const measuredHeight = useRef<number | null>(null);
   const [viewport, setViewport] = useState({ scrollTop: 0, viewportHeight: 0, rowHeight: 36 });
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
-  const virtual = visibleRows.length >= 200 && (doc?.view.mode ?? 'table') === 'table';
+  const virtual = visibleRows.length >= 200 && view?.mode === 'table';
+
+  // Focus a card after the render that moved it, and after Radix has finished
+  // returning focus from a closing menu or dialog (it does so on a zero timeout).
+  useEffect(() => {
+    if (!focusRequest) return;
+    const timer = window.setTimeout(() => {
+      mainRef.current?.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(focusRequest.rowId)}"]`)?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusRequest]);
 
   useLayoutEffect(() => {
     const container = tableScroll.current;
@@ -415,6 +416,8 @@ export function DbSurface({ path, content }: SurfaceProps) {
     : visibleRows.map((_, index) => index);
 
   // --- Cell renderers ---------------------------------------------------------
+  // The option editor sits above the table, behind the row dialog, so close the dialog first.
+  const editOptions = (propId: string) => { setEditRowId(null); setEditingProp(propId); };
   function renderCell(row: DbRow, propId: string, prop: DbProperty) {
     const v = row.values[propId];
     if (prop.type === 'checkbox') {
@@ -439,7 +442,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
             ))}
             <DropdownMenuItem onClick={() => setCell(row.id, propId, '')}>None</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setEditingProp(propId)}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => editOptions(propId)}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       );
@@ -466,7 +469,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
               </DropdownMenuCheckboxItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setEditingProp(propId)}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => editOptions(propId)}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       );
@@ -537,74 +540,333 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const filterPropDef = filterProp ? properties[filterProp] : undefined;
 
   // --- View modes: table (edit-everything), board (kanban by a select), gallery
-  const mode = doc.view.mode ?? 'table';
+  const resolved = view!;
+  const mode = resolved.mode;
   const selectProps = order.filter((pid) => properties[pid].type === 'select');
-  const groupBy = doc.view.groupBy && properties[doc.view.groupBy]?.type === 'select' ? doc.view.groupBy : selectProps[0];
-  const titleProp = order.find((pid) => properties[pid].type === 'text') ?? order[0];
-  const setMode = (m: 'table' | 'board' | 'gallery') => write({ ...d(), view: { ...d().view, mode: m } });
+  const groupBy = resolved.groupBy;
+  const sorted = !!resolved.sortBy;
+  const setMode = (m: DbViewMode) => write({ ...d(), view: { ...d().view, mode: m } });
+  const setSortBy = (propId: string | null) => write({ ...d(), view: { ...d().view, sortBy: propId } });
+  const flipSortDir = () => write({ ...d(), view: { ...d().view, sortDir: d().view.sortDir === 'desc' ? 'asc' : 'desc' } });
 
-  // Compact read-only rendering of secondary properties on board/gallery cards.
-  const cardMeta = (row: DbRow, skip: string[]) => order.filter((pid) => !skip.includes(pid)).map((pid) => {
-    const prop = properties[pid];
-    const v = row.values[pid];
-    if (prop.type === 'select') { const o = prop.options?.find((x) => x.id === v); return o ? <Chip key={pid} option={o} /> : null; }
-    if (prop.type === 'multiselect') {
-      const ids = Array.isArray(v) ? v : [];
-      return (prop.options ?? []).filter((o) => ids.includes(o.id)).map((o) => <Chip key={`${pid}-${o.id}`} option={o} />);
-    }
-    if (prop.type === 'date' && typeof v === 'string' && v) return <span key={pid} className="text-[11px] text-[var(--ink-muted)]">{v}</span>;
-    if (prop.type === 'checkbox' && v) return <span key={pid} className="flex items-center gap-0.5 text-[11px] text-[var(--ink-muted)]"><Check className="h-3 w-3" />{prop.name}</span>;
-    return null;
-  });
+  const announce = (message: string) => {
+    // Clearing first makes a repeated message ("Moved up" twice) be read again.
+    setAnnouncement('');
+    window.setTimeout(() => setAnnouncement(message), 50);
+  };
+  const focusCard = (rowId: string) => setFocusRequest({ rowId });
+  const openRow = (rowId: string) => {
+    const table = d();
+    const row = table.rows.find((r) => r.id === rowId);
+    const { previewProp } = resolveView(table);
+    setLongProps(table.schema.order.filter((pid) => {
+      if (table.schema.properties[pid].type !== 'text') return false;
+      const value = row?.values[pid];
+      return pid === previewProp || (typeof value === 'string' && (value.length > 60 || value.includes('\n')));
+    }));
+    setConfirmDelete(false);
+    setEditRowId(rowId);
+  };
+  const addCard = (values: Record<string, unknown>) => {
+    const id = uid();
+    write({ ...d(), rows: [...d().rows, { id, values }] });
+    openRow(id);
+  };
+  const flushStaged = () => { if (stagedOnly.current && dbRef.current && selectedTableRef.current) void write(d()); };
+  const closeEditor = () => { flushStaged(); setEditRowId(null); setConfirmDelete(false); };
+  const cardKeyDown = (rowId: string) => (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    openRow(rowId);
+  };
 
-  const board = mode === 'board' && groupBy && (
-    <div className="flex items-start gap-3 overflow-x-auto pb-2">
-      {[...(properties[groupBy].options ?? []), null].map((option) => {
-        const colId = option?.id ?? '';
-        const colRows = visibleRows.filter((r) => (r.values[groupBy] ?? '') === colId);
-        return (
-          <div
-            key={colId || '__none'}
-            className="w-64 shrink-0 rounded-lg bg-[var(--surface)] p-2"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { const rid = e.dataTransfer.getData('text/neuron-row'); if (rid) setCell(rid, groupBy, colId); }}
+  // --- Card properties and preview (shared by board and gallery) -------------
+  const toggleCardProp = (propId: string, on: boolean) => {
+    // Start from the stored list, stale entries included, so they stay in the file.
+    const stored = Array.isArray(d().view.cardProps) ? d().view.cardProps! : resolveView(d()).cardProps;
+    const cardProps = on ? (stored.includes(propId) ? stored : [...stored, propId]) : stored.filter((id) => id !== propId);
+    write({ ...d(), view: { ...d().view, cardProps } });
+  };
+  const setPreviewProp = (propId: string | null) => write({ ...d(), view: { ...d().view, previewProp: propId } });
+  const textProps = order.filter((pid) => properties[pid].type === 'text' && pid !== resolved.titleProp);
+  const cardPropsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={HEADER_BUTTON}><SlidersHorizontal className="h-3.5 w-3.5" /> Card properties</button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="max-h-[60vh] overflow-y-auto">
+        <DropdownMenuLabel>Show on cards</DropdownMenuLabel>
+        {order.filter((pid) => pid !== resolved.titleProp).map((pid) => (
+          <DropdownMenuCheckboxItem
+            key={pid}
+            checked={resolved.cardProps.includes(pid)}
+            onSelect={(e) => e.preventDefault()}
+            onCheckedChange={(checked) => toggleCardProp(pid, !!checked)}
           >
-            <div className="mb-2 flex items-center gap-2 px-1">
-              {option ? <Chip option={option} /> : <span className="text-xs text-[var(--ink-muted)]">No {properties[groupBy].name.toLowerCase()}</span>}
-              <span className="ml-auto text-[11px] text-[var(--ink-muted)]">{colRows.length}</span>
+            {properties[pid].name}
+          </DropdownMenuCheckboxItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Preview</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={resolved.previewProp ?? ''} onValueChange={(value) => setPreviewProp(value || null)}>
+          {textProps.map((pid) => <DropdownMenuRadioItem key={pid} value={pid}>{properties[pid].name}</DropdownMenuRadioItem>)}
+          <DropdownMenuRadioItem value="">None</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  // --- Board ------------------------------------------------------------------
+  const addStatusProperty = () => {
+    const id = uid();
+    const cur = d();
+    const options: DbOption[] = [
+      { id: uid(), name: 'Todo', color: '#8b8b8b' },
+      { id: uid(), name: 'In progress', color: '#528fd1' },
+      { id: uid(), name: 'Done', color: '#5aa06c' },
+    ];
+    write({
+      ...cur,
+      schema: { ...cur.schema, order: [...cur.schema.order, id], properties: { ...cur.schema.properties, [id]: { name: 'Status', type: 'select', options } } },
+      view: { ...cur.view, groupBy: id },
+    });
+  };
+
+  const board = mode === 'board' && groupBy ? boardColumns(doc, visibleRows) : null;
+  const groupName = groupBy ? properties[groupBy].name : '';
+  // Past the card limit only the first MAX_CARDS rows in display order are drawn;
+  // column counts still say how many each column holds.
+  const drawn = visibleRows.length > MAX_CARDS ? new Set(visibleRows.slice(0, MAX_CARDS).map((r) => r.id)) : null;
+
+  const setDropTarget = (target: { column: string; beforeRowId: string | null } | null) => {
+    const current = dropTargetRef.current;
+    if (current?.column === target?.column && current?.beforeRowId === target?.beforeRowId) return;
+    dropTargetRef.current = target;
+    setDropTargetState(target);
+  };
+  const endDrag = () => { setDragRowId(null); setDropTarget(null); };
+  const isRowDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(ROW_MIME);
+
+  /** Move a card, then keep focus on it and say where it went. */
+  const moveCard = (rowId: string, column: BoardColumn, beforeRowId: string | null | undefined, message: string) => {
+    const cur = d();
+    const next = moveRow(cur, rowId, { group: column.id, beforeRowId });
+    if (next === cur) return;
+    write(next);
+    focusCard(rowId);
+    announce(message);
+  };
+  const dropOn = (e: React.DragEvent, column: BoardColumn) => {
+    e.preventDefault();
+    const rowId = e.dataTransfer.getData(ROW_MIME);
+    const target = dropTargetRef.current?.column === column.id ? dropTargetRef.current : null;
+    endDrag();
+    if (!rowId || !board) return;
+    let before: string | null | undefined = sorted || !target ? undefined : target.beforeRowId;
+    // Dropping a card just above or below itself changes nothing in the column;
+    // skip it rather than reshuffle rows the column does not show.
+    const index = column.rows.findIndex((r) => r.id === rowId);
+    if (index >= 0 && (before === rowId || before === (column.rows[index + 1]?.id ?? null))) before = undefined;
+    const from = board.columns.find((c) => c.rows.some((r) => r.id === rowId));
+    moveCard(rowId, column, before, from?.id === column.id ? 'Moved' : `Moved to ${columnLabel(column, groupName)}`);
+  };
+
+  const boardView = mode === 'board' && (!groupBy ? (
+    <div className="flex flex-col items-start gap-2 py-6 text-sm text-[var(--ink-secondary)]">
+      <p>Add a select property to group cards into columns.</p>
+      <button type="button" className={HEADER_BUTTON} onClick={addStatusProperty}><Plus className="h-3.5 w-3.5" /> Add Status property</button>
+    </div>
+  ) : board && (
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      {sorted && (
+        <div className="flex shrink-0 items-center gap-2 text-xs text-[var(--ink-muted)]">
+          <span>Sorted by {properties[resolved.sortBy!].name}</span>
+          <button type="button" className={HEADER_BUTTON} onClick={() => setSortBy(null)}>Clear sort</button>
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto pb-2" role="list" aria-label={`Board grouped by ${groupName}`}>
+        {board.columns.filter((column) => column.option || column.rows.length > 0 || dragRowId !== null).map((column) => {
+          const rows = drawn ? column.rows.filter((r) => drawn.has(r.id)) : column.rows;
+          const label = columnLabel(column, groupName);
+          const targeted = dropTarget?.column === column.id;
+          // The insertion line sits in the 12px between cards so it never moves them.
+          const line = (edge: string) => <div aria-hidden="true" data-drop-line className={`pointer-events-none absolute inset-x-0.5 ${edge} h-0.5 rounded-full bg-[var(--accent)]`} />;
+          return (
+            <div
+              key={column.id || '__none'}
+              role="listitem"
+              aria-label={label}
+              data-board-column={column.id}
+              className={`flex w-[272px] shrink-0 flex-col rounded-lg ${targeted && sorted ? 'bg-[var(--surface)]' : ''}`}
+              onDragOver={(e) => { if (!isRowDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTarget({ column: column.id, beforeRowId: null }); }}
+              onDrop={(e) => dropOn(e, column)}
+            >
+              <BoardColumnHeader column={column} groupName={groupName} count={column.rows.length}>
+                <button type="button" className="vw-icon-btn" onClick={() => addCard(column.id ? { [groupBy]: column.id } : {})} title={`New card in ${label}`} aria-label={`New card in ${label}`}>
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </BoardColumnHeader>
+              <div className="min-h-[3rem] flex-1 overflow-y-auto px-1 pb-1">
+                {targeted && !sorted && rows.length === 0 && <div className="relative mt-1">{line('top-0')}</div>}
+                {rows.map((row, index) => {
+                  const lineBefore = targeted && !sorted && dropTarget!.beforeRowId === row.id && row.id !== dragRowId;
+                  const lineAfter = targeted && !sorted && dropTarget!.beforeRowId === null && index === rows.length - 1;
+                  return (
+                    <div
+                      key={row.id}
+                      className="relative py-1.5"
+                      onDragOver={(e) => {
+                        if (!isRowDrag(e)) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.dataTransfer.dropEffect = 'move';
+                        const box = e.currentTarget.getBoundingClientRect();
+                        const after = e.clientY > box.top + box.height / 2;
+                        setDropTarget({ column: column.id, beforeRowId: after ? rows[index + 1]?.id ?? null : row.id });
+                      }}
+                    >
+                      {lineBefore && line('-top-px')}
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <DbCard
+                            table={doc}
+                            row={row}
+                            view={resolved}
+                            variant="board"
+                            interactive
+                            draggable
+                            className={dragRowId === row.id ? 'opacity-50' : undefined}
+                            onClick={() => openRow(row.id)}
+                            onKeyDown={cardKeyDown(row.id)}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData(ROW_MIME, row.id);
+                              e.dataTransfer.effectAllowed = 'move';
+                              // Re-rendering inside dragstart (the "No" column appears) can cancel the drag in Chromium.
+                              window.setTimeout(() => setDragRowId(row.id), 0);
+                            }}
+                            onDragEnd={endDrag}
+                          />
+                        </ContextMenuTrigger>
+                        <ContextMenuContent
+                          onCloseAutoFocus={(e) => {
+                            e.preventDefault();
+                            if (pendingOpen.current === row.id) { pendingOpen.current = null; openRow(row.id); } else focusCard(row.id);
+                          }}
+                        >
+                          <ContextMenuItem onSelect={() => { pendingOpen.current = row.id; }}>Open</ContextMenuItem>
+                          <ContextMenuItem disabled={sorted || index === 0} onSelect={() => moveCard(row.id, column, rows[index - 1]?.id, 'Moved up')}>Move up</ContextMenuItem>
+                          <ContextMenuItem disabled={sorted || index === rows.length - 1} onSelect={() => moveCard(row.id, column, rows[index + 2]?.id ?? null, 'Moved down')}>Move down</ContextMenuItem>
+                          <ContextMenuSeparator />
+                          {board.columns.filter((other) => other.id !== column.id).map((other) => (
+                            <ContextMenuItem key={other.id || '__none'} onSelect={() => moveCard(row.id, other, undefined, `Moved to ${columnLabel(other, groupName)}`)}>
+                              Move to {columnLabel(other, groupName)}
+                            </ContextMenuItem>
+                          ))}
+                        </ContextMenuContent>
+                      </ContextMenu>
+                      {lineAfter && line('-bottom-px')}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="space-y-1.5">
-              {colRows.map((row) => (
-                <div
-                  key={row.id}
-                  className="cursor-grab rounded-md bg-[var(--canvas)] p-2.5 active:cursor-grabbing"
-                  draggable
-                  onDragStart={(e) => e.dataTransfer.setData('text/neuron-row', row.id)}
-                >
-                  <div className="text-sm text-[var(--ink)]">{String(row.values[titleProp] ?? '') || 'Untitled'}</div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1">{cardMeta(row, [groupBy, titleProp])}</div>
-                </div>
+          );
+        })}
+      </div>
+      <CardLimitNote total={visibleRows.length} />
+    </div>
+  ));
+
+  // --- Gallery ----------------------------------------------------------------
+  const galleryView = mode === 'gallery' && (
+    <div className="space-y-2">
+      <div className="grid items-start gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+        {visibleRows.slice(0, MAX_CARDS).map((row) => (
+          <DbCard
+            key={row.id}
+            table={doc}
+            row={row}
+            view={resolved}
+            variant="gallery"
+            interactive
+            onClick={() => openRow(row.id)}
+            onKeyDown={cardKeyDown(row.id)}
+          />
+        ))}
+        <button
+          type="button"
+          className="interactive flex min-h-[5rem] items-center justify-center gap-1.5 rounded-lg text-xs text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+          onClick={() => addCard({})}
+          aria-label="New card"
+        >
+          <Plus className="h-3.5 w-3.5" /> New
+        </button>
+      </div>
+      <CardLimitNote total={visibleRows.length} />
+    </div>
+  );
+
+  // --- Row editor ---------------------------------------------------------------
+  const editRow = editRowId ? doc.rows.find((r) => r.id === editRowId) : undefined;
+  const deleteEditedRow = () => {
+    if (!editRow) return;
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    deleteRow(editRow.id);
+    setEditRowId(null);
+    setConfirmDelete(false);
+    announce('Row deleted');
+  };
+  const rowEditor = (
+    <Dialog open={!!editRow} onOpenChange={(open) => { if (!open) closeEditor(); }}>
+      {editRow && (
+        <DialogContent
+          className="max-h-[85vh] max-w-xl overflow-y-auto bg-[var(--canvas)] shadow-none"
+          onCloseAutoFocus={(e) => { e.preventDefault(); focusCard(editRow.id); }}
+        >
+          <DialogHeader className="pr-8">
+            <DialogTitle className="break-words leading-snug">{cardTitle(resolved, editRow) || 'Untitled'}</DialogTitle>
+            <DialogDescription className="sr-only">Every property of this row. Changes save as you make them.</DialogDescription>
+          </DialogHeader>
+          {/* One child only: `.vw-content > * + *` adds a top margin to every later child. */}
+          <div className="vw-content">
+            <div className="grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)] items-start gap-x-3 gap-y-1 text-[13px]" data-row-editor={editRow.id}>
+              {order.map((pid) => (
+                <Fragment key={pid}>
+                  <span className="flex min-h-8 min-w-0 items-center text-[12px] text-[var(--ink-muted)]" title={properties[pid].name}>
+                    <span className="truncate">{properties[pid].name}</span>
+                  </span>
+                  <div className="flex min-h-8 min-w-0 items-center [&>*]:min-w-0 [&>*]:flex-1">
+                    {longProps.includes(pid) && properties[pid].type === 'text'
+                      ? <textarea
+                          className="vw-cell my-0.5 resize-none leading-[18px]"
+                          // Grows with its text from 3 to 10 lines, then scrolls.
+                          style={{ fieldSizing: 'content', minHeight: 'calc(3 * 18px + 0.6rem)', maxHeight: 'calc(10 * 18px + 0.6rem)', overflowY: 'auto' } as React.CSSProperties}
+                          value={editRow.values[pid] == null ? '' : String(editRow.values[pid])}
+                          onChange={(e) => setCell(editRow.id, pid, e.target.value, false)}
+                          onBlur={flush}
+                          aria-label={properties[pid].name}
+                        />
+                      : renderCell(editRow, pid, properties[pid])}
+                  </div>
+                </Fragment>
               ))}
             </div>
-            <button type="button" className="vw-newrow" onClick={() => { const id = uid(); write({ ...d(), rows: [...d().rows, { id, values: { [groupBy]: colId } }] }); }}>
-              <Plus className="h-3.5 w-3.5" /> New
-            </button>
           </div>
-        );
-      })}
-    </div>
+          <DialogFooter className="sm:justify-start">
+            <button
+              type="button"
+              className="interactive inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs text-[var(--danger)] hover:bg-[var(--surface-hover)]"
+              onClick={deleteEditedRow}
+              onBlur={() => setConfirmDelete(false)}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> {confirmDelete ? 'Click again to delete' : 'Delete row'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      )}
+    </Dialog>
   );
 
-  const gallery = mode === 'gallery' && (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-      {visibleRows.map((row) => (
-        <div key={row.id} className="rounded-lg bg-[var(--surface)] p-3">
-          <div className="text-sm font-medium text-[var(--ink)]">{String(row.values[titleProp] ?? '') || 'Untitled'}</div>
-          <div className="mt-2 flex flex-wrap items-center gap-1">{cardMeta(row, [titleProp])}</div>
-        </div>
-      ))}
-    </div>
-  );
   const tableCount = Object.keys(db.tables).length;
   const addTable = () => {
     const next = addDbTable(dbRef.current!, `Table ${tableCount + 1}`);
@@ -612,10 +874,15 @@ export function DbSurface({ path, content }: SurfaceProps) {
     selectTable(null);
   };
 
+  // The virtual table and the board size themselves to the pane and scroll inside it.
+  const fill = virtual || (mode === 'board' && !!groupBy);
+
   return (
-    <main className={`font-sans h-full ${virtual ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--canvas)] text-[var(--ink)]`}>
+    <main ref={mainRef} className={`font-sans h-full ${fill ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--canvas)] text-[var(--ink)]`}>
       {saveNotice}
-      <div className={`mx-auto max-w-6xl px-6 py-6 vw-content space-y-3 ${virtual ? 'flex h-full min-h-0 flex-col' : ''}`}>
+      <div className="sr-only" aria-live="polite">{announcement}</div>
+      {rowEditor}
+      <div className={`mx-auto max-w-6xl px-6 py-6 vw-content space-y-3 ${fill ? 'flex h-full min-h-0 flex-col' : ''}`}>
         <div className="flex flex-wrap items-center gap-2">
           {tableCount > 1 && <Button variant="ghost" size="sm" onClick={() => selectTable(null)} aria-label="Back to schema overview"><ArrowLeft /> Schema</Button>}
           <h1 className="mr-auto flex items-center gap-2 text-base font-semibold tracking-tight"><Database className="h-4 w-4 text-[var(--accent-strong)]" /> {doc.name}</h1>
@@ -626,34 +893,41 @@ export function DbSurface({ path, content }: SurfaceProps) {
             onChange={setMode}
             options={[
               { value: 'table', label: 'Table', icon: <Table2 className="h-3.5 w-3.5" /> },
-              { value: 'board', label: 'Board', icon: <Columns3 className="h-3.5 w-3.5" />, disabled: !groupBy, title: groupBy ? undefined : 'Add a Select property to use the board' },
-              { value: 'gallery', label: 'Cards', icon: <LayoutGrid className="h-3.5 w-3.5" /> },
+              { value: 'board', label: 'Board', icon: <Columns3 className="h-3.5 w-3.5" /> },
+              { value: 'gallery', label: 'Gallery', icon: <LayoutGrid className="h-3.5 w-3.5" /> },
             ]}
           />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input className={`${TOOL_FIELD_BASE} !w-full min-w-[10rem] max-w-[280px] flex-1 px-2.5`} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search rows" />
           {mode === 'board' && selectProps.length > 1 && (
-            <select className="field h-8 px-2 text-xs" value={groupBy ?? ''} onChange={(e) => write({ ...d(), view: { ...d().view, groupBy: e.target.value } })} aria-label="Group by">
+            <select className={TOOL_FIELD} value={groupBy ?? ''} onChange={(e) => write({ ...d(), view: { ...d().view, groupBy: e.target.value } })} aria-label="Group by">
               {selectProps.map((pid) => <option key={pid} value={pid}>{properties[pid].name}</option>)}
             </select>
           )}
-          <input className="field h-8 w-44 px-2.5 text-xs" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search rows" />
-          <select
-            className="field h-8 px-2 text-xs"
-            value={filterProp ?? ''}
-            onChange={(e) => setFilter(e.target.value || null, '')}
-            aria-label="Filter property"
-          >
+          <select className={TOOL_FIELD} value={resolved.sortBy ?? ''} onChange={(e) => setSortBy(e.target.value || null)} aria-label="Sort property">
+            <option value="">No sort</option>
+            {order.map((pid) => <option key={pid} value={pid}>{properties[pid].name}</option>)}
+          </select>
+          {sorted && (
+            <button type="button" className={HEADER_BUTTON} onClick={flipSortDir} aria-label={resolved.sortDir === 'desc' ? 'Sort descending' : 'Sort ascending'} title="Change sort direction">
+              {resolved.sortDir === 'desc' ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
+            </button>
+          )}
+          <select className={TOOL_FIELD} value={filterProp ?? ''} onChange={(e) => setFilter(e.target.value || null, '')} aria-label="Filter property">
             <option value="">No filter</option>
             {order.map((pid) => <option key={pid} value={pid}>{properties[pid].name}</option>)}
           </select>
           {filterProp && filterPropDef && (isSelectType(filterPropDef.type) ? (
-            <select className="field h-8 px-2 text-xs" value={filterValue ?? ''} onChange={(e) => setFilter(filterProp, e.target.value)} aria-label="Filter value">
+            <select className={TOOL_FIELD} value={filterValue ?? ''} onChange={(e) => setFilter(filterProp, e.target.value)} aria-label="Filter value">
               <option value="">Any</option>
               {(filterPropDef.options ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           ) : (
-            <input className="field h-8 w-36 px-2.5 text-xs" placeholder="Contains…" value={filterValue ?? ''} onChange={(e) => setFilter(filterProp, e.target.value, false)} onBlur={flush} aria-label="Filter value" />
+            <input className={`${TOOL_FIELD_BASE} !w-36 px-2.5`} placeholder="Contains…" value={filterValue ?? ''} onChange={(e) => setFilter(filterProp, e.target.value, false)} onBlur={flush} aria-label="Filter value" />
           ))}
-          <span className="text-xs text-[var(--ink-muted)]">{visibleRows.length} / {doc.rows.length} rows</span>
+          {mode !== 'table' && cardPropsMenu}
+          <span className="ml-auto whitespace-nowrap text-[12px] text-[var(--ink-muted)]">{visibleRows.length} / {doc.rows.length} rows</span>
         </div>
 
         {editing && (
@@ -693,7 +967,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
           </div>
         )}
 
-        {mode === 'board' ? board : mode === 'gallery' ? gallery : (
+        {mode === 'board' ? boardView : mode === 'gallery' ? galleryView : (
         <div ref={tableScroll} data-db-scroll className={`overflow-auto ${virtual ? 'min-h-0 flex-1' : ''}`} style={virtual ? { overflowAnchor: 'none' } : undefined}>
           <table className="vw-db" aria-rowcount={visibleRows.length + 1}>
             <thead>
