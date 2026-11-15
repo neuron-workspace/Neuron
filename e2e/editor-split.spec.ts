@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 
 const side = (page: Page) => page.locator('[data-side-note]');
+// macOS has no End key behaviour in a text field: Cmd+Right is the end of the line there.
+const end = process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End';
 
 async function runCommand(page: Page, name: string) {
   await page.getByRole('button', { name: /Search & commands/ }).click();
@@ -26,7 +28,7 @@ test('a note opens beside the editor, edits there reach the file, and the split 
   // Editing in the side pane writes its own file, not the main pane's.
   await side(page).getByRole('button', { name: 'Live', exact: true }).click();
   await side(page).locator('article.preview-prose h1').first().click();
-  await page.keyboard.press('End');
+  await page.keyboard.press(end);
   await page.keyboard.insertText(' v2');
   // Live commits a line when focus leaves it.
   await side(page).getByRole('button', { name: 'Swap panes', exact: true }).focus();
@@ -49,7 +51,7 @@ test('the same note in both panes stays in step, and a tab opens to the side fro
 
   await page.locator('main').getByRole('button', { name: 'Live', exact: true }).click();
   await page.locator('main article.preview-prose h1').first().click();
-  await page.keyboard.press('End');
+  await page.keyboard.press(end);
   await page.keyboard.insertText(' shared');
   await page.locator('main').getByRole('button', { name: 'Live', exact: true }).focus();
   await expect(side(page).locator('h1').first()).toContainText('shared');
