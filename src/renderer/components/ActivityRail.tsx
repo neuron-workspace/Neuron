@@ -3,8 +3,10 @@ import { Blocks, FileCode2, FolderGit2, Settings, Tag, Share2, ChevronsLeft, Che
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
 
-type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
+type View = 'notes' | 'gallery';
 export type SidebarMode = 'files' | 'search' | 'tags';
+/** The Settings window sections the sidebar opens. */
+export type SettingsTarget = 'plugins' | 'workspaces' | 'appearance';
 
 interface ActivityRailProps {
   view: View;
@@ -20,11 +22,13 @@ interface ActivityRailProps {
   dragHandle: React.ReactNode;
   /** Select the content shown below the navigation rows. */
   onSelectMode: (mode: SidebarMode) => void;
-  onNavigate: (view: View) => void;
+  /** Plugins, Workspaces and Settings open the Settings window at that section. */
+  onOpenSettings: (section: SettingsTarget) => void;
 }
 
 function RailButton({ label, text, collapsed, active, badge, onClick, children }: {
-  label: string; text: string; collapsed: boolean; active: boolean; badge?: number; onClick: () => void; children: React.ReactNode;
+  /** Left out for a row that opens another window rather than toggling something here. */
+  label: string; text: string; collapsed: boolean; active?: boolean; badge?: number; onClick: () => void; children: React.ReactNode;
 }) {
   return (
     <Tooltip>
@@ -42,9 +46,9 @@ function RailButton({ label, text, collapsed, active, badge, onClick, children }
 }
 
 export default function ActivityRail(props: ActivityRailProps) {
-  const { view, sidebarMode, sidebarOpen, tagCount, onSelectMode, onNavigate, collapsed, children } = props;
+  const { view, sidebarMode, sidebarOpen, tagCount, onSelectMode, onOpenSettings, collapsed, children } = props;
   const modeActive = (mode: SidebarMode) => view === 'notes' && sidebarOpen && sidebarMode === mode;
-  const row = (label: string, text: string, active: boolean, onClick: () => void, icon: React.ReactNode, badge?: number) => (
+  const row = (label: string, text: string, active: boolean | undefined, onClick: () => void, icon: React.ReactNode, badge?: number) => (
     <RailButton label={label} text={text} active={active} collapsed={collapsed} onClick={onClick} badge={badge}>{icon}</RailButton>
   );
   const collapseLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar to icons';
@@ -61,14 +65,14 @@ export default function ActivityRail(props: ActivityRailProps) {
       {row('Explorer', 'Files', modeActive('files'), () => onSelectMode('files'), <FileCode2 className="h-4 w-4 shrink-0" />)}
       {row('Tags', 'Tags', modeActive('tags'), () => onSelectMode('tags'), <Tag className="h-4 w-4 shrink-0" />, tagCount)}
       {row('Graph', 'Graph', props.graphOpen, props.onToggleGraph, <Share2 className="h-4 w-4 shrink-0" />)}
-      {row('Plugins & integrations', 'Plugins', view === 'plugins', () => onNavigate('plugins'), <Blocks className="h-4 w-4 shrink-0" />)}
+      {row('Plugins & integrations', 'Plugins', undefined, () => onOpenSettings('plugins'), <Blocks className="h-4 w-4 shrink-0" />)}
       {!collapsed && <div className="flex min-h-0 flex-1 flex-col pt-3">
         {sidebarMode !== 'files' && <p className="px-2 text-xs text-[var(--ink-muted)]">{sidebarMode === 'search' ? 'Search' : 'Tags'}</p>}
         {children}
       </div>}
       <div className="mt-auto flex shrink-0 flex-col gap-0.5 pt-2">
-        {row('Workspaces', 'Workspaces', view === 'repositories', () => onNavigate('repositories'), <FolderGit2 className="h-4 w-4 shrink-0" />)}
-        {row('Settings', 'Settings', view === 'settings', () => onNavigate('settings'), <Settings className="h-4 w-4 shrink-0" />)}
+        {row('Workspaces', 'Workspaces', undefined, () => onOpenSettings('workspaces'), <FolderGit2 className="h-4 w-4 shrink-0" />)}
+        {row('Settings', 'Settings', undefined, () => onOpenSettings('appearance'), <Settings className="h-4 w-4 shrink-0" />)}
       </div>
     </nav>
   );

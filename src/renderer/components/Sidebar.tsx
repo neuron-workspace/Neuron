@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
-import ActivityRail, { type SidebarMode } from './ActivityRail';
+import ActivityRail, { type SettingsTarget, type SidebarMode } from './ActivityRail';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
 import { searchNotes } from '../lib/search';
 
-type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
+type View = 'notes' | 'gallery';
 
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onSelectMode: (mode: SidebarMode) => void;
-  onNavigate: (view: View) => void;
+  onOpenSettings: (section: SettingsTarget) => void;
   graphOpen: boolean;
   onToggleGraph: () => void;
   sidebarSide: 'left' | 'right';
@@ -238,7 +238,7 @@ export default function Sidebar(props: SidebarProps) {
 
   return (
     <aside aria-label="Workspace sidebar" data-sidebar-collapsed={props.collapsed} className="nav-surface flex h-full w-full shrink-0 select-none flex-col">
-      <ActivityRail view={view} sidebarMode={mode} sidebarOpen tagCount={tags.length} collapsed={props.collapsed} onToggleCollapsed={props.onToggleCollapsed} onSelectMode={props.onSelectMode} onNavigate={props.onNavigate} graphOpen={props.graphOpen} onToggleGraph={props.onToggleGraph} dragHandle={dragHandle} sidebarSide={props.sidebarSide}>
+      <ActivityRail view={view} sidebarMode={mode} sidebarOpen tagCount={tags.length} collapsed={props.collapsed} onToggleCollapsed={props.onToggleCollapsed} onSelectMode={props.onSelectMode} onOpenSettings={props.onOpenSettings} graphOpen={props.graphOpen} onToggleGraph={props.onToggleGraph} dragHandle={dragHandle} sidebarSide={props.sidebarSide}>
       {mode === 'files' && (
         <section aria-label="Explorer" className="flex min-h-0 flex-1 flex-col">
           <div className="flex h-7 shrink-0 items-center justify-between px-2">

@@ -65,12 +65,16 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
   const configRef = useRef(state.config);
   configRef.current = state.config;
 
-  // Load persisted enabled-state + config once.
+  // Load persisted enabled-state + config once, and again whenever another
+  // window (Settings, usually) saves them, so panels and commands follow
+  // without a restart.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let latest = 0;
+    const load = async (remote: boolean) => {
+      const run = ++latest;
       const saved = (await window.electronAPI?.settings.get<PluginState>(SETTINGS_KEY)) ?? null;
-      if (cancelled) return;
+      if (cancelled || run !== latest) return;
       // Defaults are applied here, not in isEnabled(): activation and the
       // reactivation key both read state.enabled directly, so a default that
       // lives only in the accessor is invisible to them and the plugin never
@@ -95,13 +99,18 @@ export function PluginProvider({ catalog, bridge, children }: { catalog: PluginM
         }
         config[id] = safe;
       }
-      if (cancelled) return;
-      if (moved) void window.electronAPI?.settings.set(SETTINGS_KEY, { enabled, config });
+      if (cancelled || run !== latest) return;
+      // A value another window just saved is not saved back from here: that
+      // echo could overwrite a newer change made over there.
+      if (moved && !remote) void window.electronAPI?.settings.set(SETTINGS_KEY, { enabled, config });
       setState({ enabled, config });
       setReady(true);
-    })();
+    };
+    void load(false);
+    const unsubscribe = window.electronAPI?.settings.onChanged?.((key) => { if (key === SETTINGS_KEY) void load(true); });
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 

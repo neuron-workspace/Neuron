@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter } from 'electron';
 import type { WebContents } from 'electron';
-import { decideOpen, ownsPtyKey, ptyKey, type WindowKind } from './workspace-windows';
+import { decideOpen, isSettingsSection, ownsPtyKey, ptyKey, type SettingsSection, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -46,6 +46,8 @@ interface AppWindow {
 const appWindows = new Map<number, AppWindow>();
 /** The workspace window used last, for things with no sender (a second launch). */
 let lastWorkspaceId: number | null = null;
+/** The workspace of the window that last opened Settings, for its "This workspace" section. */
+let settingsOpener: string | null = null;
 type Sender = { sender: WebContents };
 const entryOf = (event: Sender): AppWindow | null => appWindows.get(event.sender.id) ?? null;
 const windowOf = (event: Sender): BrowserWindow | null => {
@@ -321,7 +323,7 @@ function setupWatcher(entry: AppWindow) {
 // Window
 // ==========================================================================
 
-function createWindow(kind: WindowKind = 'workspace', repo: string | null = savedRepo()): AppWindow {
+function createWindow(kind: WindowKind = 'workspace', repo: string | null = savedRepo(), section?: SettingsSection): AppWindow {
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
     : path.join(process.cwd(), 'build', 'icon.png');
@@ -358,8 +360,8 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
     backgroundColor: '#f3f4f6',
   });
   if (testInBackground) window.once('ready-to-show', () => { if (!window.isDestroyed()) window.showInactive(); });
-  // Settings and the workspace manager are small windows with no workspace of their own.
-  if (kind !== 'workspace') { window.setMinimumSize(640, 480); window.setSize(980, 720); }
+  // Settings is a smaller window with no workspace of its own.
+  if (kind !== 'workspace') { window.setMinimumSize(760, 520); window.setSize(1000, 720); }
   const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null };
   const id = window.webContents.id;
   appWindows.set(id, entry);
@@ -373,10 +375,11 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   installApplicationMenu(() => BrowserWindow.getFocusedWindow());
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  const query: Record<string, string> | null = kind === 'workspace' ? null : { window: kind, ...(section ? { section } : {}) };
   if (isDev) {
-    void window.loadURL(kind === 'workspace' ? DEV_URL : DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + 'window=' + kind);
+    void window.loadURL(query ? DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + new URLSearchParams(query).toString() : DEV_URL);
   } else {
-    void window.loadFile(path.join(__dirname, '../renderer/index.html'), kind === 'workspace' ? undefined : { query: { window: kind } });
+    void window.loadFile(path.join(__dirname, '../renderer/index.html'), query ? { query } : undefined);
   }
 
   // Full screen hides the toolbar; editors also use these events to remeasure.
@@ -404,6 +407,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
     entry.watcher = null;
     appWindows.delete(id);
     if (lastWorkspaceId === id) lastWorkspaceId = null;
+    if (kind === 'settings') settingsOpener = null;
   });
   // ...and again on the way out, because 'closed' is not on every exit path.
   // A shell that outlives the app is not a test problem: it is a process the
@@ -433,13 +437,25 @@ ipcMain.handle('window:toggle-fullscreen', (event) => {
   const window = windowOf(event);
   window?.setFullScreen(!window.isFullScreen());
 });
-// Pages that are about the app, not one workspace, get a window of their own:
-// one per page, brought forward if it is already open.
-ipcMain.handle('window:open-page', (event, page: unknown) => {
-  if (!entryOf(event) || (page !== 'settings' && page !== 'workspaces')) return { success: false };
-  const open = [...appWindows.values()].find((entry) => entry.kind === page);
-  focusWindow((open ?? createWindow(page, null)).window);
+// Settings, Plugins and Workspaces are about the app, not one workspace, so
+// they are sections of one Settings window, brought forward if already open.
+ipcMain.handle('window:open-page', (event, section: unknown) => {
+  const from = entryOf(event);
+  if (!from || !isSettingsSection(section)) return { success: false };
+  // Asked from Settings itself, the workspace it describes stays the same.
+  if (from.kind === 'workspace') settingsOpener = from.repo;
+  const open = [...appWindows.values()].find((entry) => entry.kind === 'settings');
+  if (open && !open.window.isDestroyed()) open.window.webContents.send('settings:show-section', section);
+  focusWindow((open ?? createWindow('settings', null, section)).window);
   return { success: true };
+});
+// Only the opener's name and folder cross over, and only while a window still
+// has it open: Settings gets no file access to it.
+ipcMain.handle('window:opener-workspace', (event) => {
+  if (entryOf(event)?.kind !== 'settings' || !settingsOpener) return null;
+  const opener = settingsOpener;
+  const open = [...appWindows.values()].some((entry) => entry.kind === 'workspace' && entry.repo === opener);
+  return open ? repoInfo(opener) : null;
 });
 ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
   const window = windowOf(event);

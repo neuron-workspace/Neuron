@@ -1,3 +1,5 @@
+import type { SettingsSection } from '../main/workspace-windows';
+
 export interface RepositoryInfo {
   path: string;
   name: string;
@@ -110,7 +112,10 @@ export interface ElectronAPI {
   // Window controls
   windowControls: {
     setOverlayColors: (colors: { color: string; symbolColor: string }) => Promise<void>;
-    openPage: (page: 'settings' | 'workspaces') => Promise<{ success: boolean }>;
+    openPage: (section: SettingsSection) => Promise<{ success: boolean }>;
+    /** Settings is already open and another window asked for this section. Validate before use. */
+    onShowSection: (callback: (section: string) => void) => () => void;
+    openerWorkspace: () => Promise<RepositoryInfo | null>;
     onMenuCommand: (callback: (command: string) => void) => () => void;
     chromeState: () => Promise<WindowChromeState>;
     toggleFullScreen: () => Promise<void>;

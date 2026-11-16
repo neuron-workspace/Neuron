@@ -1,4 +1,4 @@
-import { test, expect, openNote } from './fixtures';
+import { test, expect, openNote, setPluginEnabled } from './fixtures';
 import type { ElectronApplication, Page } from '@playwright/test';
 
 const paletteShortcut = process.platform === 'darwin' ? 'Meta+k' : 'Control+k';
@@ -152,9 +152,7 @@ for (const maximized of [false, true]) {
 }
 
 test('the full-screen palette works while the terminal has focus', async ({ app, page }) => {
-  await page.getByRole('button', { name: 'Plugins & integrations', exact: true }).first().click();
-  await page.getByPlaceholder('Search plugins').fill('Workspace Terminal');
-  await page.getByRole('switch', { name: 'Enable Workspace Terminal' }).check();
+  await setPluginEnabled(app, page, 'Workspace Terminal');
   await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
   const terminal = page.locator('.xterm-helper-textarea');
   await expect(terminal).toBeVisible();

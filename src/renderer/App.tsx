@@ -14,9 +14,8 @@ import { nextUntitled } from './lib/untitled';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
-import RepositoriesPage from './views/RepositoriesPage';
-import PluginsPage from './views/PluginsPage';
-import SettingsPage from './views/SettingsPage';
+import SettingsWindow from './views/SettingsWindow';
+import type { SettingsSection } from '../main/workspace-windows';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
@@ -82,7 +81,9 @@ import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appe
 
 interface NoteData { path: string; content: string }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
+// Settings, Plugins and Workspaces are sections of the Settings window, so the
+// main area always shows something the sidebar's Files, Tags and Graph act on.
+type View = 'notes' | 'gallery';
 // The same three modes the layout shell offers, under the same names. This was
 // 'raw' here and 'split' there, presented as a dropdown here and a button row
 // there, so the identical choice looked and read like two different features
@@ -200,16 +201,12 @@ export default function App() {
     });
   }, []);
 
-  // Settings and the workspace manager are about the app, not this workspace,
-  // so they open in a window of their own.
+  // Settings is about the app, not this workspace, so it opens in a window of
+  // its own. There is no in-page fallback: without the bridge there is no app.
   const remoteAppearance = useRef<string | null>(null);
-  const utilityWindow = useMemo(() => {
-    const page = new URLSearchParams(window.location.search).get('window');
-    return page === 'settings' || page === 'workspaces' ? page : null;
-  }, []);
-  const openGlobalPage = useCallback((page: 'settings' | 'workspaces') => {
-    if (window.electronAPI?.windowControls?.openPage) void window.electronAPI.windowControls.openPage(page);
-    else setView(page === 'settings' ? 'settings' : 'repositories');
+  const utilityWindow = useMemo(() => (new URLSearchParams(window.location.search).get('window') === 'settings' ? 'settings' : null), []);
+  const openSettings = useCallback((section: SettingsSection) => {
+    void window.electronAPI?.windowControls?.openPage(section);
   }, []);
   // Another window changed a shared setting: take the new value.
   useEffect(() => window.electronAPI?.settings.onChanged?.((key) => {
@@ -269,6 +266,13 @@ export default function App() {
   const setRightPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ rightPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.rightPanel) });
   const graphOverlayOpen = layout.graphOverlay;
   const toggleGraphOverlay = () => patchLayout({ graphOverlay: !layoutRef.current.graphOverlay });
+  // The graph floats over the notes view. Asked for from the component gallery,
+  // it brings the notes back rather than turning on where it cannot be seen.
+  const showOrToggleGraph = () => {
+    if (view === 'notes') { toggleGraphOverlay(); return; }
+    setView('notes');
+    if (!layoutRef.current.graphOverlay) patchLayout({ graphOverlay: true });
+  };
   const setBottomPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ bottomPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.bottomPanel) });
 
   // A <Run /> button in a note reveals the terminal it is about to write to.
@@ -361,14 +365,6 @@ export default function App() {
     (async () => { await reloadRepoState(); setRepoReady(true); })();
     return window.electronAPI.repository.onChanged(() => { void reloadRepoState(); });
   }, [reloadRepoState]);
-  // The workspace manager lists what other windows open and forget.
-  useEffect(() => {
-    if (utilityWindow !== 'workspaces') return;
-    const refresh = () => { void reloadRepoState(); };
-    window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  }, [utilityWindow, reloadRepoState]);
-
   const createRepository = useCallback(async () => {
     // The folder may open in its own window, so ask what this window shows now.
     if (await window.electronAPI?.repository.create()) void reloadRepoState();
@@ -1027,13 +1023,7 @@ export default function App() {
   );
 
   let mainContent: React.ReactNode;
-  if (view === 'repositories') {
-    mainContent = <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />;
-  } else if (view === 'plugins') {
-    mainContent = <PluginsPage layout={layout} onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })} />;
-  } else if (view === 'settings') {
-    mainContent = <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />;
-  } else if (view === 'gallery') {
+  if (view === 'gallery') {
     mainContent = <ComponentGallery />;
   } else if (layoutShell && !Surface && !browsing) {
     // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
@@ -1064,19 +1054,21 @@ export default function App() {
   }
 
   if (utilityWindow) {
+    // The plugin host runs here too, for the Plugins section. Its bridge sees
+    // no workspace, because this window has none.
     return (
-      <TooltipProvider delayDuration={300}>
-        <div className="flex h-screen flex-col bg-[var(--nav)] font-sans text-[var(--ink)]" data-utility-window={utilityWindow}>
-          <header className="titlebar flex h-10 shrink-0 items-center px-4 text-[13px] font-medium text-[var(--ink-secondary)]">
-            {utilityWindow === 'settings' ? 'Settings' : 'Workspaces'}
-          </header>
-          <main className="shell-card mx-2 mb-2 min-h-0 flex-1 overflow-auto">
-            {utilityWindow === 'settings'
-              ? <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />
-              : <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />}
-          </main>
-        </div>
-      </TooltipProvider>
+      <PluginProvider catalog={builtinPlugins} bridge={bridge}>
+        <TooltipProvider delayDuration={300}>
+          <SettingsWindow
+            appearance={appearance} onAppearanceChange={handleAppearanceChange}
+            bindings={bindings} onBindingsChange={updateBindings}
+            properties={propsSettings} onPropertiesChange={updatePropsSettings}
+            layout={layout} recents={recents}
+            onCreateRepo={createRepository} onOpenRepo={openRepository} onSwitchRepo={switchRepository}
+            onReloadRepos={reloadRepoState}
+          />
+        </TooltipProvider>
+      </PluginProvider>
     );
   }
 
@@ -1096,11 +1088,11 @@ export default function App() {
             bottomPanelOpen={bottomPanelOpen}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onToggleRightPanel={() => setRightPanelOpen((v) => !v)}
-            onToggleGraph={toggleGraphOverlay}
+            onToggleGraph={showOrToggleGraph}
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
-            onOpenMarketplace={() => setView('plugins')}
+            onManageWorkspaces={() => openSettings('workspaces')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
-            onOpenSettings={() => openGlobalPage('settings')}
+            onOpenSettings={() => openSettings('appearance')}
             onSwitchRepo={switchRepository}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}
@@ -1115,15 +1107,15 @@ export default function App() {
             <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
-            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => setView('plugins')}
+            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => openSettings('plugins')}
               sidebar={
                 <Sidebar
                   collapsed={layout.sidebarCollapsed}
                   onToggleCollapsed={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
                   onSelectMode={(mode) => { setSidebarMode(mode); setView('notes'); }}
-                  onNavigate={(next) => (next === 'settings' ? openGlobalPage('settings') : next === 'repositories' ? openGlobalPage('workspaces') : setView(next))}
+                  onOpenSettings={openSettings}
                   graphOpen={graphOverlayOpen}
-                  onToggleGraph={toggleGraphOverlay}
+                  onToggleGraph={showOrToggleGraph}
                   sidebarSide={layout.sidebarSide}
                   onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
                   notes={filteredNotes}
@@ -1164,9 +1156,9 @@ export default function App() {
                 )}
                 {mainContent}
                 {/* Notes only. It is a map of the workspace, so it
-                    has nothing to say over Settings, Plugins or
-                    Repositories -- and it was covering their controls,
-                    which an E2E click timeout caught. Anchored to
+                    has nothing to say over the component gallery --
+                    and it used to cover page controls, which an E2E
+                    click timeout caught. Anchored to
                     <main> rather than the notes view because a
                     workspace with a shell config renders a layout
                     instead of notesView, and the map is just as
@@ -1201,8 +1193,8 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => setView('plugins')} terminalChord={bindings['toggle-terminal']} />}
-          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => setView('plugins')} />
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => openSettings('plugins')} terminalChord={bindings['toggle-terminal']} />}
+          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => openSettings('plugins')} />
           <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 
@@ -1215,15 +1207,15 @@ export default function App() {
           onOpenChange={setPaletteOpen}
           notes={notes}
           onSelectNote={handleSelectNote}
-          onOpenMarketplace={() => setView('plugins')}
-          onOpenSettings={() => openGlobalPage('settings')}
+          onOpenMarketplace={() => openSettings('plugins')}
+          onOpenSettings={() => openSettings('appearance')}
           onCreate={() => requestCreate()}
           onCreateSurface={createSurfaceFile}
           onOpenWebsite={openWebsite}
           onOpenGallery={() => setView('gallery')}
           onToggleShell={toggleShell}
           shellActive={!!layoutShell}
-          onToggleGraph={toggleGraphOverlay}
+          onToggleGraph={showOrToggleGraph}
           graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
           layout={layout}

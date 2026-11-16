@@ -234,6 +234,37 @@ export async function openNote(page: Page, path: string) {
   await expect(dialog).toBeHidden();
 }
 
+/**
+ * Open the Settings window at a section and return its page.
+ *
+ * Settings, Plugins and Workspaces are sections of one separate window. When it
+ * is not open yet, asking opens it; when it is, the same window is told which
+ * section to show. `trigger` is the click to test, if any; by default the
+ * workspace window asks through the bridge, as its sidebar does.
+ */
+export async function openSettings(app: ElectronApplication, page: Page, section: string, trigger?: () => Promise<unknown>): Promise<Page> {
+  const ask = () => (trigger ? trigger() : page.evaluate((s) => (window as unknown as { electronAPI: any }).electronAPI.windowControls.openPage(s), section));
+  let settings = app.windows().find((w) => w.url().includes('window=settings'));
+  if (settings) await ask();
+  else [settings] = await Promise.all([app.waitForEvent('window'), ask()]);
+  await settings.waitForLoadState('domcontentloaded');
+  await expect(settings.locator(`[data-settings-section="${section}"]`)).toBeVisible();
+  return settings;
+}
+
+/**
+ * Switch a built-in plugin on or off from the Settings window, then close it.
+ * The workspace window picks the change up without a reload.
+ */
+export async function setPluginEnabled(app: ElectronApplication, page: Page, name: string, on = true) {
+  const settings = await openSettings(app, page, 'plugins');
+  await settings.getByPlaceholder('Search plugins').fill(name);
+  const toggle = settings.getByRole('switch', { name: `Enable ${name}` });
+  await expect(toggle).toBeVisible();
+  await toggle.setChecked(on);
+  await settings.close();
+}
+
 /** URLs the app handed to the OS browser, recorded by the stub above. */
 export function openedExternally(app: ElectronApplication): Promise<string[]> {
   return app.evaluate(() => (globalThis as unknown as { __openExternal?: string[] }).__openExternal ?? []);

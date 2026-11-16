@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
 import { FolderPlus, FolderOpen, FolderGit2, Cloud, ArrowRight, Sparkles, AlertCircle } from 'lucide-react';
-import type { RepositoryInfo, WorkspaceTemplate } from '../electron.d';
+import type { RepositoryInfo } from '../electron.d';
 import { Button } from './ui/button';
+import { useWorkspaceTemplates } from '../lib/useWorkspaceTemplates';
 
 interface RepositoryOnboardingProps {
   recents: RepositoryInfo[];
@@ -11,29 +11,7 @@ interface RepositoryOnboardingProps {
 }
 
 export default function RepositoryOnboarding({ recents, onCreate, onOpen, onSwitch }: RepositoryOnboardingProps) {
-  const [templates, setTemplates] = useState<WorkspaceTemplate[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void window.electronAPI?.templates.list().then(setTemplates).catch(() => setTemplates([]));
-  }, []);
-
-  const startFromTemplate = async (template: WorkspaceTemplate) => {
-    setError(null);
-    setBusy(template.id);
-    try {
-      const result = await window.electronAPI.templates.create(template.id);
-      // null means the folder picker was dismissed, which is not an error. On
-      // success main sets the active workspace, and App is already listening for
-      // that — nothing to do here but stop showing the spinner.
-      if (result?.error) setError(result.error);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  };
+  const { templates, busy, error, start: startFromTemplate } = useWorkspaceTemplates();
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-[var(--canvas)] px-6 py-10">

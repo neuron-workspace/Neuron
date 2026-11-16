@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import {
   PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search,
-  FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Share2 } from 'lucide-react';
+  FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Settings2, Share2 } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
 import {
@@ -27,7 +27,7 @@ interface TitleBarProps {
   onToggleRightPanel: () => void;
   onToggleGraph: () => void;
   onToggleBottomPanel: () => void;
-  onOpenMarketplace: () => void;
+  onManageWorkspaces: () => void;
   onOpenCommandPalette: () => void;
   onOpenSettings: () => void;
   onSwitchRepo: (dir: string) => void;
@@ -148,6 +148,8 @@ export default function TitleBar(props: TitleBarProps) {
                 ))}
               </>
             )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={props.onManageWorkspaces}><Settings2 className="h-4 w-4" /> Manage workspaces…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         <IconButton label={props.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} active={props.sidebarOpen} onClick={props.onToggleSidebar}>

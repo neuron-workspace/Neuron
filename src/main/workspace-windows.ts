@@ -4,7 +4,16 @@
  * Kept free of Electron so the rule is testable: a window owns its workspace,
  * and opening another one must never replace what someone already has open.
  */
-export type WindowKind = 'workspace' | 'settings' | 'workspaces';
+export type WindowKind = 'workspace' | 'settings';
+
+/** The sections of the Settings window. `workspace` is the opener's own settings. */
+export const SETTINGS_SECTIONS = ['appearance', 'keyboard', 'editor', 'plugins', 'workspaces', 'about', 'workspace'] as const;
+export type SettingsSection = typeof SETTINGS_SECTIONS[number];
+
+/** Shared by main, which gets this id over IPC, and the renderer, which reads it from its URL. */
+export function isSettingsSection(id: unknown): id is SettingsSection {
+  return typeof id === 'string' && (SETTINGS_SECTIONS as readonly string[]).includes(id);
+}
 
 export interface WindowSummary {
   id: number;
