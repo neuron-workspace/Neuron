@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Settings2, SlidersHorizontal, Table2, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Rows3, Settings2, SlidersHorizontal, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
@@ -824,7 +824,10 @@ export function DbSurface({ path, content }: SurfaceProps) {
           onCloseAutoFocus={(e) => { e.preventDefault(); focusCard(editRow.id); }}
         >
           <DialogHeader className="pr-8">
-            <DialogTitle className="break-words leading-snug">{cardTitle(resolved, editRow) || 'Untitled'}</DialogTitle>
+            <DialogTitle className="flex items-start gap-2 break-words leading-snug">
+              <Rows3 className="mt-[3px] h-4 w-4 shrink-0 text-[var(--ink-muted)]" aria-hidden="true" />
+              <span className="min-w-0">{cardTitle(resolved, editRow) || 'Untitled'}</span>
+            </DialogTitle>
             <DialogDescription className="sr-only">Every property of this row. Changes save as you make them.</DialogDescription>
           </DialogHeader>
           {/* One child only: `.vw-content > * + *` adds a top margin to every later child. */}

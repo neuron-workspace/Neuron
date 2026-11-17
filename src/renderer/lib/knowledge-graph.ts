@@ -146,7 +146,7 @@ export function seedPositions(model: KnowledgeGraph, positions: Positions): stri
   return added;
 }
 
-export const GRAPH_DEFAULTS = { gravity: 1, repel: 3, attraction: 1, distance: 1, nodeSize: 4, linkThickness: 1, labelThreshold: 1, arrows: false, orphans: true, unresolved: true, local: false, depth: 1 };
+export const GRAPH_DEFAULTS = { gravity: 1, repel: 3, attraction: 1, distance: 1, nodeSize: 4, linkThickness: 1.2, labelThreshold: 1, arrows: false, orphans: true, unresolved: true, local: false, depth: 1 };
 export type GraphPreferences = typeof GRAPH_DEFAULTS;
 export const GRAPH_RANGES = { gravity: [0.05, 5, 0.05], repel: [0.1, 10, 0.1], attraction: [0.1, 5, 0.1], distance: [0.25, 4, 0.05], nodeSize: [1, 10, 0.5], linkThickness: [0.2, 4, 0.2], labelThreshold: [0.1, 3, 0.1], depth: [1, 5, 1] } as const;
 export function graphPreferences(value: unknown): GraphPreferences {

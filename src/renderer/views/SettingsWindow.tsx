@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Blocks, FolderGit2, Info, Keyboard, Palette, PencilLine, SlidersHorizontal } from 'lucide-react';
+import { Blocks, FolderGit2, Info, Keyboard, Palette, PencilLine, Settings, SlidersHorizontal } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import { isSettingsSection, type SettingsSection } from '../../main/workspace-windows';
 import type { Appearance } from '../lib/theme';
@@ -20,6 +20,8 @@ const APP_SECTIONS: { id: SettingsSection; label: string; icon: React.ComponentT
   { id: 'workspaces', label: 'Workspaces', icon: FolderGit2 },
   { id: 'about', label: 'About', icon: Info },
 ];
+
+const GENERAL_ICON = SlidersHorizontal;
 
 const HEADINGS: Record<SettingsSection, { title: string; description?: string }> = {
   appearance: { title: 'Appearance', description: 'Presets update the whole workspace immediately.' },
@@ -120,6 +122,8 @@ export default function SettingsWindow(props: SettingsWindowProps) {
   useLayoutEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; }, [section]);
 
   const heading = HEADINGS[section];
+  // The same icon as the section's row in the list beside it.
+  const HeadingIcon = section === 'workspace' ? GENERAL_ICON : APP_SECTIONS.find((row) => row.id === section)!.icon;
   let content: React.ReactNode;
   switch (section) {
     case 'appearance': content = <AppearanceSettings appearance={props.appearance} onAppearanceChange={props.onAppearanceChange} />; break;
@@ -135,7 +139,9 @@ export default function SettingsWindow(props: SettingsWindowProps) {
 
   return (
     <div className="flex h-screen flex-col bg-[var(--nav)] font-sans text-[var(--ink)]" data-utility-window="settings">
-      <header className="titlebar flex h-10 shrink-0 items-center px-4 text-[13px] font-medium text-[var(--ink-secondary)]">Settings</header>
+      <header className="titlebar flex h-10 shrink-0 items-center gap-2 px-4 text-[13px] font-medium text-[var(--ink-secondary)]">
+        <Settings className="h-[15px] w-[15px] shrink-0 text-[var(--ink-muted)]" aria-hidden="true" />Settings
+      </header>
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         <nav aria-label="Settings sections" className="flex w-[200px] shrink-0 flex-col gap-0.5 overflow-y-auto p-1">
           <p className="px-2 pb-1 text-xs text-[var(--ink-muted)]">Neuron</p>
@@ -146,7 +152,7 @@ export default function SettingsWindow(props: SettingsWindowProps) {
             {opener ? (
               <>
                 <p className="truncate px-2 pb-1 text-xs text-[var(--ink-muted)]" title={opener.path}>{opener.name}</p>
-                <SectionRow label="General" icon={SlidersHorizontal} selected={section === 'workspace'} onSelect={() => setSection('workspace')} />
+                <SectionRow label="General" icon={GENERAL_ICON} selected={section === 'workspace'} onSelect={() => setSection('workspace')} />
               </>
             ) : (
               <p className="px-2 text-xs leading-5 text-[var(--ink-muted)]">Open a workspace to change its settings.</p>
@@ -156,7 +162,9 @@ export default function SettingsWindow(props: SettingsWindowProps) {
         <main className="shell-card flex min-w-0 flex-1 flex-col" data-settings-section={section}>
           <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
             <div className="w-full max-w-[720px] px-7 pb-12 pt-6">
-              <h1 className="text-[18px] font-semibold text-[var(--ink)]">{heading.title}</h1>
+              <h1 className="flex items-center gap-2 text-[18px] font-semibold text-[var(--ink)]">
+                <HeadingIcon className="h-[18px] w-[18px] shrink-0 text-[var(--ink-muted)]" aria-hidden="true" />{heading.title}
+              </h1>
               {heading.description && <p className="mt-1 text-[13px] leading-5 text-[var(--ink-secondary)]">{heading.description}</p>}
               <div className="mt-6">{content}</div>
             </div>

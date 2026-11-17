@@ -12,8 +12,6 @@ interface FloatingGraphProps {
 }
 
 const SIZE = 248;
-/** Clears the 42px .pane-header tab strip inside this same <main>. */
-const DEFAULT_TOP = 52;
 const EDGE = 12;
 /** Keeps the grip below the title bar, where a press would drag the window instead. */
 const TOP = 44;
@@ -31,7 +29,8 @@ const report = (type: string, event: React.PointerEvent) => window.dispatchEvent
  * canvas and the whole square is graph.
  */
 export default function FloatingGraph({ notesData, selectedNote, onSelectNote, onClose }: FloatingGraphProps) {
-  // null means "parked top-right" of the editor. Dragging switches to window
+  // null means "parked bottom-right" of the editor, out of the way of the tab
+  // strip and the top of the note where you are reading. Dragging switches to window
   // coordinates, so it can float over any part of the app: terminal, panels, sidebar.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
@@ -77,7 +76,7 @@ export default function FloatingGraph({ notesData, selectedNote, onSelectNote, o
       className={'pointer-events-auto z-[var(--z-overlay)] shell-card ' + (pos ? 'fixed' : 'absolute')}
       style={pos
         ? { left: pos.x, top: pos.y, width: SIZE, height: SIZE }
-        : { right: EDGE, top: DEFAULT_TOP, width: SIZE, height: SIZE }}
+        : { right: EDGE, bottom: EDGE, width: SIZE, height: SIZE }}
       role="complementary"
       aria-label="Workspace graph"
     >
