@@ -24,10 +24,12 @@ async function openNoteSearch(page: import('@playwright/test').Page) {
 }
 
 test('closing a tab keeps the note on disk', async ({ page, workspace }) => {
+  const tabs = page.locator('nav[aria-label="Open notes"]');
   await openNote(page, 'guides/markdown-basics.mdx');
+  // Opened from the palette it is a preview, which the next open would replace.
+  await tabs.getByRole('button', { name: 'markdown-basics', exact: true }).dblclick();
   await openNote(page, 'getting-started.mdx');
 
-  const tabs = page.locator('nav[aria-label="Open notes"]');
   await expect(tabs.getByText('markdown-basics')).toBeVisible();
   await expect(tabs.getByText('getting-started')).toBeVisible();
 

@@ -11,6 +11,7 @@ import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
+import { closeTab as closeTabIn, EMPTY_TABS, keepTab, openTab, removeMissing, type TabState } from './lib/tabs';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
@@ -131,8 +132,10 @@ export default function App() {
   const [repoReady, setRepoReady] = useState(false);
 
   const [notes, setNotes] = useState<string[]>([]);
-  const [selectedNote, setSelectedNote] = useState<string | null>(null);
-  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  // The open tabs, which one is the preview, and which one is showing: one
+  // state, because each change to the strip moves more than one of them.
+  const [tabState, setTabState] = useState<TabState>(EMPTY_TABS);
+  const { tabs: openTabs, preview: previewTab, selected: selectedNote } = tabState;
   const [noteContent, setNoteContent] = useState('');
   const [notesData, setNotesData] = useState<NoteData[]>([]);
   const [view, setView] = useState<View>('notes');
@@ -383,8 +386,7 @@ export default function App() {
     try {
       const fileList = await window.electronAPI.listNotes();
       setNotes(fileList);
-      setOpenTabs((current) => current.filter((note) => fileList.includes(note)));
-      setSelectedNote((current) => current && fileList.includes(current) ? current : null);
+      setTabState((current) => removeMissing(current, fileList));
       // Configuration is reachable in the explorer but is not knowledge: it is
       // not a graph node, it has no wiki-links, its words are not yours, and it
       // should not turn up in a search for something you wrote. `notes` keeps
@@ -403,9 +405,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!repository) { setNotes([]); setNotesData([]); setTags([]); setSelectedNote(null); return; }
+    if (!repository) { setNotes([]); setNotesData([]); setTags([]); setTabState((current) => ({ ...current, selected: null })); return; }
     loadNotes();
   }, [repository, loadNotes]);
+
+  // A preview belongs to the workspace it was opened in. Keyed on the path,
+  // because the same workspace re-reported is a new object.
+  const repositoryPath = repository?.path ?? null;
+  useEffect(() => {
+    setTabState((current) => current.preview === null ? current : removeMissing(current, (path) => path !== current.preview));
+  }, [repositoryPath]);
 
   useEffect(() => {
       const allTags = new Set<string>();
@@ -484,8 +493,7 @@ export default function App() {
         setNotes(current => current.filter(n => !removed(n)));
         setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
-        setOpenTabs(current => current.filter(n => !removed(n)));
-        setSelectedNote(current => current !== null && removed(current) ? null : current);
+        setTabState(current => removeMissing(current, n => !removed(n)));
       } else {
         void window.electronAPI.readNote(path).then(content => {
           if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
@@ -533,9 +541,10 @@ export default function App() {
     return () => { cancelled = true; };
   }, [selectedNote]);
 
-  const handleSelectNote = useCallback((note: string) => {
-    setSelectedNote(note);
-    setOpenTabs((current) => current.includes(note) ? current : [...current, note]);
+  // A preview by default: most routes here are a look at a file, and only a
+  // double click, creating something or editing it says to keep the tab.
+  const handleSelectNote = useCallback((note: string, options?: { keep?: boolean }) => {
+    setTabState((current) => openTab(current, note, options?.keep === true));
     setView('notes');
     // Opening a file leaves home, whichever route got here -- sidebar, explorer,
     // command palette or a wiki-link. One place to clear it, because a second
@@ -544,6 +553,8 @@ export default function App() {
     if (!isUrl(note)) setExplorerRecents((current) => addRecent(current, { path: note, kind: 'file' }));
     setNotice(null);
   }, []);
+  const keepNote = useCallback((note: string) => handleSelectNote(note, { keep: true }), [handleSelectNote]);
+  const keepOpenTab = useCallback((note: string) => setTabState((current) => keepTab(current, note)), []);
 
   /** Show the workspace explorer without disturbing what is already open. */
   const goHome = useCallback((folder = '') => {
@@ -607,7 +618,7 @@ export default function App() {
       const result = await window.electronAPI.writeNote(relativePath, body);
       if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
       await loadNotes();
-      handleSelectNote(relativePath);
+      handleSelectNote(relativePath, { keep: true });
       setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
       setSaveState('saved');
       return true;
@@ -636,13 +647,15 @@ export default function App() {
     if (!window.electronAPI) return false;
     const result = await window.electronAPI.deleteNote(note);
     if (!result.success) { setNotice(`Could not delete “${note}”. ${result.error ?? ''}`.trim()); return false; }
-    setOpenTabs((current) => current.filter((tab) => tab !== note));
-    setSelectedNote((current) => (current === note ? null : current));
+    setTabState((current) => removeMissing(current, (path) => path !== note));
     await loadNotes();
     return true;
   }, [loadNotes]);
 
   const handleContentChange = useCallback(async (value: string) => {
+    // Kept in the same update as the change itself, so a preview never holds
+    // an unsaved edit and the next single click cannot replace a tab mid-save.
+    if (selectedNote) keepOpenTab(selectedNote);
     setNoteContent(value);
     if (!selectedNote || !window.electronAPI) return;
     const version = ++saveVersion.current;
@@ -655,7 +668,7 @@ export default function App() {
     setSaveState(result.success ? 'saved' : 'error');
     if (result.success && selectedNote === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
-  }, [selectedNote, offerShellConfig]);
+  }, [selectedNote, offerShellConfig, keepOpenTab]);
 
   const requestCreate = useCallback(async () => {
     if (creatingUntitled.current) return;
@@ -713,7 +726,7 @@ export default function App() {
   const openWebsite = useCallback(() => {
     const n = ++browserCounter.current;
     const url = `https://duckduckgo.com/#neuron-tab-${n}`;
-    handleSelectNote(url);
+    handleSelectNote(url, { keep: true });
   }, [handleSelectNote]);
 
   // A second note beside the editor. Only its path is state here: its content
@@ -761,15 +774,10 @@ export default function App() {
   };
 
   const closeTab = useCallback((note: string) => {
-    setOpenTabs((current) => {
-      const index = current.indexOf(note);
-      const remaining = current.filter((tab) => tab !== note);
-      if (!remaining.length) { setExplorerFolder(''); setAtHome(true); }
-      setSelectedNote((active) => {
-        if (active !== note) return active;
-        return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
-      });
-      return remaining;
+    setTabState((current) => {
+      const next = closeTabIn(current, note);
+      if (!next.tabs.length) { setExplorerFolder(''); setAtHome(true); }
+      return next;
     });
   }, []);
 
@@ -935,7 +943,7 @@ export default function App() {
   const editorHeader = (
     <header className="shrink-0">
       <div className="pane-header editor-tab-header flex items-center">
-      <NoteTabs tabs={openTabs} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
+      <NoteTabs tabs={openTabs} previewTab={previewTab} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onKeep={keepOpenTab} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
       </div>
       {selectedNote && !atHome && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
         <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
@@ -1122,6 +1130,7 @@ export default function App() {
                   notesData={notesData}
                   selectedNote={selectedNote}
                   onSelectNote={handleSelectNote}
+                  onKeepNote={keepNote}
                   onDeleteNote={handleDeleteNote}
                   onRequestCreate={requestCreate}
                   onRequestCreateFolder={requestCreateFolder}
@@ -1183,7 +1192,7 @@ export default function App() {
                     <SideNote path={sidePath} content={sideContent} saveState={sidePath === selectedNote ? saveState : sideSave}
                       colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} notes={notes} tags={tags}
                       onChange={(value) => { void changeSideNote(value); }} onOpenNote={handleSelectNote}
-                      onSwap={() => { const main = selectedNote; handleSelectNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
+                      onSwap={() => { const main = selectedNote; keepNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
                       onClose={() => openToSide(null)} />
                   </SplitPanel>
                 </>

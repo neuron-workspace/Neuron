@@ -58,7 +58,8 @@ test('New tab returns to the root without closing the note tab', async ({ page }
   const opened = (await file.getAttribute('data-file'))!;
   await file.dblclick();
   const tabs = page.getByRole('navigation', { name: 'Open notes' });
-  const tab = tabs.locator('button[title="' + opened + '"]');
+  // A preview tab's title adds a hint after the path.
+  const tab = tabs.locator('button[title^="' + opened + '"]');
   await expect(tab).toBeVisible();
   await tabs.getByRole('button', { name: 'New tab', exact: true }).click();
   await expect(page.getByRole('listbox', { name: 'Workspace contents' })).toBeVisible();

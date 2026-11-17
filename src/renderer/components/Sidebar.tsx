@@ -22,6 +22,8 @@ interface SidebarProps {
   notesData?: { path: string; content: string }[];
   selectedNote: string | null;
   onSelectNote: (note: string) => void;
+  /** Open as a tab that stays. A double click's first click has already opened the preview. */
+  onKeepNote?: (note: string) => void;
   onDeleteNote: (note: string) => Promise<boolean>;
   onRequestCreate: (section?: string) => void;
   onRequestCreateFolder: () => void;
@@ -169,7 +171,7 @@ export default function Sidebar(props: SidebarProps) {
     const isConfirming = pendingDelete === file.path;
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
           <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
@@ -191,7 +193,7 @@ export default function Sidebar(props: SidebarProps) {
     const isSelected = selectedNote === appPath && view === 'notes';
     return (
       <div key={node.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => onSelectNote(appPath)}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => onSelectNote(appPath)} onDoubleClick={() => props.onKeepNote?.(appPath)}>
           <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate text-[12px] font-medium">{node.name}</span>
           <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-sans text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
@@ -273,6 +275,7 @@ export default function Sidebar(props: SidebarProps) {
                 <button
                   key={hit.path}
                   onClick={() => onSelectNote(hit.path)}
+                  onDoubleClick={() => props.onKeepNote?.(hit.path)}
                   className={cn(
                     'interactive block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--surface-hover)]',
                     selectedNote === hit.path && 'bg-[var(--surface-hover)]',
