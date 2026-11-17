@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { AppWindow, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon } from 'lucide-react';
+import { AppWindow, ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon } from 'lucide-react';
 import { breadcrumbs, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
 import { nextUntitled } from '../lib/untitled';
+import { NEW_FILE_KINDS, startingContent, type NewFileKind } from '../lib/new-file';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { noteTags } from '../lib/note-tags';
 import { Segmented } from '../components/ui/segmented';
 import MDXPreview from '../components/MDXPreview';
@@ -44,7 +46,7 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
   const [view, setView] = React.useState<'list' | 'grid'>('list');
   const viewChanged = React.useRef(false);
   const [selection, setSelection] = React.useState<{ folder: string; path: string } | null>(null);
-  const [draft, setDraft] = React.useState<{ kind: Item['kind']; name: string } | null>(null);
+  const [draft, setDraft] = React.useState<{ kind: Item['kind']; fileKind: NewFileKind; name: string } | null>(null);
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const committing = React.useRef(false);
@@ -110,7 +112,7 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
     return () => { alive = false; };
   }, []);
   React.useEffect(() => { setDraft(null); setError(''); }, [folder]);
-  React.useEffect(() => { if (draft) { input.current?.focus(); input.current?.select(); } }, [draft?.kind]);
+  React.useEffect(() => { if (draft) { input.current?.focus(); input.current?.select(); } }, [draft?.kind, draft?.fileKind]);
 
   React.useLayoutEffect(() => {
     if (focusListing.current) {
@@ -153,18 +155,20 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
       select(items[next]); optionRefs.current.get(items[next].path)?.scrollIntoView({ block: 'nearest' });
     }
   };
-  const startCreate = (kind: Item['kind']) => {
+  const startCreate = (kind: Item['kind'], fileKind: NewFileKind = 'note') => {
     cancelled.current = false;
-    const path = nextUntitled([...paths, ...folders], folder, kind === 'folder' ? 'Untitled folder' : 'Untitled', kind === 'folder' ? '' : '.md');
+    const ext = kind === 'folder' ? '' : NEW_FILE_KINDS[fileKind].ext;
+    const path = nextUntitled([...paths, ...folders], folder, kind === 'folder' ? 'Untitled folder' : 'Untitled', ext);
     setError('');
-    setDraft({ kind, name: path.slice(path.lastIndexOf('/') + 1).replace(kind === 'file' ? /\.md$/ : /$^/, '') });
+    const leaf = path.slice(path.lastIndexOf('/') + 1);
+    setDraft({ kind, fileKind, name: ext ? leaf.slice(0, -ext.length) : leaf });
   };
   const cancelCreate = () => { cancelled.current = true; focusListing.current = true; setDraft(null); setError(''); };
   const commit = async () => {
     if (!draft || committing.current || cancelled.current) return;
     const name = draft.name.trim();
     if (!name) { cancelCreate(); return; }
-    const filename = name + (draft.kind === 'file' ? '.md' : '');
+    const filename = name + (draft.kind === 'file' ? NEW_FILE_KINDS[draft.fileKind].ext : '');
     let invalid = '';
     if (/[\/\\:*?"<>|]/.test(name)) invalid = 'Names cannot contain / \\ : * ? " < > |.';
     else if (name.startsWith('.')) invalid = 'Names cannot start with a dot.';
@@ -175,13 +179,23 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
     setBusy(true);
     const path = (folder ? folder + '/' : '') + filename;
     try {
-      const ok = draft.kind === 'file' ? await onCreateNote(path, '# ' + name + '\n\n') : await onCreateFolder(path);
+      const ok = draft.kind === 'file' ? await onCreateNote(path, startingContent(draft.fileKind) ?? '# ' + name + '\n\n') : await onCreateFolder(path);
       if (ok) { setDraft(null); setError(''); if (draft.kind === 'folder') { focusCreatedFolder.current = path; setSelection({ folder, path }); } }
       else setError('Could not create this item. Try again.');
     } finally { committing.current = false; setBusy(false); }
   };
   const createButtons = <>
-    <button type="button" className="explorer-action interactive" disabled={busy} onClick={() => startCreate('file')}><FilePlus2 />New file</button>
+    <span className="explorer-split">
+      <button type="button" className="explorer-action interactive" disabled={busy} onClick={() => startCreate('file')}><FilePlus2 />New file</button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label="New file type…" title="New file type…" className="explorer-action explorer-split-chevron interactive" disabled={busy}><ChevronDown aria-hidden="true" /></button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {(['note', 'database', 'canvas'] as const).map(kind => <DropdownMenuItem key={kind} onSelect={() => startCreate('file', kind)}>{NEW_FILE_KINDS[kind].label}</DropdownMenuItem>)}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
     <button type="button" className="explorer-action interactive" disabled={busy} onClick={() => startCreate('folder')}><FolderPlus />New folder</button>
   </>;
   const previewContent = contentByPath.get(preview.path) ?? '';
@@ -207,10 +221,13 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
           <div ref={itemsArea} className={'explorer-items explorer-' + view}>
             {draft && <form className="explorer-draft" style={{ order: draft.kind === 'folder' ? -1 : 1 }} onSubmit={event => { event.preventDefault(); void commit(); }}>
               <label className="sr-only" htmlFor={id + '-name'}>{draft.kind === 'file' ? 'File name' : 'Folder name'}</label>
-              <input ref={input} id={id + '-name'} className="field" value={draft.name} disabled={busy}
-                aria-invalid={!!error} aria-describedby={error ? id + '-error' : undefined}
-                onChange={event => { setDraft({ ...draft, name: event.target.value }); setError(''); }}
-                onBlur={() => void commit()} onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); cancelCreate(); } }} />
+              <div className="explorer-draft-field">
+                <input ref={input} id={id + '-name'} className="field" value={draft.name} disabled={busy}
+                  aria-invalid={!!error} aria-describedby={error ? id + '-error' : undefined}
+                  onChange={event => { setDraft({ ...draft, name: event.target.value }); setError(''); }}
+                  onBlur={() => void commit()} onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); cancelCreate(); } }} />
+                {draft.kind === 'file' && <span aria-hidden="true" className="explorer-draft-ext">{NEW_FILE_KINDS[draft.fileKind].ext}</span>}
+              </div>
               {error && <p id={id + '-error'} role="alert">{error}</p>}
             </form>}
             <div ref={listbox} role="listbox" aria-label={folder ? 'Contents of ' + previewFolderName(folder) : 'Workspace contents'} className="explorer-listbox"

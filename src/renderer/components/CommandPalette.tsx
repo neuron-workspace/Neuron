@@ -1,4 +1,4 @@
-import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, TerminalSquare } from 'lucide-react';
+import { Blocks, Chrome, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, TerminalSquare } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
@@ -47,6 +47,7 @@ interface CommandPaletteProps {
   onOpenSettings: () => void;
   onCreate: () => void;
   onCreateSurface: () => void;
+  onCreateKind: (kind: 'database' | 'canvas') => void;
   onOpenWebsite: () => void;
   onOpenGallery: () => void;
   onToggleShell: () => void;
@@ -58,7 +59,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onCreateKind, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const terminal = useTerminalToggle(layout, onLayoutChange, onOpenMarketplace);
   const close = () => onOpenChange(false);
@@ -71,6 +72,8 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
 
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section<Shortcut chord={bindings['new-note']} /></CommandItem>
+          <CommandItem onSelect={() => { onCreateKind('database'); close(); }}><Database /> New database</CommandItem>
+          <CommandItem onSelect={() => { onCreateKind('canvas'); close(); }}><Frame /> New canvas</CommandItem>
           <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder<Shortcut chord={bindings['new-view']} /></CommandItem>
           <CommandItem onSelect={() => { onToggleShell(); close(); }}><PanelsTopLeft /> {shellActive ? 'Hide workspace layout' : 'Use workspace layout (.neuron/layout.json)'}</CommandItem>
           <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}<Shortcut chord={bindings['toggle-graph']} /></CommandItem>

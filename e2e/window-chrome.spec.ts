@@ -61,6 +61,33 @@ test('tab strip stays 32px on workspace home and when opening a note', async ({ 
   await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
 });
 
+test('the palette shows focus on its search row, not an outline that the dialog clips', async ({ page }) => {
+  await expect(page.locator('.note-row').first()).toBeVisible();
+  await waitForShortcuts(page);
+  await page.keyboard.press(paletteShortcut);
+  const dialog = page.getByRole('dialog');
+  const input = dialog.getByRole('combobox');
+  await expect(input).toBeFocused();
+  // The dialog zooms in as it opens; measure once it has settled.
+  await page.waitForTimeout(500);
+  const state = await dialog.locator('[cmdk-input-wrapper]').evaluate((row) => {
+    const probe = document.createElement('div');
+    probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--accent');
+    document.body.appendChild(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(row);
+    const field = getComputedStyle(row.querySelector('input')!);
+    return { accent, color: style.borderBottomColor, width: style.borderBottomWidth, outline: field.outlineStyle, height: row.getBoundingClientRect().height };
+  });
+  expect(state.color).toBe(state.accent);
+  expect(parseFloat(state.width)).toBeGreaterThan(1);
+  expect(state.outline).toBe('none');
+  // The row is the same height with and without focus.
+  await input.evaluate((node) => (node as HTMLInputElement).blur());
+  expect(state.height).toBe(await dialog.locator('[cmdk-input-wrapper]').evaluate((row) => row.getBoundingClientRect().height));
+});
+
 test('native overlay keeps toolbar actions clear of window controls', async ({ page }) => {
   await expect(page.locator('body')).toHaveClass(new RegExp('platform-' + process.platform));
   const bar = page.locator('.titlebar');

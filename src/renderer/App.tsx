@@ -11,6 +11,7 @@ import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
+import { NEW_FILE_KINDS, startingContent } from './lib/new-file';
 import { closeTab as closeTabIn, EMPTY_TABS, keepTab, openTab, removeMissing, type TabState } from './lib/tabs';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
@@ -680,6 +681,18 @@ export default function App() {
     finally { creatingUntitled.current = false; }
   }, [createNote, createdFolders]);
 
+  // A database or canvas starts with content its surface can open, in the
+  // workspace root like New note, and is kept as a tab by createNote.
+  const requestCreateKind = useCallback(async (kind: 'database' | 'canvas') => {
+    if (creatingUntitled.current) return;
+    creatingUntitled.current = true;
+    try {
+      const paths = await window.electronAPI.listNotes();
+      await createNote(nextUntitled([...paths, ...createdFolders], '', 'Untitled', NEW_FILE_KINDS[kind].ext), startingContent(kind));
+    } catch { setNotice(`Could not create a ${kind}.`); }
+    finally { creatingUntitled.current = false; }
+  }, [createNote, createdFolders]);
+
   const requestCreateFolder = useCallback(async () => {
     if (creatingUntitled.current) return;
     creatingUntitled.current = true;
@@ -1134,6 +1147,7 @@ export default function App() {
                   onDeleteNote={handleDeleteNote}
                   onRequestCreate={requestCreate}
                   onRequestCreateFolder={requestCreateFolder}
+                  onRequestCreateKind={requestCreateKind}
                   onRefresh={loadNotes}
                   view={view}
                   mode={sidebarMode}
@@ -1220,6 +1234,7 @@ export default function App() {
           onOpenSettings={() => openSettings('appearance')}
           onCreate={() => requestCreate()}
           onCreateSurface={createSurfaceFile}
+          onCreateKind={requestCreateKind}
           onOpenWebsite={openWebsite}
           onOpenGallery={() => setView('gallery')}
           onToggleShell={toggleShell}

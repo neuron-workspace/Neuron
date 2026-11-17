@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
+import { AppWindow, GripVertical, ChevronDown, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
 import ActivityRail, { type SettingsTarget, type SidebarMode } from './ActivityRail';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
@@ -27,6 +28,7 @@ interface SidebarProps {
   onDeleteNote: (note: string) => Promise<boolean>;
   onRequestCreate: (section?: string) => void;
   onRequestCreateFolder: () => void;
+  onRequestCreateKind: (kind: 'database' | 'canvas') => void;
   onRefresh: () => Promise<void>;
   view: View;
   mode: SidebarMode;
@@ -246,7 +248,22 @@ export default function Sidebar(props: SidebarProps) {
           <div className="flex h-7 shrink-0 items-center justify-between px-2">
             <span className="text-xs text-[var(--ink-muted)]">Files</span>
             <div className="flex shrink-0 items-center gap-0.5">
-              <ToolbarButton label="New note" onClick={() => onRequestCreate()}><FilePlus2 className="h-3.5 w-3.5" /></ToolbarButton>
+              <div className="flex items-center">
+                <ToolbarButton label="New note" onClick={() => onRequestCreate()}><FilePlus2 className="h-3.5 w-3.5" /></ToolbarButton>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" aria-label="New…" title="New…" className="interactive -ml-0.5 grid h-6 w-4 shrink-0 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)]">
+                      <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => onRequestCreate()}>Note</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => props.onRequestCreateKind('database')}>Database</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => props.onRequestCreateKind('canvas')}>Canvas</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={onRequestCreateFolder}>Folder</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               <ToolbarButton label="New section" onClick={onRequestCreateFolder}><FolderPlus className="h-3.5 w-3.5" /></ToolbarButton>
               <ToolbarButton label="Refresh explorer" busy={refreshing} onClick={() => void refresh()}>
                 <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
