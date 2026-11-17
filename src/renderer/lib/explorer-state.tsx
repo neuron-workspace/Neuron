@@ -30,6 +30,15 @@ export interface ExplorerState {
   repositoryName: string;
   /** Every note path in the workspace. */
   paths: string[];
+  /** Files Neuron does not open. Listed and selectable, never opened. */
+  otherFiles: string[];
+  fileInfo: Record<string, { size: number; modified: number }>;
+  /** Entries the listing could not read. */
+  skipped: number;
+  /** The listing stopped at its limit. */
+  truncated: boolean;
+  /** Show a file in the system file manager. */
+  reveal: (path: string) => void;
   /** '' is the workspace root. */
   folder: string;
   navigate: (folder: string) => void;

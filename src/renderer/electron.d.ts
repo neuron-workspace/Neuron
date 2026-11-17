@@ -1,4 +1,7 @@
 import type { SettingsSection } from '../main/workspace-windows';
+import type { WorkspaceEntries } from '../main/workspace-walk';
+
+export type { WorkspaceEntries };
 
 export interface RepositoryInfo {
   path: string;
@@ -77,6 +80,12 @@ export interface ElectronAPI {
 
   // Notes
   listNotes: () => Promise<string[]>;
+  /** Every file and folder in the workspace, notes or not. */
+  listEntries: () => Promise<WorkspaceEntries>;
+  /** Show a workspace file in the system file manager. Never opens it. */
+  revealInFolder: (relativePath: string) => Promise<{ success: boolean }>;
+  /** A file or folder appeared or went away. */
+  onWorkspaceChanged: (callback: () => void) => () => void;
   readNote: (relativePath: string) => Promise<string>;
   writeNote: (relativePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
   deleteNote: (relativePath: string) => Promise<{ success: boolean; error?: string }>;

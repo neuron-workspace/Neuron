@@ -25,6 +25,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { watchWorkspace } from './workspace-watcher';
+import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import { exec } from 'child_process';
 import * as pty from 'node-pty';
 
@@ -316,6 +317,10 @@ function setupWatcher(entry: AppWindow) {
     if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
       entry.window.webContents.send('notes:changed', event, relativePath);
     }
+    // The renderer asks for the full listing again. Not for edits to notes, or
+    // every save while typing would re-walk the folder. Other files count even
+    // on 'change': the native watcher can report a new file as one.
+    if (event !== 'change' || !WORKSPACE_FILE.test(relativePath)) entry.window.webContents.send('workspace:changed');
   });
 }
 
@@ -677,25 +682,11 @@ function resolveInRepo(event: Sender, relativePath: string): { repo: string; ful
   return { repo, fullPath };
 }
 
+// `.neuron` is walked although other dot-folders are not: `.neuron/layout.json`
+// is the one file in there a person would want to edit by hand, and the watcher
+// already reports it.
 function walkRepoFiles(repo: string): string[] {
-  const files: string[] = [];
-  const scanDir = (dir: string) => {
-    for (const item of fs.readdirSync(dir)) {
-      // Dot-entries are noise -- .git, .obsidian, editor droppings -- with one
-      // exception. `.neuron` is the workspace's own configuration, and
-      // `.neuron/layout.json` is the one file in there a person would want to
-      // edit by hand. The watcher already made this exception; the lister did
-      // not, so the file changed under a watcher that reported it and a list
-      // that had never heard of it.
-      if (item.startsWith('.') && !(dir === repo && item === '.neuron')) continue;
-      const fullPath = path.join(dir, item);
-      const stat = fs.statSync(fullPath);
-      if (stat.isDirectory()) scanDir(fullPath);
-      else files.push(path.relative(repo, fullPath).replace(/\\/g, '/'));
-    }
-  };
-  scanDir(repo);
-  return files;
+  return walkWorkspace(repo).files;
 }
 
 ipcMain.handle('notes:list', async (_event) => {
@@ -707,6 +698,23 @@ ipcMain.handle('notes:list', async (_event) => {
     console.error('Failed to list notes:', err);
   }
   return [];
+});
+
+// Everything in the workspace, for the file tree and the explorer. Separate
+// from notes:list because the renderer reads every listed note into memory.
+ipcMain.handle('workspace:entries', (event): WorkspaceEntries => {
+  const repo = repoOf(event);
+  if (!repo) return { files: [], folders: [], info: {}, skipped: 0, truncated: false };
+  return walkWorkspace(repo, { limit: ENTRY_LIMIT });
+});
+
+// Shows a workspace file in the system file manager. Never opens it: the
+// workspace may be someone else's and hold programs.
+ipcMain.handle('workspace:reveal', (event, relativePath: string) => {
+  const resolved = resolveInRepo(event, relativePath);
+  if (!resolved || !fs.existsSync(resolved.fullPath)) return { success: false };
+  shell.showItemInFolder(resolved.fullPath);
+  return { success: true };
 });
 
 ipcMain.handle('notes:read', async (_event, relativePath: string) => {

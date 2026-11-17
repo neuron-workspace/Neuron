@@ -78,7 +78,9 @@ const isUrl = (s: string | null): s is string => !!s && /^https?:\/\//.test(s);
 
 // The workspace's own config lives in a .neuron folder at the workspace root.
 const SHELL_CONFIG = '.neuron/layout.json';
-import type { RepositoryInfo } from './electron.d';
+const notInConfig = (path: string) => path !== '.neuron' && !path.startsWith('.neuron/');
+const NO_FILES: string[] = [];
+import type { RepositoryInfo, WorkspaceEntries } from './electron.d';
 import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appearance } from './lib/theme';
 
 interface NoteData { path: string; content: string }
@@ -139,6 +141,7 @@ export default function App() {
   const { tabs: openTabs, preview: previewTab, selected: selectedNote } = tabState;
   const [noteContent, setNoteContent] = useState('');
   const [notesData, setNotesData] = useState<NoteData[]>([]);
+  const [entries, setEntries] = useState<WorkspaceEntries | null>(null);
   const [view, setView] = useState<View>('notes');
   const [editorModes, setEditorModes] = useState<Record<string, EditorMode>>({});
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -382,11 +385,16 @@ export default function App() {
   }, [reloadRepoState]);
 
   // --- Notes ----------------------------------------------------------------
+  // Every file and folder, for the tree and the explorer. A failed listing
+  // leaves the previous one: it only adds to what notes already show.
+  const loadEntries = useCallback(() => window.electronAPI.listEntries().catch(() => null), []);
   const loadNotes = useCallback(async () => {
     if (!window.electronAPI) return;
     try {
-      const fileList = await window.electronAPI.listNotes();
+      // Together, so the sidebar's first collapse sees every folder at once.
+      const [fileList, listing] = await Promise.all([window.electronAPI.listNotes(), loadEntries()]);
       setNotes(fileList);
+      if (listing) setEntries(listing);
       setTabState((current) => removeMissing(current, fileList));
       // Configuration is reachable in the explorer but is not knowledge: it is
       // not a graph node, it has no wiki-links, its words are not yours, and it
@@ -403,12 +411,32 @@ export default function App() {
     } catch {
       setNotice('Could not load the workspace.');
     }
-  }, []);
+  }, [loadEntries]);
 
   useEffect(() => {
-    if (!repository) { setNotes([]); setNotesData([]); setTags([]); setTabState((current) => ({ ...current, selected: null })); return; }
+    if (!repository) { setNotes([]); setNotesData([]); setEntries(null); setTags([]); setTabState((current) => ({ ...current, selected: null })); return; }
+    setEntries(null);
     loadNotes();
   }, [repository, loadNotes]);
+
+  // The watcher says only that something appeared or went away; a burst of
+  // those (a folder copied in) becomes one new listing. Coming back to the
+  // window asks too: the watcher never reports a new empty folder, and the
+  // file manager is where one is usually made.
+  useEffect(() => {
+    if (!repository || !window.electronAPI?.onWorkspaceChanged) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const refresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void loadEntries().then((listing) => { if (listing && !cancelled) setEntries(listing); });
+      }, 300);
+    };
+    const unsubscribe = window.electronAPI.onWorkspaceChanged(refresh);
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; clearTimeout(timer); unsubscribe(); window.removeEventListener('focus', refresh); };
+  }, [repository, loadEntries]);
 
   // A preview belongs to the workspace it was opened in. Keyed on the path,
   // because the same workspace re-reported is a new object.
@@ -447,10 +475,10 @@ export default function App() {
   // nothing -- and compare before setting, or this loops forever.
   useEffect(() => {
     setExplorerRecents((current) => {
-      const pruned = pruneRecents(current, explorerPaths);
+      const pruned = pruneRecents(current, explorerAllPaths);
       return pruned.length === current.length ? current : pruned;
     });
-  }, [notes]);
+  }, [notes, entries]);
 
   useEffect(() => {
     if (!repository || !window.electronAPI) { adoptShellConfig(null); openedWorkspace.current = null; return; }
@@ -611,6 +639,26 @@ export default function App() {
     [notes],
   );
 
+  // Files Neuron does not open, and every folder on disk. Shown beside the
+  // notes so a folder of PDFs or images does not look empty, but never read.
+  const otherFiles = useMemo(() => {
+    if (!entries) return [];
+    const known = new Set(notes);
+    return entries.files.filter((path) => !known.has(path));
+  }, [entries, notes]);
+  const treeFolders = useMemo(
+    () => [...new Set([...createdFolders, ...(entries?.folders ?? [])])],
+    [createdFolders, entries],
+  );
+  const explorerOther = useMemo(() => otherFiles.filter(notInConfig), [otherFiles]);
+  const explorerAllPaths = useMemo(() => [...explorerPaths, ...explorerOther], [explorerPaths, explorerOther]);
+  const explorerFolders = useMemo(() => treeFolders.filter(notInConfig), [treeFolders]);
+  const revealFile = useCallback((path: string) => {
+    void window.electronAPI?.revealInFolder(path).then((result) => {
+      if (!result.success) setNotice(`Could not show “${path}” in its folder.`);
+    });
+  }, []);
+
   const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
     try {
@@ -761,11 +809,12 @@ export default function App() {
   }, []);
   const explorerState = useMemo(() => ({
     atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerPaths,
-    folders: createdFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
-    openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder,
+    otherFiles: explorerOther, fileInfo: entries?.info ?? {}, skipped: entries?.skipped ?? 0, truncated: entries?.truncated ?? false,
+    folders: explorerFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
+    openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder, reveal: revealFile,
     editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
-  }), [atHome, repository, explorerPaths, createdFolders, notesData, explorerFolder, navigateExplorer,
-    handleSelectNote, openToSide, createNote, createSectionFolder, editorModes, explorerRecents, clearExplorerRecents]);
+  }), [atHome, repository, explorerPaths, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
+    handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents]);
 
   // A deleted or renamed file, or another workspace, simply has no side pane.
   const sidePath = sideNote && notes.includes(sideNote) ? sideNote : null;
@@ -1028,6 +1077,11 @@ export default function App() {
         <WorkspaceExplorer
           repositoryName={explorerState.repositoryName}
           paths={explorerState.paths}
+          otherFiles={explorerState.otherFiles}
+          fileInfo={explorerState.fileInfo}
+          skipped={explorerState.skipped}
+          truncated={explorerState.truncated}
+          onReveal={explorerState.reveal}
           folder={explorerState.folder}
           onNavigate={explorerState.navigate}
           onOpenFile={explorerState.openFile}
@@ -1152,7 +1206,9 @@ export default function App() {
                   view={view}
                   mode={sidebarMode}
                   repositoryName={repository.name}
-                  folders={createdFolders}
+                  folders={selectedTag ? createdFolders : treeFolders}
+                  otherFiles={selectedTag ? NO_FILES : otherFiles}
+                  onReveal={revealFile}
                   revealedFolder={revealedFolder}
                   tags={tags}
                   onSelectTag={setSelectedTag}

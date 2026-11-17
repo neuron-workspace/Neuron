@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWindow, GripVertical, ChevronDown, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
 import ActivityRail, { type SettingsTarget, type SidebarMode } from './ActivityRail';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
+import OtherFileIcon from './OtherFileIcon';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
@@ -34,6 +36,9 @@ interface SidebarProps {
   mode: SidebarMode;
   repositoryName: string;
   folders: string[];
+  /** Files Neuron does not open: listed, selectable, never opened. */
+  otherFiles: string[];
+  onReveal: (path: string) => void;
   revealedFolder: string | null;
   tags: string[];
   onSelectTag: (tag: string | null) => void;
@@ -44,10 +49,10 @@ interface TreeNode {
   name: string;
   path: string;
   folders: Map<string, TreeNode>;
-  files: { name: string; path: string }[];
+  files: { name: string; path: string; other?: boolean }[];
 }
 
-function buildTree(paths: string[]): TreeNode {
+function buildTree(paths: string[], other: ReadonlySet<string> = new Set()): TreeNode {
   const root: TreeNode = { name: '', path: '', folders: new Map(), files: [] };
   for (const full of paths) {
     const segments = full.split('/');
@@ -61,7 +66,7 @@ function buildTree(paths: string[]): TreeNode {
       }
       node = node.folders.get(segment) as TreeNode;
     }
-    if (fileName) node.files.push({ name: fileName, path: full });
+    if (fileName) node.files.push({ name: fileName, path: full, other: other.has(full) });
   }
   return root;
 }
@@ -70,6 +75,7 @@ function buildTree(paths: string[]): TreeNode {
 // collapse into a single node that opens the folder's index.html entry.
 const isAppFolder = (node: TreeNode): boolean => node.files.some((f) => f.name === 'neuron.app.json');
 const isAppInternal = (name: string): boolean => name === 'neuron.app.json';
+const NONE: string[] = [];
 
 function allFolderPaths(node: TreeNode, out: string[] = []): string[] {
   for (const child of node.folders.values()) {
@@ -129,7 +135,14 @@ export default function Sidebar(props: SidebarProps) {
     [notesData, notes, query],
   );
   const filtered = useMemo(() => (query ? hits.map((hit) => hit.path) : notes), [hits, notes, query]);
-  const tree = useMemo(() => buildTree([...filtered, ...props.folders.map(path => path + '/')]), [filtered, props.folders]);
+  const otherFiles = query ? NONE : props.otherFiles;
+  const tree = useMemo(
+    () => buildTree([...filtered, ...otherFiles, ...props.folders.map(path => path + '/')], new Set(otherFiles)),
+    [filtered, otherFiles, props.folders],
+  );
+  // An other file is selected here only: it has no tab to be the open one.
+  const [selectedOther, setSelectedOther] = useState<string | null>(null);
+  useEffect(() => setSelectedOther(null), [selectedNote]);
 
   useEffect(() => {
     if (collapsedForRepo.current === repositoryName || tree.folders.size === 0) return;
@@ -168,12 +181,32 @@ export default function Sidebar(props: SidebarProps) {
     if (ok) setPendingDelete(null);
   };
 
-  const renderFile = (file: { name: string; path: string }, depth: number) => {
-    const isSelected = selectedNote === file.path && view === 'notes';
+  const renderOther = (file: { name: string; path: string }, depth: number) => {
+    const isSelected = selectedOther === file.path;
+    return (
+      <ContextMenu key={file.path}>
+        <ContextMenuTrigger asChild>
+          <div className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} data-other-file={file.path} style={{ paddingLeft: `${8 + depth * 14}px` }}>
+            <button aria-pressed={isSelected} title={`${file.name} (Neuron does not open this kind of file)`} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left text-[var(--ink-muted)]" onClick={() => { setSelectedOther(file.path); setPendingDelete(null); }}>
+              <OtherFileIcon path={file.path} className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate font-sans text-[12px]">{file.name}</span>
+            </button>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => props.onReveal(file.path)}>Show in folder</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+  };
+
+  const renderFile = (file: { name: string; path: string; other?: boolean }, depth: number) => {
+    if (file.other) return renderOther(file, depth);
+    const isSelected = selectedNote === file.path && view === 'notes' && !selectedOther;
     const isConfirming = pendingDelete === file.path;
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
           <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
           <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
@@ -236,7 +269,7 @@ export default function Sidebar(props: SidebarProps) {
     <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
       {tree.files.filter((f) => !isAppInternal(f.name)).sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
-      {filtered.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
+      {filtered.length === 0 && otherFiles.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
     </div>
   );
 

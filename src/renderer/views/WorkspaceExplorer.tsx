@@ -1,16 +1,33 @@
 import * as React from 'react';
 import { AppWindow, ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon } from 'lucide-react';
-import { breadcrumbs, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
+import { breadcrumbs, describeCounts, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
 import { nextUntitled } from '../lib/untitled';
 import { NEW_FILE_KINDS, startingContent, type NewFileKind } from '../lib/new-file';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { noteTags } from '../lib/note-tags';
 import { Segmented } from '../components/ui/segmented';
 import MDXPreview from '../components/MDXPreview';
+import OtherFileIcon from '../components/OtherFileIcon';
+
+const NONE: string[] = [];
+const formatSize = (bytes: number) => {
+  if (bytes < 1024) return bytes + ' bytes';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ' + units[unit];
+};
 
 interface WorkspaceExplorerProps {
   repositoryName: string;
   paths: string[];
+  /** Files Neuron does not open. Listed and selectable, never opened. */
+  otherFiles?: string[];
+  fileInfo?: Record<string, { size: number; modified: number }>;
+  skipped?: number;
+  truncated?: boolean;
+  onReveal?: (path: string) => void;
   folders: string[];
   notesData: { path: string; content: string }[];
   folder: string;
@@ -23,10 +40,11 @@ interface WorkspaceExplorerProps {
   onClearRecents: () => void;
 }
 
-type Item = { path: string; name: string; kind: 'folder' | 'file'; extension: string };
+type Item = { path: string; name: string; kind: 'folder' | 'file'; extension: string; other?: boolean };
 const isNote = (path: string) => /\.(md|mdx)$/i.test(path);
 const wordCount = (content: string) => content.trim() ? content.trim().split(/\s+/u).length : 0;
 const fileType = (entry: Item, paths: string[]) => {
+  if (entry.other) return 'Other file';
   if (isNote(entry.path)) return 'Note';
   if (entry.extension === 'db') return 'Database';
   if (entry.extension === 'canvas') return 'Canvas';
@@ -36,13 +54,19 @@ const fileType = (entry: Item, paths: string[]) => {
 
 function ItemIcon({ item, type }: { item: Item; type?: string }) {
   if (item.kind === 'folder') return <Folder className="explorer-folder-icon" fill="currentColor" strokeWidth={1.25} />;
+  if (item.other) return <OtherFileIcon path={item.path} strokeWidth={1.5} />;
   const Icon = type === 'App' ? AppWindow : ({ db: Database, canvas: Frame, html: FileCode2, mmd: GitBranch,
     mermaid: GitBranch, png: ImageIcon, jpg: ImageIcon, jpeg: ImageIcon, gif: ImageIcon, svg: ImageIcon, webp: ImageIcon }[item.extension] ?? FileText);
   return <Icon strokeWidth={1.5} />;
 }
 
-export default function WorkspaceExplorer({ repositoryName, paths, folders, notesData, folder,
-  onNavigate, onOpenFile, onOpenToSide, onCreateNote, onCreateFolder, recents, onClearRecents }: WorkspaceExplorerProps) {
+export default function WorkspaceExplorer({ repositoryName, paths: notePaths, otherFiles = NONE, fileInfo, skipped = 0, truncated = false, onReveal,
+  folders, notesData, folder, onNavigate, onOpenFile, onOpenToSide, onCreateNote, onCreateFolder, recents, onClearRecents }: WorkspaceExplorerProps) {
+  const paths = React.useMemo(() => otherFiles.length ? [...notePaths, ...otherFiles] : notePaths, [notePaths, otherFiles]);
+  const others = React.useMemo(() => new Set(otherFiles), [otherFiles]);
+  const toItems = React.useCallback((listing: ReturnType<typeof listFolder>): Item[] => [
+    ...listing.folders.map(entry => ({ ...entry, kind: 'folder' as const, extension: '' })),
+    ...listing.files.map(entry => ({ ...entry, kind: 'file' as const, other: others.has(entry.path) }))], [others]);
   const [view, setView] = React.useState<'list' | 'grid'>('list');
   const viewChanged = React.useRef(false);
   const [selection, setSelection] = React.useState<{ folder: string; path: string } | null>(null);
@@ -59,11 +83,7 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
   const optionRefs = React.useRef(new Map<string, HTMLDivElement>());
   const id = React.useId();
   const trail = breadcrumbs(folder);
-  const items = React.useMemo<Item[]>(() => {
-    const listing = listFolder(paths, folder, folders);
-    return [...listing.folders.map(entry => ({ ...entry, kind: 'folder' as const, extension: '' })),
-      ...listing.files.map(entry => ({ ...entry, kind: 'file' as const }))];
-  }, [paths, folders, folder]);
+  const items = React.useMemo<Item[]>(() => toItems(listFolder(paths, folder, folders)), [paths, folders, folder, toItems]);
   const selected = items.find(item => selection?.folder === folder && selection.path === item.path);
   const preview: Item = selected ?? { path: folder, name: trail.at(-1)?.name ?? repositoryName, kind: 'folder', extension: '' };
   const contentByPath = React.useMemo(() => new Map(notesData.map(note => [note.path, note.content])), [notesData]);
@@ -95,14 +115,12 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
     return result;
   }, [paths, folders, words]);
   const counts = (path: string) => stats.get(path) ?? { notes: 0, folders: 0, other: 0, words: 0 };
-  const detail = (item: Item) => item.kind === 'folder'
-    ? counts(item.path).notes + ' notes, ' + counts(item.path).folders + ' folders' : fileType(item, paths);
-  const children = React.useMemo(() => {
-    if (preview.kind !== 'folder') return [];
-    const listing = listFolder(paths, preview.path, folders);
-    return [...listing.folders.map(entry => ({ ...entry, kind: 'folder' as const, extension: '' })),
-      ...listing.files.map(entry => ({ ...entry, kind: 'file' as const }))];
-  }, [paths, folders, preview.kind, preview.path]);
+  // A grid tile has room for the total only; the list and the preview say what it is made of.
+  const detail = (item: Item) => item.kind === 'folder' ? describeCounts(counts(item.path), view === 'grid') : fileType(item, paths);
+  const children = React.useMemo(
+    () => preview.kind === 'folder' ? toItems(listFolder(paths, preview.path, folders)) : [],
+    [paths, folders, preview.kind, preview.path, toItems],
+  );
 
   React.useEffect(() => {
     let alive = true;
@@ -132,8 +150,9 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
     setSelection(null);
     onNavigate(path);
   };
-  const open = (item: Item) => item.kind === 'folder' ? navigate(item.path) : onOpenFile(item.path);
   const select = (item: Item) => { setSelection({ folder, path: item.path }); optionRefs.current.get(item.path)?.focus(); };
+  // An other file is never opened, here or by the system: selecting is all it does.
+  const open = (item: Item) => item.kind === 'folder' ? navigate(item.path) : item.other ? select(item) : onOpenFile(item.path);
   const onKeyDown = (event: React.KeyboardEvent, item: Item) => {
     const index = items.indexOf(item);
     let next = index;
@@ -201,6 +220,7 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
   const previewContent = contentByPath.get(preview.path) ?? '';
   const tags = React.useMemo(() => isNote(preview.path) ? noteTags(previewContent) : [], [preview.path, previewContent]);
   const previewCounts = counts(preview.path);
+  const previewInfo = preview.other ? fileInfo?.[preview.path] : undefined;
 
   return (
     <section className="workspace-explorer" data-workspace-explorer data-explorer-paths={paths.length}>
@@ -216,6 +236,9 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
           options={[{ value: 'list', label: 'List' }, { value: 'grid', label: 'Grid' }]}
           onChange={next => { viewChanged.current = true; setView(next); void window.electronAPI.settings.set('explorerView', next); }} /></div>
       </header>
+      {(skipped > 0 || truncated) && <p className="explorer-notice" role="status">
+        {[skipped > 0 && 'Some items could not be read.', truncated && 'Showing the first 20,000 items.'].filter(Boolean).join(' ')}
+      </p>}
       <div className="explorer-body">
         <div className="explorer-list-scroll">
           <div ref={itemsArea} className={'explorer-items explorer-' + view}>
@@ -235,7 +258,8 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
               {items.map((item, index) => <div key={item.path} role="option" aria-label={item.name} aria-selected={selected?.path === item.path}
                 ref={node => { if (node) optionRefs.current.set(item.path, node); else optionRefs.current.delete(item.path); }}
                 tabIndex={selected ? (selected.path === item.path ? 0 : -1) : index === 0 ? 0 : -1}
-                data-folder={item.kind === 'folder' ? item.path : undefined} data-file={item.kind === 'file' ? item.path : undefined}
+                data-folder={item.kind === 'folder' ? item.path : undefined} data-file={item.kind === 'file' && !item.other ? item.path : undefined}
+                data-other-file={item.other ? item.path : undefined}
                 className="explorer-item interactive" style={{ order: item.kind === 'folder' ? 0 : 2 }} title={item.name}
                 onClick={() => select(item)} onDoubleClick={() => open(item)} onKeyDown={event => onKeyDown(event, item)}>
                 <ItemIcon item={item} type={fileType(item, paths)} />
@@ -255,12 +279,17 @@ export default function WorkspaceExplorer({ repositoryName, paths, folders, note
         <aside aria-label="Preview" className="explorer-preview">
           <h2>{preview.name}</h2><p className="explorer-preview-path">{preview.path || '/'}</p>
           {preview.kind === 'folder' ? <>
-            <p className="explorer-metadata">{previewCounts.notes} notes, {previewCounts.folders} folders, {previewCounts.other} other files<br />{previewCounts.words} words</p>
+            <p className="explorer-metadata">{describeCounts(previewCounts)}<br />{previewCounts.words} words</p>
             <button className="explorer-action interactive" onClick={() => open(preview)}>Open</button>
             <h3>Contents</h3>
             {children.slice(0, 12).map(child => <div key={child.path} className="explorer-preview-child"><ItemIcon item={child} type={fileType(child, paths)} /><span>{child.name}</span></div>)}
             {children.length > 12 && <p className="explorer-metadata">and {children.length - 12} more</p>}
             {!children.length && <p className="explorer-metadata">This folder is empty.</p>}
+          </> : preview.other ? <>
+            <p className="explorer-metadata">
+              Other file{previewInfo && <>{' · ' + formatSize(previewInfo.size)}<br />Modified {new Date(previewInfo.modified).toLocaleString()}</>}
+            </p>
+            {onReveal && <div className="explorer-tools"><button className="explorer-action interactive" onClick={() => onReveal(preview.path)}>Show in folder</button></div>}
           </> : <>
             <p className="explorer-metadata">{fileType(preview, paths)}{isNote(preview.path) && ' · ' + (words.get(preview.path) ?? 0) + ' words'}</p>
             {tags.length > 0 && <p className="explorer-metadata" aria-label="Tags">{tags.map(tag => '#' + tag).join(' ')}</p>}

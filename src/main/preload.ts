@@ -12,6 +12,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   // Notes
   listNotes: () => ipcRenderer.invoke('notes:list'),
+  listEntries: () => ipcRenderer.invoke('workspace:entries'),
+  revealInFolder: (relativePath: string) => ipcRenderer.invoke('workspace:reveal', relativePath),
+  onWorkspaceChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('workspace:changed', listener);
+    return () => ipcRenderer.removeListener('workspace:changed', listener);
+  },
   readNote: (relativePath: string) => ipcRenderer.invoke('notes:read', relativePath),
   writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),

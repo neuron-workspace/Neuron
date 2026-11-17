@@ -679,6 +679,8 @@ html[data-theme='light'] .neuron-logo {
 .explorer-item > svg { width: 16px; height: 16px; color: var(--ink-muted); }
 .explorer-item svg.explorer-folder-icon, .explorer-preview-child svg.explorer-folder-icon { color: color-mix(in srgb, var(--accent) 70%, var(--ink-muted)); }
 .explorer-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-item[data-other-file] .explorer-item-name { color: var(--ink-muted); }
+.explorer-notice { padding: 6px 12px; border-bottom: 1px solid var(--divider); color: var(--ink-muted); font-size: 12px; }
 .explorer-item-detail, .explorer-word-count, .explorer-metadata { color: var(--ink-muted); font-size: 12px; }
 .explorer-word-count { text-align: right; font-variant-numeric: tabular-nums; }
 .explorer-item-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

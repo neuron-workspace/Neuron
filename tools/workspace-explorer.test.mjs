@@ -20,7 +20,7 @@ await build({
   bundle: true,
 });
 const {
-  listFolder, parentFolder, breadcrumbs, addRecent, pruneRecents, resolveRecents, recentsKey,
+  listFolder, parentFolder, breadcrumbs, addRecent, pruneRecents, resolveRecents, recentsKey, describeCounts,
 } = await import('file://' + file.replace(/\\/g, '/'));
 
 const PATHS = [
@@ -195,6 +195,19 @@ check('stored recents come back newest first and deduplicated', () => {
 check('recents are keyed per workspace', () => {
   assert.notEqual(recentsKey('C:/one'), recentsKey('C:/two'),
     'two workspaces must not share a Recent list');
+});
+
+check('folder counts read as a person would say them', () => {
+  assert.equal(describeCounts({ notes: 2, folders: 1, other: 0 }), '2 notes, 1 folder');
+  assert.equal(describeCounts({ notes: 1, folders: 0, other: 1 }), '1 note, 1 other file');
+  assert.equal(describeCounts({ notes: 0, folders: 3, other: 2 }), '3 folders, 2 other files');
+  assert.equal(describeCounts({ notes: 0, folders: 0, other: 0 }), 'Empty');
+});
+
+check('the short form is the total, for a grid tile', () => {
+  assert.equal(describeCounts({ notes: 1, folders: 0, other: 2 }, true), '3 items');
+  assert.equal(describeCounts({ notes: 0, folders: 1, other: 0 }, true), '1 item');
+  assert.equal(describeCounts({ notes: 0, folders: 0, other: 0 }, true), 'Empty');
 });
 
 rmSync(out, { recursive: true, force: true });

@@ -1,13 +1,10 @@
 // The workspace explorer's data, derived rather than fetched.
 //
-// Everything here is a projection of the flat list of note paths the renderer
-// already holds. There is deliberately no second filesystem enumeration and no
-// second watcher: main owns the filesystem, pushes the list, and a second
-// source would eventually disagree with the first about what is on disk.
-//
-// It also means the explorer inherits main's exclusions for free. It cannot
-// show a file main did not send, so it cannot offer to open configuration the
-// rest of the app hides.
+// Everything here is a projection of the flat lists of paths the renderer
+// already holds (notes, and main's listing of every other file and folder).
+// There is no filesystem access here: main owns the filesystem and sends the
+// lists, so the explorer inherits main's exclusions and cannot show a file
+// main did not send.
 
 /** A child folder of the folder being viewed. */
 export interface FolderEntry {
@@ -99,6 +96,26 @@ export function listFolder(paths: readonly string[], folder: string, knownFolder
       .sort(byName),
     files: files.sort(byName),
   };
+}
+
+export interface FolderCounts { notes: number; folders: number; other: number }
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * What a folder holds, as a person would say it: "2 notes, 1 folder", with
+ * zero parts left out and "Empty" for nothing. `short` gives only the total,
+ * for a grid tile with room for a few words.
+ */
+export function describeCounts(counts: FolderCounts, short = false): string {
+  const total = counts.notes + counts.folders + counts.other;
+  if (total === 0) return 'Empty';
+  if (short) return plural(total, 'item', 'items');
+  return [
+    counts.notes && plural(counts.notes, 'note', 'notes'),
+    counts.folders && plural(counts.folders, 'folder', 'folders'),
+    counts.other && plural(counts.other, 'other file', 'other files'),
+  ].filter(Boolean).join(', ');
 }
 
 /** The trail from the workspace root to `folder`, root first. */
