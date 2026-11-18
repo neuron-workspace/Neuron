@@ -68,9 +68,9 @@ test('double-clicking the tab or "Keep open" in its menu keeps it', async ({ pag
 
   await row(page, 'beta').click();
   await expectTabs(page, ['alpha', 'beta'], 'beta');
-  // From the keyboard: the tab is focusable and Shift+F10 opens its menu.
-  await tab(page, 'beta').focus();
-  await page.keyboard.press('Shift+F10');
+  // Shift+F10 is not a context-menu key on macOS, so open the menu with a
+  // right-click, which works on every platform.
+  await tab(page, 'beta').click({ button: 'right' });
   const keep = page.getByRole('menuitem', { name: 'Keep open' });
   await expect(keep).toBeEnabled();
   await keep.click();

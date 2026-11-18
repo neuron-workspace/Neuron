@@ -57,7 +57,15 @@ test('the full width toggle writes the property and widens the page', async ({ p
   await expect.poll(() => read(workspace, 'pages-width.mdx')).toContain('fullWidth: true');
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-full-width]')).toHaveCount(1);
-  await expect.poll(async () => (await article.boundingBox())!.width).toBeGreaterThan(narrow + 100);
+  // Full width fills the scroll container's content box (its client width minus
+  // horizontal padding), whatever the window size.
+  const container = page.locator('[data-full-width]');
+  const content = () => container.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  });
+  await expect.poll(async () => Math.abs((await article.boundingBox())!.width - (await content()))).toBeLessThan(4);
+  expect((await article.boundingBox())!.width).toBeGreaterThan(narrow);
   expect(read(workspace, 'pages-width.mdx')).toContain('title: Width');
 
   await toggle.click();
