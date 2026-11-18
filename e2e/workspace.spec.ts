@@ -1,5 +1,5 @@
 import { test, expect, openNote } from './fixtures';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // T-012. Coverage for the everyday surfaces the harness did not reach.
@@ -49,21 +49,70 @@ test('frontmatter renders as editable properties', async ({ page, workspace }) =
   await page.getByRole('button', { name: 'Live', exact: true }).first().click();
   const props = page.locator('[aria-label="Document properties"]');
   await expect(props).toBeVisible();
-  // Values live in inputs, not text nodes -- the panel is an editor, not a
-  // read-only summary, which is the thing worth asserting.
-  const values = await props.locator('input').evaluateAll(
-    (els) => els.map((el) => (el as HTMLInputElement).value));
-  expect(values).toContain('Project Atlas');
+  // Text reads as part of the document until its control is activated.
+  await expect(props).toContainText('Project Atlas');
   await expect(props).toContainText('Tags');
+  await props.getByLabel('Title', { exact: true }).click();
   const title = props.getByRole('textbox', { name: 'Title', exact: true });
   await expect(title).toBeEnabled();
   await title.fill('Updated Atlas');
   await title.press('Enter');
+  await expect(props.getByLabel('Title', { exact: true })).toHaveText('Updated Atlas');
   await expect.poll(() => readFileSync(file, 'utf8')).toContain('Updated Atlas');
   expect(readFileSync(file, 'utf8').split(/---\r?\n/).slice(2).join('---\n')).toBe(before.split(/---\r?\n/).slice(2).join('---\n'));
   await props.getByRole('button', { name: 'Properties actions' }).click();
   await page.getByRole('menuitem', { name: 'Edit as YAML' }).click();
   await expect(page.locator('.cm-editor')).toBeVisible();
+});
+
+test('properties wrap at 720px, collapse and keep typed value controls', async ({ page, workspace }) => {
+  const file = join(workspace, 'property-states.mdx');
+  writeFileSync(file, [
+    '---', `description: ${'A long property value that should wrap. '.repeat(12)}`,
+    'tags: [alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa, lambda, mu]',
+    'empty: ""', 'due: 2026-11-18', 'completed: true', 'rating: 1234.5',
+    'url: https://example.com/a/path', '---', '', '# Property states',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  await openNote(page, 'property-states.mdx');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const props = page.getByRole('region', { name: 'Document properties', exact: true });
+  await props.evaluate((element) => { element.style.width = '720px'; element.style.maxWidth = '100%'; });
+  await expect(props).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(props).toHaveCSS('border-top-width', '0px');
+  await expect(props).toHaveCSS('border-bottom-style', 'solid');
+  expect(await props.evaluate((element) => parseFloat(getComputedStyle(element).borderBottomWidth))).toBeGreaterThan(0);
+  expect(await props.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(props.getByLabel('Empty', { exact: true })).toHaveText('Empty');
+  await expect(props.getByRole('link', { name: 'example.com' })).toHaveAttribute('href', 'https://example.com/a/path');
+  await expect(props.getByRole('checkbox', { name: 'Completed', exact: true })).toBeChecked();
+  await expect(props.getByLabel('Rating', { exact: true })).toHaveCSS('font-variant-numeric', 'tabular-nums');
+  await props.getByLabel('Due', { exact: true }).click();
+  await expect(props.locator('input[type="date"]')).toHaveValue('2026-11-18');
+  await props.locator('input[type="date"]').fill('2026-11-19');
+  await props.getByRole('button', { name: /^Properties ·/ }).click();
+  await expect(props.getByRole('button', { name: /^Properties ·/ })).toHaveAttribute('aria-expanded', 'false');
+  await expect(props.getByLabel('Description', { exact: true })).toHaveCount(0);
+  await props.getByRole('button', { name: /^Properties ·/ }).click();
+  await expect(props.getByLabel('Description', { exact: true })).toBeVisible();
+  await expect.poll(() => readFileSync(file, 'utf8')).toContain('2026-11-19');
+  await page.getByRole('button', { name: 'Reading', exact: true }).first().click();
+  await expect(props.getByRole('button', { name: 'Add property', exact: true })).toHaveCount(0);
+  await expect(props.getByRole('link', { name: 'example.com' })).toBeVisible();
+});
+
+test('invalid YAML uses the error callout and retains its source action', async ({ page, workspace }) => {
+  const file = join(workspace, 'properties', 'invalid-yaml.md');
+  const before = readFileSync(file);
+  await openNote(page, 'properties/invalid-yaml.md');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const error = page.getByRole('region', { name: 'Document properties (error)', exact: true });
+  await expect(error).toHaveClass(/callout/);
+  await expect(error).toHaveAttribute('data-callout-kind', 'error');
+  await expect(error).toContainText('the frontmatter YAML is invalid');
+  await error.getByRole('button', { name: 'Edit as YAML', exact: true }).click();
+  await expect(page.locator('.cm-editor')).toBeVisible();
+  expect(readFileSync(file)).toEqual(before);
 });
 
 test('invalid YAML degrades and never rewrites the file', async ({ page, workspace }) => {

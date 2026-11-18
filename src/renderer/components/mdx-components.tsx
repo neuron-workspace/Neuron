@@ -5,19 +5,17 @@ export type SemanticType = CalloutKind;
 
 export const parseSemanticType = calloutKind;
 
+export function parseBadgeType(type?: string): CalloutKind | 'neutral' {
+  return ['neutral', 'default', 'plain'].includes(type?.trim().toLowerCase() ?? '') ? 'neutral' : calloutKind(type);
+}
+
 interface BadgeProps {
-  type?: SemanticType;
+  type?: SemanticType | 'neutral' | 'default' | 'plain';
   text: React.ReactNode;
 }
 
 export function Badge({ type = 'info', text }: BadgeProps) {
-  const styles = {
-    success: 'surface-success text-accent',
-    warning: 'surface-warning text-warning',
-    error: 'surface-danger text-danger',
-    info: 'surface-info text-info',
-  };
-  return <span className={`inline-block rounded font-mono text-xs px-2 py-0.5 border ${styles[type]}`}>{text}</span>;
+  return <span data-badge-kind={parseBadgeType(type)} className="mdx-badge inline-block max-w-full break-words rounded px-1.5 py-0.5 font-sans text-xs font-medium">{text}</span>;
 }
 
 interface CalloutProps {
@@ -93,9 +91,14 @@ export function parseMarkdownTable(lines: string[]): ParsedTable | null {
   return { headers, aligns, rows };
 }
 
+export function numericColumns(rows: string[][], columns: number): boolean[] {
+  return Array.from({ length: columns }, (_, i) => rows.length > 0 && rows.every((row) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(row[i]?.trim() ?? '')));
+}
+
 export function MarkdownTable({ headers, aligns, rows }: ParsedTable) {
   const columns = Math.max(headers.length, aligns.length);
-  const align = (i: number): TableAlign => aligns[i] ?? 'left';
+  const numeric = numericColumns(rows, columns);
+  const align = (i: number): TableAlign => numeric[i] ? 'right' : aligns[i] ?? 'left';
   return (
     <div className="my-4 overflow-x-auto rounded-md border border-[var(--divider)] font-sans">
       <table className="w-full min-w-[24rem] border-collapse text-sm">
@@ -112,7 +115,7 @@ export function MarkdownTable({ headers, aligns, rows }: ParsedTable) {
           {rows.map((row, ri) => (
             <tr key={ri} className="border-b border-[var(--divider)] last:border-b-0">
               {Array.from({ length: columns }, (_, ci) => (
-                <td key={ci} style={{ textAlign: align(ci) }} className="px-3 py-2 align-top text-xs leading-5 text-[var(--md-text)]">
+                <td key={ci} style={{ textAlign: align(ci), fontVariantNumeric: numeric[ci] ? 'tabular-nums' : undefined }} className="px-3 py-2 align-top text-xs leading-5 text-[var(--md-text)]">
                   {row[ci] ?? ''}
                 </td>
               ))}

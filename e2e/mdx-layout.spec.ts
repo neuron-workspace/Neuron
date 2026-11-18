@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, openNote } from './fixtures';
 
 // Layout primitives for MDX notes: Grid, Row, Col, Card, Stat, Divider.
 // The renderer is a line parser, not an MDX compiler, so the thing that can
@@ -25,6 +25,11 @@ test('layout components render, nest, and re-parse their children', async ({ pag
   // A Card nested inside another Card -- the case that breaks if children are
   // parsed once and not recursively.
   await expect(doc.getByText('Questions for Friday', { exact: true }).first()).toBeVisible();
+  const nested = doc.locator('.mdx-card .mdx-card').first();
+  await expect(nested).toHaveCSS('border-top-width', '0px');
+  await expect(nested).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(doc.locator('.mdx-card h3').first()).toHaveCSS('text-transform', 'none');
+  await expect(doc.locator('.mdx-card h3').first()).toHaveCSS('font-weight', '600');
 
   // Children were re-parsed: a task checkbox inside a Card is a real input, and
   // a DbView inside a Card is a real table. Raw text would give neither.
@@ -45,6 +50,38 @@ test('layout components render, nest, and re-parse their children', async ({ pag
   expect(text).not.toContain('<Card');
   expect(text).not.toContain('<Stat');
   expect(text).not.toContain('`');
+});
+
+test('badges, numeric columns, cell spans and flashcard toggling preserve their semantics', async ({ page, workspace }) => {
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  writeFileSync(join(workspace, 'mdx-variants.mdx'), [
+    ...['success', 'info', 'warning', 'error', 'neutral', 'default', 'plain', 'mystery'].map((type) => `<Badge type="${type}" text="${type}" />`), '',
+    '<Grid cols="3">', '<Cell cols="2">', 'Spanning cell', '</Cell>', '<Cell>', 'Other cell', '</Cell>', '</Grid>', '',
+    '| Name | Count | Mixed |', '| --- | --- | --- |', '| Ada | -1.5 | 3 |', '| Lin | +12 | pending |', '',
+    '<Flashcard front="A question">', 'A hidden answer.', '</Flashcard>', '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  await openNote(page, 'mdx-variants.mdx');
+  const badges = page.locator('[data-badge-kind]');
+  await expect(badges).toHaveCount(8);
+  for (const [i, kind] of ['success', 'info', 'warning', 'error', 'neutral', 'neutral', 'neutral', 'info'].entries()) {
+    await expect(badges.nth(i)).toHaveAttribute('data-badge-kind', kind);
+  }
+  await expect(page.locator('.preview-prose th').nth(1)).toHaveCSS('text-align', 'right');
+  await expect(page.locator('.preview-prose td').nth(1)).toHaveCSS('font-variant-numeric', 'tabular-nums');
+  await expect(page.locator('.preview-prose th').nth(2)).toHaveCSS('text-align', 'left');
+  await expect(page.locator('.col-span-2')).toHaveCSS('grid-column-end', 'span 2');
+  await expect(page.locator('.col-span-2').locator('..')).toHaveCSS('display', 'contents');
+  for (const mode of ['Reading', 'Live']) {
+    await page.getByRole('button', { name: mode, exact: true }).first().click();
+    await expect(page.getByText('A hidden answer.', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show answer', exact: true }).click();
+    await expect(page.getByText('A hidden answer.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Hide answer', exact: true })).toHaveAttribute('aria-expanded', 'true');
+    await page.getByRole('button', { name: 'Hide answer', exact: true }).click();
+    await expect(page.getByText('A hidden answer.', { exact: true })).toHaveCount(0);
+  }
 });
 
 test('each callout kind renders with its own kind and an icon', async ({ page, workspace }) => {
@@ -75,6 +112,41 @@ test('each callout kind renders with its own kind and an icon', async ({ page, w
   // Without a title the kind is the box's only name.
   await expect(page.getByRole('note', { name: 'Info', exact: true })).toBeVisible();
   await expect(callouts.nth(0)).not.toHaveAttribute('aria-label', /./);
+});
+
+test('nested prose preserves source paragraph gaps and an even callout background', async ({ page, workspace }) => {
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const prose = ['First source line.', 'Second source line.', '', 'Separate paragraph.'];
+  writeFileSync(join(workspace, 'nested-rhythm.mdx'), [
+    ...prose, '', '<Callout title="Nested rhythm">', ...prose, '</Callout>', '',
+    '<Card title="Nested rhythm">', ...prose, '</Card>', '',
+    '<Flashcard front="Nested rhythm">', ...prose, '</Flashcard>', '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  for (const preset of ['light', 'graphite']) {
+    await page.evaluate((preset) => (window as any).electronAPI.settings.set('appearance', { preset, markdownOverrides: {} }), preset);
+    await page.reload();
+    await openNote(page, 'nested-rhythm.mdx');
+    for (const mode of ['Reading', 'Live']) {
+      await page.getByRole('button', { name: mode, exact: true }).first().click();
+      await page.getByRole('button', { name: 'Show answer', exact: true }).click();
+      const topGap = await page.locator('.preview-prose > [data-gap] + p').first().evaluate((p) => getComputedStyle(p).marginTop);
+      for (const container of ['.callout-body', '.mdx-card', '.mdx-flashcard-answer']) {
+        const paragraphs = page.locator(`${container} > p`);
+        await expect(paragraphs).toHaveCount(3);
+        await expect(paragraphs.nth(1)).toHaveCSS('margin-top', '0px');
+        await expect(paragraphs.nth(0)).toHaveCSS('margin-bottom', '0px');
+        await expect(page.locator(`${container} > [data-gap] + p`)).toHaveCount(1);
+        await expect(paragraphs.nth(2)).toHaveCSS('margin-top', topGap);
+        expect(parseFloat(topGap)).toBeGreaterThan(0);
+      }
+      const first = page.locator('.callout-body > p').first();
+      await first.hover();
+      await expect(first).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await page.getByRole('button', { name: 'Hide answer', exact: true }).click();
+    }
+  }
 });
 
 test('an unknown attribute value falls back instead of reaching the DOM', async ({ page, workspace }) => {

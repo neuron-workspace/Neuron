@@ -1131,7 +1131,7 @@ export default function App() {
 
   let mainContent: React.ReactNode;
   if (view === 'gallery') {
-    mainContent = <ComponentGallery />;
+    mainContent = <ComponentGallery colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />;
   } else if (layoutShell && !Surface && !browsing) {
     // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
     // browser tabs are full-page documents, so let them fall through to notesView.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Database } from 'lucide-react';
+import { Checkbox } from './ui/checkbox';
 import { boardColumns, MAX_CARDS, parseDb, resolveView, visibleRows, type DbFile, type DbProperty, type DbViewMode } from '../lib/db';
 import { BoardColumnHeader, CardLimitNote, Chip, DbCard } from './db/DbCards';
 
@@ -21,7 +22,7 @@ function normalizeMode(value: string | undefined): DbViewMode | null {
 
 function cellNodes(prop: DbProperty, value: unknown): React.ReactNode {
   if (value === undefined || value === null || value === '') return <span className="text-[var(--ink-muted)]">—</span>;
-  if (prop.type === 'checkbox') return value ? '✓' : <span className="text-[var(--ink-muted)]">—</span>;
+  if (prop.type === 'checkbox') return <Checkbox className="shadow-none" checked={!!value} disabled aria-label={prop.name} />;
   if (prop.type === 'url' && typeof value === 'string') {
     return /^https?:\/\//.test(value)
       ? <a href={value} target="_blank" rel="noreferrer" className="text-[var(--md-link)] underline underline-offset-2">{value}</a>
@@ -97,7 +98,7 @@ export default function DbView({ path, view, table }: DbViewProps) {
 
   const header = (
     <div className="mb-2 flex items-center gap-1.5 font-sans text-xs font-medium text-[var(--ink-muted)]">
-      <Database className="h-3.5 w-3.5 text-[var(--accent-strong)]" /> {title}
+      <Database className="h-3.5 w-3.5" /> {title}
       <span className="ml-auto">{rows.length === doc.rows.length ? `${rows.length} rows` : `${rows.length} / ${doc.rows.length} rows`}</span>
     </div>
   );
@@ -125,7 +126,7 @@ export default function DbView({ path, view, table }: DbViewProps) {
     return (
       <div className="my-4 font-sans" data-db-embed-mode="gallery">
         {header}
-        <div className="grid items-start gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+        <div className="grid items-start gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(220px, 100%), 1fr))' }}>
           {shown.map((row) => <DbCard key={row.id} table={doc} row={row} view={resolved} variant="gallery" />)}
         </div>
         <CardLimitNote total={rows.length} />

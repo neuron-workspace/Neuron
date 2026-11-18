@@ -4,7 +4,10 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Callout } from '@/components/mdx-components';
+import { Callout, MarkdownTable } from '@/components/mdx-components';
+import MDXPreview from '@/components/MDXPreview';
+import DocumentProperties from '@/components/properties/DocumentProperties';
+import { Run } from '@/components/RunButton';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,7 +42,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <section className="space-y-3">
       <h2 className="text-xs font-semibold text-[var(--ink-secondary)]">{title}</h2>
-      <div className="flex flex-wrap items-start gap-3 rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-4">{children}</div>
+      <div className="flex flex-wrap items-start gap-3">{children}</div>
     </section>
   );
 }
@@ -50,9 +53,82 @@ const FRUITS = [
   { value: 'cherry', label: 'Cherry' },
 ];
 
-export default function ComponentGallery() {
+const PROPERTY_EXAMPLES = [
+  { name: 'No properties (Live)', doc: '# A new note' },
+  { name: 'No properties (Reading)', readOnly: true, doc: '# A new note' },
+  { name: 'One property', doc: '---\nstatus: Draft\n---\n' },
+  { name: 'Every type, long values and empty values', doc: [
+    '---', 'title: A note with every property type',
+    `description: ${'A long value wraps within the document, leaving its label easy to scan. '.repeat(5)}`,
+    'summary: |', '  First line of a multiline value.', '  Second line stays on its own line.',
+    'tags: [design, writing, reference, keyboard, accessibility, research, review, documentation, long-tag-without-spaces-that-must-wrap-within-the-value-column]',
+    'aliases: [Alternate title, Another name]', 'people: [Ada, Lin]', 'due: 2026-11-18',
+    'created: 2026-11-18T09:30:00Z', 'completed: true', 'archived: false', 'rating: 1234.5',
+    'url: https://example.com/a/long/path', 'related: "[[Gallery note]]"', 'empty: ""', 'empty_list: []',
+    'metadata: {owner: Ada, reviewed: true}', '---', '', '# Note body',
+  ].join('\n') },
+  { name: 'Reading', readOnly: true, doc: '---\ntitle: A read-only note\ntags: [reference, design]\ndue: 2026-11-18\nempty: ""\n---\n' },
+  { name: 'Collapsed', collapsed: true, doc: '---\ntitle: Collapsed note\ntags: [reference]\n---\n' },
+  { name: 'Invalid YAML', doc: '---\ntitle: "unterminated\ntags: [a, b\n---\n' },
+];
+
+function PropertyExample({ name, doc: initialDoc, readOnly, collapsed }: typeof PROPERTY_EXAMPLES[number]) {
+  const [doc, setDoc] = React.useState(initialDoc);
+  const [raw, setRaw] = React.useState(false);
+  return (
+    <div className="space-y-2">
+      <h3 className="text-[13px] font-medium text-[var(--ink-secondary)]">{name}</h3>
+      <DocumentProperties doc={doc} onChangeDoc={readOnly ? undefined : setDoc} defaultCollapsed={collapsed} onViewRaw={() => setRaw(true)} />
+      {raw && <div className="space-y-2">
+        <Textarea aria-label={`YAML for ${name}`} value={doc} onChange={(event) => setDoc(event.target.value)} className="min-h-32 font-mono" />
+        <Button variant="secondary" size="sm" onClick={() => setRaw(false)}>Done editing YAML</Button>
+      </div>}
+      <p className="pt-2 text-sm text-[var(--ink-secondary)]">The note continues here.</p>
+    </div>
+  );
+}
+
+const MDX_EXAMPLES = [
+  '---', 'fullWidth: true', '---', '# Rendered MDX', '',
+  '## Badges', '',
+  ...['success', 'info', 'warning', 'error', 'neutral', 'default', 'plain'].map((type) => `<Badge type="${type}" text="${type}" />`), '',
+  '## Layout and tones', '', '<Grid gap="sm">',
+  ...['plain', 'surface', 'accent', 'positive', 'danger'].flatMap((tone) => [
+    `<Card title="${tone.charAt(0).toUpperCase() + tone.slice(1)} card" tone="${tone}">`,
+    'Card content keeps a neutral surface.', '</Card>',
+    `<Stat label="${tone.charAt(0).toUpperCase() + tone.slice(1)} metric" value="1,234" tone="${tone}" />`,
+  ]), '</Grid>', '',
+  '<Card title="Outer card">', '<Row gap="md">', '<Col gap="sm">',
+  '<Card title="Nested card" tone="positive">', 'This card is flattened.', '</Card>', '</Col>',
+  '<Col gap="sm">', 'A second column wraps with the row.', '</Col>', '</Row>', '</Card>', '',
+  '<Grid cols="3" gap="sm">', '<Cell cols="2">', 'A cell spans two columns.', '</Cell>',
+  '<Cell cols="1">', 'One column.', '</Cell>', '</Grid>', '',
+  '<Divider label="Study and commands" />',
+  '<Flashcard front="Where are note properties stored?">', 'In **YAML frontmatter**, inside the note.', '</Flashcard>',
+  '<Flashcard front="An empty answer" />', '',
+  '<Run label="Print working directory" cmd="pwd" />',
+  '<Run label="Accent tone" cmd="pwd" tone="accent" />',
+  '<Run />', '',
+  '## Reading rhythm', '',
+  'Inline `code` and [[Gallery note]] sit alongside a [[Missing note]].', '',
+  '> A quote keeps the reading rhythm without a coloured stripe or a card.', '',
+  '- [ ] An incomplete task', '- [x] A completed task', '',
+  '```typescript', 'const greeting = "Hello, Neuron";', 'console.log(greeting);', '```', '',
+  '| Name | Count | Change | Mixed |', '| --- | --- | --- | --- |',
+  '| Ada | 12 | -1.5 | 7 |', '| Lin | 1234 | +2.5 | pending |', '',
+  '## Diagrams', '', '```mermaid', 'flowchart LR', '  Draft --> Review --> Published', '```', '',
+  '## Database embeds', '',
+  'These live examples use Planner.db from the demo workspace. Other workspaces show the missing-file state.', '',
+  '<DbView path="@Planner.db" table="tasks" view="table" />',
+  '<DbView path="@Planner.db" table="tasks" view="board" />',
+  '<DbView path="@Planner.db" table="projects" view="gallery" />',
+  '<DbView path="@missing-gallery-example.db" />', '',
+].join('\n');
+
+export default function ComponentGallery({ colorScheme = 'dark' }: { colorScheme?: 'light' | 'dark' }) {
   const [combo, setCombo] = React.useState('');
   const [date, setDate] = React.useState<Date | undefined>(new Date());
+  const [narrow, setNarrow] = React.useState(false);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -60,8 +136,32 @@ export default function ComponentGallery() {
       <div className="mx-auto w-full max-w-5xl space-y-8 px-7 pb-16 pt-7">
         <header>
           <h1 className="text-base font-semibold text-[var(--ink)]">Component gallery</h1>
-          <p className="mt-1 text-sm text-[var(--ink-secondary)]">shadcn/ui components, themed to the workspace palette.</p>
+          <p className="mt-1 text-sm text-[var(--ink-secondary)]">App controls and rendered notes, themed to the workspace palette.</p>
         </header>
+
+        <section aria-label="Rendered note gallery" className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-sm font-semibold text-[var(--ink)]">Document properties and MDX</h2>
+            <Toggle pressed={narrow} onPressedChange={setNarrow} aria-label="Use 720px content width">720px content</Toggle>
+            <span className="text-xs text-[var(--ink-muted)]">Switch the app theme to review light and dark.</span>
+          </div>
+          <div className={`mx-auto w-full space-y-8 ${narrow ? 'max-w-[720px]' : ''}`}>
+            {PROPERTY_EXAMPLES.map((example) => <PropertyExample key={example.name} {...example} />)}
+            <div className="[&>div]:h-auto [&>div]:overflow-visible [&>div]:p-0">
+              <MDXPreview mdxContent={MDX_EXAMPLES} colorScheme={colorScheme} showProperties={false} notes={['Gallery note.md']} onWikiLinkClick={() => toast('Gallery link opened')} />
+            </div>
+            <div>
+              <h3 className="text-[13px] font-medium text-[var(--ink-secondary)]">Refused multiline command</h3>
+              <Run cmd={'first\nsecond'} />
+            </div>
+            <div>
+              <h3 className="text-[13px] font-medium text-[var(--ink-secondary)]">Standalone MarkdownTable</h3>
+              <MarkdownTable headers={['Name', 'Count', 'Mixed']} aligns={['left', 'left', 'left']} rows={[
+                ['Ada', '12', '7'], ['Lin', '1234', 'pending'],
+              ]} />
+            </div>
+          </div>
+        </section>
 
         <Section title="Buttons">
           <Button>Default</Button>

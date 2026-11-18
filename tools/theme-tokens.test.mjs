@@ -48,5 +48,11 @@ for (const id of ['light', 'graphite']) {
       assert.ok(contrast(t[ink], background) >= 4.5, id + ': ' + ink + ' on the ' + kind + ' callout tint');
     }
   }
+  for (const kind of ['--positive', '--info', '--warning', '--danger', '--ink-muted']) {
+    const badgeRule = /\n\.mdx-badge \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const foreground = Number(/color: color-mix\(in srgb, var\(--callout-color\) (\d+)%, var\(--ink\)\)/.exec(badgeRule)?.[1]);
+    assert.ok(foreground > 0, 'badge foreground mix found in index.css');
+    assert.ok(contrast(mix(t[kind], t['--ink'], foreground), mix(t[kind], t['--canvas'], tint)) >= 4.5, id + ': ' + kind + ' badge text on its tint');
+  }
 }
 console.log('theme tokens: AA contrast, callout tints, CSS defaults and saved presets pass');

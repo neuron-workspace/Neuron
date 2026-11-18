@@ -81,7 +81,7 @@
     "test:theme-tokens": "node tools/theme-tokens.test.mjs",
     "test:untitled": "node tools/untitled.test.mjs",
     "test:tabs": "node tools/tabs.test.mjs",
-    "test:callout-kind": "node tools/callout-kind.test.mjs",
+    "test:callout-kind": "node tools/callout-kind.test.mjs && node tools/mdx-components.test.mjs",
     "test:workspace-windows": "node tools/workspace-windows.test.mjs",
     "test:connectors": "node tools/connectors.test.mjs"
   },

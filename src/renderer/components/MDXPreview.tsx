@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react';
 import { AlertCircle, ArrowUpRight, Link2, FileWarning } from 'lucide-react';
-import { Badge, Callout, parseSemanticType } from './mdx-components';
+import { Badge, Callout, numericColumns, parseBadgeType, parseSemanticType } from './mdx-components';
 import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
 import DbView from './DbView';
@@ -235,7 +235,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           <div
             key={`mermaid-${i}`}
             onClick={() => lineClick(startLine)}
-            className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--ink-muted)] transition-colors duration-150"
           >
             <MermaidDiagram source={codeText} colorScheme={colorScheme} />
           </div>
@@ -266,6 +266,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           i++;
         }
         const columnCount = Math.max(headers.length, tableAlignments.length);
+        const numeric = numericColumns(rows, columnCount);
         nodes.push(block(
           <div
             key={`table-${i}`}
@@ -282,7 +283,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                     <th
                       key={columnIndex}
                       scope="col"
-                      style={{ textAlign: tableAlignments[columnIndex] ?? 'left' }}
+                      style={{ textAlign: numeric[columnIndex] ? 'right' : tableAlignments[columnIndex] ?? 'left' }}
                       className="border-b border-[var(--divider)] px-3 py-2 text-xs font-semibold"
                     >
                       {canEdit
@@ -298,7 +299,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                     {Array.from({ length: columnCount }, (_, columnIndex) => (
                       <td
                         key={columnIndex}
-                        style={{ textAlign: tableAlignments[columnIndex] ?? 'left' }}
+                        style={{ textAlign: numeric[columnIndex] ? 'right' : tableAlignments[columnIndex] ?? 'left', fontVariantNumeric: numeric[columnIndex] ? 'tabular-nums' : undefined }}
                         className="px-3 py-2 align-top text-xs leading-5"
                       >
                         {canEdit
@@ -440,7 +441,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       if (jsxStr.startsWith('<Badge')) {
         const textMatch = jsxStr.match(/text="([^"]+)"/);
         const typeMatch = jsxStr.match(/type="([^"]+)"/);
-        const type = parseSemanticType(typeMatch?.[1]);
+        const type = parseBadgeType(typeMatch?.[1]);
         return <Badge key={`badge-${index}`} text={textMatch ? attr('text', textMatch[1]) : 'badge'} type={type} />;
       }
 
@@ -506,7 +507,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           if (tag !== 'Run' && attrs[name] !== undefined) props[name] = attr(name, attrs[name]);
         }
         if (tag === 'Flashcard' && attrs.front !== undefined) props.frontNode = attr('front', attrs.front);
-        return <div key={`${tag}-${index}`}>{layout[tag](props, kids)}</div>;
+        return <div key={`${tag}-${index}`} className={tag === 'Cell' ? 'contents' : 'min-w-0 max-w-full'}>{layout[tag](props, kids)}</div>;
       }
 
       // 3. Match DbView — embeds a .db database (table/board/card) by @path.
@@ -637,7 +638,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           data-live-text={canEdit || undefined}
           key={index}
           onClick={() => lineClick(index)}
-          className="my-4 rounded-md border border-[var(--md-quote-border)] bg-[var(--surface)] px-4 py-3 font-sans text-sm italic text-[var(--md-quote)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            className="my-4 font-sans text-[var(--md-quote)] cursor-pointer"
         >
           {parseInlineFormatting(text.slice(2))}
         </blockquote>

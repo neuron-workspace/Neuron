@@ -6,24 +6,26 @@ import { MAX_CARDS, type BoardColumn, type DbOption, type DbProperty, type DbRow
 // Presentational pieces shared by the database editor (DbSurface) and the
 // read-only embed (DbView), so a card looks the same in both places.
 
+export const CHIP_CLASS = 'max-w-full break-words rounded px-1.5 py-0.5 text-xs font-medium';
+
 export function Chip({ option }: { option: DbOption }) {
   return (
-    <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: `${option.color}2e`, color: option.color }}>
+    <span className={CHIP_CLASS} style={{ background: `${option.color}2e`, color: option.color }}>
       {option.name || '…'}
     </span>
   );
 }
 
-function formatDate(value: string): string {
+export function formatDate(value: string): string {
   // A bare YYYY-MM-DD is a calendar day; new Date(value) would read it as UTC
   // midnight and show the previous day west of Greenwich.
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return value;
   const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function hostOf(value: string): string {
+export function hostOf(value: string): string {
   try { return new URL(value).hostname || value; } catch { return value; }
 }
 
