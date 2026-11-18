@@ -248,10 +248,13 @@ test('Settings opened from a window with no workspace still opens, with no opene
   expect(await api(settings, 'api.windowControls.openerWorkspace()')).toBeNull();
 });
 
-test('a window with no workspace shows the welcome page with exactly two choices', async ({ page }) => {
-  await page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.remove(dir),
-    (await api(page, 'api.repository.getCurrent()') as { path: string }).path);
-  await page.reload();
+test('removing the current workspace from Settings shows welcome without reloading', async ({ app, page, workspace }) => {
+  const settings = await openSettings(app, page, 'workspaces');
+  const row = settings.locator('[data-workspace-row]').filter({ hasText: workspace });
+  await row.getByRole('button', { name: /More actions for/ }).click();
+  await settings.getByRole('menuitem', { name: 'Remove from list' }).click();
+  await row.getByRole('button', { name: 'Remove', exact: true }).click();
+  expect(await api(page, 'api.repository.getCurrent()')).toBeNull();
   await expect(page.getByRole('heading', { name: 'Welcome to Neuron', level: 1 })).toBeVisible();
   const main = page.getByRole('heading', { name: 'Welcome to Neuron' }).locator('..');
   await expect(main.getByRole('button')).toHaveCount(2);

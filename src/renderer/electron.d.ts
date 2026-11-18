@@ -107,7 +107,7 @@ export interface ElectronAPI {
     setName: (dir: string, name: string) => Promise<{ success: boolean; repository: RepositoryInfo }>;
     remove: (dir: string) => Promise<{ success: boolean; clearedActive: boolean }>;
     reveal: (dir: string) => Promise<{ success: boolean }>;
-    onChanged: (callback: (repo: RepositoryInfo) => void) => () => void;
+    onChanged: (callback: (repo: RepositoryInfo | null) => void) => () => void;
   };
 
   templates: {

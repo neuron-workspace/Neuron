@@ -385,7 +385,10 @@ export default function App() {
   useEffect(() => {
     if (!window.electronAPI) { setRepoReady(true); return; }
     (async () => { await reloadRepoState(); setRepoReady(true); })();
-    return window.electronAPI.repository.onChanged(() => { void reloadRepoState(); });
+    return window.electronAPI.repository.onChanged((repo) => {
+      setRepository(repo);
+      void window.electronAPI.repository.listRecent().then(setRecents);
+    });
   }, [reloadRepoState]);
   const createRepository = useCallback(async () => {
     // The folder may open in its own window, so ask what this window shows now.

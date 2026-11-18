@@ -49,8 +49,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setName: (dir: string, name: string) => ipcRenderer.invoke('repository:set-name', dir, name),
     remove: (dir: string) => ipcRenderer.invoke('repository:remove', dir),
     reveal: (dir: string) => ipcRenderer.invoke('repository:reveal', dir),
-    onChanged: (callback: (repo: RepositoryInfo) => void) => {
-      const listener = (_event: unknown, repo: RepositoryInfo) => callback(repo);
+    onChanged: (callback: (repo: RepositoryInfo | null) => void) => {
+      const listener = (_event: unknown, repo: RepositoryInfo | null) => callback(repo);
       ipcRenderer.on('repository:changed', listener);
       return () => ipcRenderer.removeListener('repository:changed', listener);
     },

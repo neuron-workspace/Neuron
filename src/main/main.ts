@@ -263,7 +263,7 @@ function bindRepo(entry: AppWindow, dir: string | null): void {
   disposeWindowPtys(entry.window.webContents.id);
   entry.repo = dir;
   setupWatcher(entry);
-  if (dir && !entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', repoInfo(dir));
+  if (!entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', dir ? repoInfo(dir) : null);
 }
 
 /**
@@ -654,15 +654,18 @@ ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
 
 ipcMain.handle('repository:remove', (event, dir: string) => {
   const settings = readSettings();
-  settings.repositories.recent = settings.repositories.recent.filter((p) => p !== dir);
-  if (settings.repositories.names) delete settings.repositories.names[dir];
-  if (settings.repositories.current === dir) settings.repositories.current = null;
+  const key = folderKey(dir);
+  settings.repositories.recent = settings.repositories.recent.filter((p) => folderKey(p) !== key);
+  for (const named of Object.keys(settings.repositories.names ?? {})) {
+    if (folderKey(named) === key) delete settings.repositories.names![named];
+  }
+  if (settings.repositories.current && folderKey(settings.repositories.current) === key) settings.repositories.current = null;
   writeSettings(settings);
-  // Forgetting a workspace closes it in the window that asked. Another window
-  // showing it keeps working: its files are still there.
   const entry = entryOf(event);
-  const wasActive = !!entry && entry.repo === dir;
-  if (entry && wasActive) bindRepo(entry, null);
+  const wasActive = !!entry?.repo && folderKey(entry.repo) === key;
+  for (const workspace of appWindows.values()) {
+    if (workspace.kind === 'workspace' && workspace.repo && folderKey(workspace.repo) === key) bindRepo(workspace, null);
+  }
   return { success: true, clearedActive: wasActive };
 });
 
