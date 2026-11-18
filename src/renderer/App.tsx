@@ -527,6 +527,7 @@ export default function App() {
     if (!window.electronAPI?.onNotesChanged) return;
     let cancelled = false;
     const versions = new Map<string, number>();
+    let shellConfigTimer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = window.electronAPI.onNotesChanged((event, path) => {
       const version = (versions.get(path) ?? 0) + 1;
       versions.set(path, version);
@@ -559,16 +560,24 @@ export default function App() {
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
-      void window.electronAPI?.readNote(SHELL_CONFIG).then((content) => {
-        if (content.startsWith('Error:')) {
-          adoptShellConfig(null);
-          setPendingShellConfig(null);
-          return;
-        }
-        offerShellConfig(content);
-      });
+      // A save can arrive as several events (truncate, then the content), and
+      // the first read may land between them. Read once the file has been quiet,
+      // and treat an empty file as a write in progress rather than a change.
+      clearTimeout(shellConfigTimer);
+      shellConfigTimer = setTimeout(() => {
+        void window.electronAPI?.readNote(SHELL_CONFIG).then((content) => {
+          if (cancelled) return;
+          if (content.startsWith('Error:')) {
+            adoptShellConfig(null);
+            setPendingShellConfig(null);
+            return;
+          }
+          if (content.trim() === '') return;
+          offerShellConfig(content);
+        });
+      }, 250);
     });
-    return () => { cancelled = true; unsubscribe(); };
+    return () => { cancelled = true; clearTimeout(shellConfigTimer); unsubscribe(); };
   }, [repository, adoptShellConfig, offerShellConfig]);
 
   useEffect(() => {

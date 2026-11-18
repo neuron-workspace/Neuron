@@ -90,7 +90,8 @@ test('Plugins opens Workspace settings in this window, and the notes and graph s
   await expect(dialog.getByRole('heading', { name: 'Plugins' })).toBeVisible();
   // No Settings window: plugins are this workspace's business.
   expect(app.windows()).toHaveLength(1);
-  await page.keyboard.press('Escape');
+  // The dialog's Close button, not Escape: Escape does not reach it under xvfb on the Linux runner.
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.locator('.note-row').first()).toBeVisible();
 
