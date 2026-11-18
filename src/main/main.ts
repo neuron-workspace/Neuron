@@ -746,7 +746,26 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
     // Atomic write: a crash mid-write must never leave a half-written note or database.
     const tmp = `${resolved.fullPath}.tmp`;
     fs.writeFileSync(tmp, content, 'utf-8');
-    fs.renameSync(tmp, resolved.fullPath);
+    // On Windows a rename over a file another process holds open (the file
+    // watcher, an indexer, antivirus) fails with EPERM/EBUSY/EACCES for a few
+    // milliseconds. Retry briefly instead of dropping the user's edit.
+    for (let attempt = 0; ; attempt++) {
+      try { fs.renameSync(tmp, resolved.fullPath); break; }
+      catch (renameError) {
+        const code = (renameError as NodeJS.ErrnoException).code;
+        if (!['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) {
+          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+          throw renameError;
+        }
+        if (attempt >= 5) {
+          // Still held open: write in place rather than lose the edit.
+          fs.writeFileSync(resolved.fullPath, content, 'utf-8');
+          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+          break;
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * (attempt + 1));
+      }
+    }
     return { success: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
