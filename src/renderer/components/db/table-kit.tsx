@@ -180,7 +180,8 @@ export function SelectCell({ options, selected, fallback, onPick, onClear, onEdi
   fallback?: string;
   onPick: (option: DbOption) => void;
   onClear: () => void;
-  onEditOptions: () => void;
+  /** Without it the menu only picks; an embedded table does not edit its schema. */
+  onEditOptions?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -195,8 +196,10 @@ export function SelectCell({ options, selected, fallback, onPick, onClear, onEdi
           <DropdownMenuItem key={o.id} onClick={() => onPick(o)}><Chip option={o} /></DropdownMenuItem>
         ))}
         <DropdownMenuItem onClick={onClear}>None</DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onEditOptions}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
+        {onEditOptions && <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onEditOptions}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
+        </>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

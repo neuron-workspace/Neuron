@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
+import { dragWidths, MIN_COLUMN, roundWidths } from '../lib/columns';
 
 /**
  * Layout primitives for MDX notes.
@@ -129,14 +130,17 @@ export function Card({ children, title, tone, pad }: BoxProps & { title?: ReactN
 }
 
 /** A number with a label, for a metric strip. `<Stat label="Overdue" value="3" tone="danger">` */
-export function Stat({ label, value, tone }: { label?: ReactNode; value?: ReactNode; tone?: Tone }) {
+export function Stat({ label, value, tone, message, busy }: { label?: ReactNode; value?: ReactNode; tone?: Tone; message?: ReactNode; busy?: boolean }) {
   const dot = pick(TONE, tone, 'surface');
   const ink = tone === 'danger' ? 'text-[var(--danger)]'
     : tone === 'accent' ? 'text-[var(--accent-strong)]'
     : 'text-[var(--ink)]';
   return (
-    <div className={['mdx-stat min-w-0 break-words rounded-lg border border-[var(--divider)] p-3', tone === 'plain' ? 'bg-transparent' : 'bg-[var(--surface)]'].join(' ')}>
-      <div className={`text-2xl font-semibold tabular-nums ${ink}`}>{value ?? '—'}</div>
+    <div aria-busy={busy || undefined} className={['mdx-stat min-w-0 break-words rounded-lg border border-[var(--divider)] p-3', tone === 'plain' ? 'bg-transparent' : 'bg-[var(--surface)]'].join(' ')}>
+      {/* A live stat that cannot be computed says why in the number's place. */}
+      {message
+        ? <div className="flex min-h-8 items-center text-xs leading-4 text-[var(--ink-muted)]" data-stat-error>{message}</div>
+        : <div className={`text-2xl font-semibold tabular-nums ${ink}`} data-stat-value>{value ?? '—'}</div>}
       {label && <div className="mt-0.5 flex items-baseline gap-2 text-[13px] font-semibold text-[var(--ink-secondary)]">{dot && <span aria-hidden className={`h-1.5 w-1.5 shrink-0 self-center rounded-full ${dot}`} />}{label}</div>}
     </div>
   );
@@ -181,6 +185,92 @@ export function Flashcard({ children, front, frontNode }: { children?: ReactNode
         {revealed ? 'Hide answer' : 'Show answer'}
       </button>
     </section>
+  );
+}
+
+/**
+ * Side-by-side columns, `<Columns><Column width="40%">…</Column>…</Columns>`.
+ *
+ * The gaps are elements of their own rather than CSS gap, so in Live each one
+ * can be the handle that drags the widths. Widths are flex-grow shares, so the
+ * gaps never push the total past the row. Under 640px of content width the
+ * columns stack (a container query, because a note's width is not the
+ * window's).
+ */
+export function Columns({ widths, children, onResize }: { widths: number[]; children: ReactNode[]; onResize?: (widths: number[]) => void }) {
+  const row = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<number[] | null>(null);
+  const shown = dragging ?? widths;
+
+  const startDrag = (index: number) => (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onResize || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const gaps = Array.from(row.current?.querySelectorAll<HTMLElement>(':scope > [data-column-gap]') ?? []);
+    const available = (row.current?.clientWidth ?? 0) - gaps.reduce((sum, gap) => sum + gap.offsetWidth, 0);
+    if (available <= 0) return;
+    const startX = event.clientX;
+    let latest = widths;
+    const move = (e: PointerEvent) => { latest = dragWidths(widths, index, ((e.clientX - startX) / available) * 100); setDragging(latest); };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      setDragging(null);
+      const next = roundWidths(latest);
+      if (next.some((w, i) => w !== roundWidths(widths)[i])) onResize(next);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  };
+
+  const nudge = (index: number) => (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onResize || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rounded = roundWidths(widths);
+    const next = roundWidths(dragWidths(rounded, index, event.key === 'ArrowLeft' ? -1 : 1));
+    if (next.some((w, i) => w !== rounded[i])) onResize(next);
+  };
+
+  const items: ReactNode[] = [];
+  children.forEach((child, index) => {
+    if (index > 0) {
+      const at = index - 1;
+      items.push(onResize ? (
+        <div
+          key={'gap-' + index}
+          data-column-gap
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize columns ${index} and ${index + 1}`}
+          aria-valuenow={Math.round(shown[at])}
+          aria-valuemin={MIN_COLUMN}
+          aria-valuemax={100 - MIN_COLUMN}
+          tabIndex={0}
+          className="mdx-column-gap group/gap interactive relative flex cursor-col-resize justify-center rounded"
+          onPointerDown={startDrag(at)}
+          onKeyDown={nudge(at)}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <span aria-hidden className={`mdx-column-handle h-full w-0.5 rounded-full bg-[var(--accent)] transition-opacity ${dragging ? 'opacity-100' : 'opacity-0 group-hover/gap:opacity-60 group-focus-visible/gap:opacity-100'}`} />
+        </div>
+      ) : <div key={'gap-' + index} data-column-gap aria-hidden className="mdx-column-gap" />);
+    }
+    items.push(
+      <div key={'column-' + index} data-column className="mdx-column min-w-0 break-words" style={{ flex: `${shown[index] ?? 1} 1 0%` }}>
+        {child}
+      </div>,
+    );
+  });
+
+  return (
+    <div className="mdx-columns my-4 min-w-0 max-w-full">
+      <div ref={row} className="mdx-columns-row flex min-w-0" data-columns={children.length}>{items}</div>
+    </div>
   );
 }
 

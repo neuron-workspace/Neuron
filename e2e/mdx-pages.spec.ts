@@ -1,0 +1,203 @@
+import { test, expect, openNote } from './fixtures';
+import type { Page } from '@playwright/test';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+// Pages built in MDX: full width, columns, and the data blocks (Stat, Chart,
+// Form, editable DbView) that read and write a workspace's tables.
+
+const status = [{ id: 'todo', name: 'Todo', color: '#8b8b8b' }, { id: 'doing', name: 'Doing', color: '#528fd1' }, { id: 'done', name: 'Done', color: '#5aa06c' }];
+const priority = [{ id: 'low', name: 'Low', color: '#8b8b8b' }, { id: 'high', name: 'High', color: '#c0705f' }];
+function database(rows: { id: string; values: Record<string, unknown> }[]) {
+  return JSON.stringify({
+    version: 2,
+    tables: {
+      tasks: {
+        name: 'Tasks',
+        schema: {
+          order: ['title', 'status', 'priority', 'done', 'hours'],
+          properties: {
+            title: { name: 'Task', type: 'text' }, status: { name: 'Status', type: 'select', options: status },
+            priority: { name: 'Priority', type: 'select', options: priority }, done: { name: 'Done', type: 'checkbox' },
+            hours: { name: 'Hours', type: 'number' },
+          },
+        },
+        rows,
+      },
+    },
+  }, null, 2) + '\n';
+}
+const ROWS = [
+  { id: 'r1', values: { title: 'Write', status: 'todo', priority: 'low', done: false, hours: 2 } },
+  { id: 'r2', values: { title: 'Review', status: 'doing', priority: 'high', done: false, hours: 3 } },
+  { id: 'r3', values: { title: 'Ship', status: 'done', priority: 'high', done: true, hours: 5 } },
+];
+
+async function open(page: Page, workspace: string, name: string, lines: string[]) {
+  writeFileSync(join(workspace, 'pages.db'), database(ROWS));
+  writeFileSync(join(workspace, name), lines.join('\n') + '\n');
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  await openNote(page, name);
+}
+const read = (workspace: string, name: string) => readFileSync(join(workspace, name), 'utf8');
+const db = (workspace: string) => JSON.parse(read(workspace, 'pages.db')).tables.tasks.rows as { id: string; values: Record<string, unknown> }[];
+
+test.beforeEach(async ({ app }) => {
+  // Wide enough that full width is wider than the reading measure.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1500, 1000));
+});
+
+test('the full width toggle writes the property and widens the page', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-width.mdx', ['---', 'title: Width', '---', '# Width', '', 'Some text.']);
+  const article = page.locator('article.preview-prose');
+  const narrow = (await article.boundingBox())!.width;
+  const toggle = page.getByRole('button', { name: 'Full width', exact: true });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await expect.poll(() => read(workspace, 'pages-width.mdx')).toContain('fullWidth: true');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-full-width]')).toHaveCount(1);
+  await expect.poll(async () => (await article.boundingBox())!.width).toBeGreaterThan(narrow + 100);
+  expect(read(workspace, 'pages-width.mdx')).toContain('title: Width');
+
+  await toggle.click();
+  await expect.poll(() => read(workspace, 'pages-width.mdx')).not.toContain('fullWidth');
+  await expect(page.locator('[data-full-width]')).toHaveCount(0);
+});
+
+test('dragging a column divider writes widths that sum to 100', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-columns.mdx', [
+    '---', 'fullWidth: true', '---', '<Columns>', '<Column>', '', 'Left side', '', '</Column>', '<Column>', '', 'Right side', '', '</Column>', '</Columns>',
+  ]);
+  const columns = page.locator('[data-column]');
+  await expect(columns).toHaveCount(2);
+  const left = (await columns.nth(0).boundingBox())!.width;
+  expect(Math.abs(left - (await columns.nth(1).boundingBox())!.width)).toBeLessThan(2);
+  // Reading has no handle; Live does.
+  await expect(page.getByRole('separator', { name: /Resize columns/ })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const handle = page.getByRole('separator', { name: 'Resize columns 1 and 2' });
+  const box = (await handle.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  await expect.poll(() => [...read(workspace, 'pages-columns.mdx').matchAll(/width="(\d+)%"/g)].length).toBe(2);
+  const widths = [...read(workspace, 'pages-columns.mdx').matchAll(/width="(\d+)%"/g)].map((m) => Number(m[1]));
+  expect(widths[0] + widths[1]).toBe(100);
+  expect(widths[0]).toBeGreaterThan(55);
+  await expect.poll(async () => (await page.locator('[data-column]').nth(0).boundingBox())!.width).toBeGreaterThan(left + 60);
+});
+
+test('a live Stat follows the database when it changes on disk', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-stat.mdx', [
+    '<Stat label="Done" source="pages.db" table="tasks" where="status = done" count />', '',
+    '<Stat label="Hours" source="pages.db" table="tasks" sum="hours" />', '',
+    '<Stat label="Broken" source="pages.db" table="tasks" where="owner = me" />', '',
+    '<Stat label="Missing" source="nowhere.db" table="tasks" />',
+  ]);
+  const value = (label: string) => page.locator('.mdx-stat', { hasText: label });
+  await expect(value('Done').locator('[data-stat-value]')).toHaveText('1');
+  await expect(value('Hours').locator('[data-stat-value]')).toHaveText('10');
+  await expect(value('Broken').locator('[data-stat-error]')).toHaveText('No column named "owner".');
+  await expect(value('Missing').locator('[data-stat-error]')).toHaveText('No file at nowhere.db.');
+
+  writeFileSync(join(workspace, 'pages.db'), database(ROWS.map((row) => (row.id === 'r1' ? { ...row, values: { ...row.values, status: 'done', hours: 4 } } : row))));
+  await expect(value('Done').locator('[data-stat-value]')).toHaveText('2');
+  await expect(value('Hours').locator('[data-stat-value]')).toHaveText('12');
+});
+
+test('pie and bar charts draw one mark per group', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-charts.mdx', [
+    '<Chart type="pie" label="By status" source="pages.db" table="tasks" group="status" count />', '',
+    '<Chart type="bar" label="By priority" source="pages.db" table="tasks" group="priority" sum="hours" />', '',
+    '<Chart type="bar" source="pages.db" table="tasks" where="status = gone" group="status" />',
+  ]);
+  const pie = page.locator('[data-chart="pie"]');
+  await expect(pie.locator('[data-slice]')).toHaveCount(3);
+  await expect(pie.getByRole('img')).toHaveAttribute('aria-label', /Todo 1, Doing 1, Done 1/);
+  const bar = page.locator('[data-chart="bar"]').first();
+  await expect(bar.locator('[data-bar]')).toHaveCount(2);
+  await expect(bar.getByRole('img')).toHaveAttribute('aria-label', /Low 2, High 8/);
+  // The values are also a table for screen readers.
+  await expect(bar.locator('table.sr-only tbody tr')).toHaveCount(2);
+  await expect(page.locator('[data-chart="bar"]').nth(1)).toContainText('No data yet.');
+});
+
+test('a form adds a row to a database and to a managed CSV', async ({ page, workspace }) => {
+  writeFileSync(join(workspace, 'people.csv'), 'name,age\nAda,36\n');
+  mkdirSync(join(workspace, '.neuron', 'tables'), { recursive: true });
+  writeFileSync(join(workspace, '.neuron', 'tables', 'people.csv.json'), JSON.stringify({
+    version: 1, columns: { name: { type: 'text' }, age: { type: 'number' } },
+    view: { sortBy: null, sortDir: 'asc', filterProp: null, filterValue: '', mode: 'table' },
+  }));
+  writeFileSync(join(workspace, 'loose.csv'), 'name,age\nAda,36\n');
+  await open(page, workspace, 'pages-form.mdx', [
+    '<Form title="New task" source="pages.db" table="tasks" fields="title, status, done" submit="Add task" />', '',
+    '<Form title="New person" source="people.csv" submit="Add person" />', '',
+    '<Form title="Loose" source="loose.csv" />',
+  ]);
+
+  const task = page.locator('.mdx-form', { hasText: 'New task' });
+  // The title column is required: nothing is written without it.
+  await task.getByRole('button', { name: 'Add task' }).click();
+  await expect(task.getByRole('alert')).toHaveText('Task is required.');
+  await task.getByLabel('Status').selectOption({ label: 'Doing' });
+  await task.getByLabel('Task').fill('Plan the launch');
+  await task.getByLabel('Task').press('Enter');
+  await expect(task.getByRole('status')).toHaveText('Added.');
+  await expect(task.getByLabel('Task')).toHaveValue('');
+  const added = db(workspace).at(-1)!;
+  expect(added.values).toEqual({ title: 'Plan the launch', status: 'doing', done: false });
+  expect(db(workspace)).toHaveLength(4);
+  await expect(task.getByRole('status')).toHaveCount(0, { timeout: 6000 });
+
+  const person = page.locator('.mdx-form', { hasText: 'New person' });
+  await person.getByLabel('name').fill('Lin');
+  await person.getByLabel('age').fill('41');
+  await person.getByRole('button', { name: 'Add person' }).click();
+  await expect(person.getByRole('status')).toHaveText('Added.');
+  expect(read(workspace, 'people.csv')).toBe('name,age\nAda,36\nLin,41\n');
+
+  const loose = page.locator('.mdx-form', { hasText: 'Loose' });
+  await expect(loose).toContainText('Convert this CSV to a Neuron table to add rows.');
+  await expect(loose.getByRole('button')).toHaveCount(0);
+  expect(read(workspace, 'loose.csv')).toBe('name,age\nAda,36\n');
+});
+
+test('an editable DbView ticks a task on disk; a plain one stays read-only', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-dbview.mdx', [
+    '<DbView source="pages.db" table="tasks" editable />', '',
+    '<DbView path="@pages.db" table="tasks" />',
+  ]);
+  const editable = page.locator('[data-db-embed-editable]');
+  await expect(editable).toHaveCount(1);
+  await editable.getByRole('checkbox', { name: 'Done: Write' }).click();
+  await expect.poll(() => db(workspace).find((row) => row.id === 'r1')!.values.done).toBe(true);
+  await expect(editable.getByRole('checkbox', { name: 'Done: Write' })).toHaveAttribute('data-state', 'checked');
+  await expect(page.locator('[data-db-embed-mode="table"]:not([data-db-embed-editable])').getByRole('checkbox').first()).toBeDisabled();
+});
+
+test('typing / on an empty line in Live inserts a Chart block', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-insert.mdx', ['# Insert', '', 'Some text.']);
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const line = page.locator('article.preview-prose p', { hasText: 'Some text.' });
+  await line.click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('/');
+  const menu = page.locator('[data-insert-menu]');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('option')).toHaveCount(8);
+  await page.keyboard.type('cha');
+  await expect(menu.getByRole('option')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect(menu).toHaveCount(0);
+  await expect.poll(() => read(workspace, 'pages-insert.mdx')).toMatch(/\nSome text\.\n<Chart type="bar" source="[^"]+\.db" table="[^"]+" group="[^"]*" count \/>/);
+  // The new block opens for editing.
+  await expect(page.locator('.live-block-editor')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-chart="bar"]')).toBeVisible();
+});

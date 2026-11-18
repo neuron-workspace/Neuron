@@ -4,6 +4,7 @@ import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
+import FullWidthToggle from './components/FullWidthToggle';
 import { CalloutIcon } from './components/mdx-components';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
@@ -1057,6 +1058,7 @@ export default function App() {
           </div>
       ) : selectedNote && !browsing ? (
           <div className="flex shrink-0 items-center gap-3">
+            {/\.(md|mdx)$/i.test(selectedNote) && <FullWidthToggle doc={noteContent} onChange={handleContentChange} removeEmpty={propsSettings.removeEmpty} />}
             {/* Not in a layout workspace. There the editor is a panel that owns
                 its own view mode, so this switch drove nothing -- two identical
                 controls one above the other, and only the lower one worked. It

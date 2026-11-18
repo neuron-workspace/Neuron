@@ -5,11 +5,14 @@ import Editor from './Editor';
 import { canRoundTrip, nextLinePrefix, serializeInline, splitLinePrefix } from '../lib/live-edit';
 
 export interface SourceRange { startLine: number; endLine: number }
-export interface BlockDraft extends SourceRange { source: string; draft: string }
+/** `cursor`: where to put the caret when the editor opens, as an offset into the draft. */
+export interface BlockDraft extends SourceRange { source: string; draft: string; cursor?: number }
 export interface LiveEditing {
   active: BlockDraft | null;
   colorScheme: 'light' | 'dark';
-  open: (range: SourceRange) => void;
+  open: (range: SourceRange, cursor?: number) => void;
+  /** `/` typed on an empty line: offer blocks to put there. */
+  insert?: (range: SourceRange, anchor: HTMLElement) => void;
   draft: (value: string) => void;
   finish: (commit: boolean) => void;
   change: (range: SourceRange, value: string | string[]) => void;
@@ -24,7 +27,16 @@ export function LiveBlock({ children, range, editing, name = 'block', trailing }
   const active = editing.active?.startLine === range.startLine ? editing.active : null;
   const wasActive = useRef(false);
   useLayoutEffect(() => {
-    if (active) editor.current?.view?.focus();
+    if (active) {
+      editor.current?.view?.focus();
+      const cursor = active.cursor;
+      // The editor view can arrive a tick after the block opens.
+      if (cursor !== undefined) window.setTimeout(() => {
+        const view = editor.current?.view;
+        view?.dispatch({ selection: { anchor: Math.min(cursor, view.state.doc.length) } });
+        view?.focus();
+      }, 0);
+    }
     else if (wasActive.current && !editing.active) button.current?.focus();
     wasActive.current = !!active;
   }, [!!active]);
@@ -205,7 +217,10 @@ export function LiveText({ children, source, range, editing }: {
     onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
       const element = target.current;
       if (!element || event.target !== element || event.nativeEvent.isComposing) return;
-      if (event.key === 'Escape') {
+      if (event.key === '/' && !prefix && editing.insert && !event.ctrlKey && !event.metaKey && !event.altKey && value() === '') {
+        event.preventDefault(); event.stopPropagation();
+        editing.insert(range, element);
+      } else if (event.key === 'Escape') {
         event.preventDefault(); event.stopPropagation();
         skipBlur.current = true; restore(); element.blur();
       } else if (event.key === 'Enter') {
