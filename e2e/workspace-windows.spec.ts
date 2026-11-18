@@ -198,6 +198,7 @@ test('Settings sections switch, and asking again brings the same window forward 
   const settings = await openSettings(app, page, 'appearance');
   const sections = settings.getByRole('navigation', { name: 'Settings sections' });
   const title = settings.getByRole('heading', { level: 1 });
+  await expect(sections.getByRole('button').first()).toHaveText('Workspaces');
   for (const [row, heading] of [['Keyboard', 'Keyboard'], ['Editor', 'Editor'], ['Connectors', 'Connectors'], ['Workspaces', 'Workspaces'], ['About', 'About'], ['Appearance', 'Appearance']]) {
     await sections.getByRole('button', { name: row, exact: true }).click();
     await expect(title).toHaveText(heading);
@@ -247,11 +248,22 @@ test('Settings opened from a window with no workspace still opens, with no opene
   expect(await api(settings, 'api.windowControls.openerWorkspace()')).toBeNull();
 });
 
-test('the Workspaces section lists the current workspace and offers the three ways in', async ({ app, page, workspace }) => {
+test('a window with no workspace shows the welcome page with exactly two choices', async ({ page }) => {
+  await page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.remove(dir),
+    (await api(page, 'api.repository.getCurrent()') as { path: string }).path);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Welcome to Neuron', level: 1 })).toBeVisible();
+  const main = page.getByRole('heading', { name: 'Welcome to Neuron' }).locator('..');
+  await expect(main.getByRole('button')).toHaveCount(2);
+  await expect(main.getByRole('button', { name: /Open existing folder/ })).toBeFocused();
+  await expect(main.getByRole('button', { name: /Create new workspace/ })).toBeVisible();
+});
+
+test('the Workspaces section lists the current workspace and has no Open or Create buttons', async ({ app, page, workspace }) => {
   const settings = await openSettings(app, page, 'workspaces', () => sidebarButton(page, 'Workspaces').click());
-  await expect(settings.getByRole('button', { name: 'Open folder…' })).toBeVisible();
-  await expect(settings.getByRole('button', { name: 'Create workspace…' })).toBeVisible();
-  await expect(settings.getByText('Start from a template')).toBeVisible();
+  await expect(settings.getByRole('button', { name: 'Open folder…' })).toHaveCount(0);
+  await expect(settings.getByRole('button', { name: 'Create workspace…' })).toHaveCount(0);
+  await expect(settings.getByText('Start from a template')).toHaveCount(0);
   const row = settings.locator(`[data-workspace-row="${workspace.replace(/\\/g, '\\\\')}"]`);
   await expect(row).toContainText(workspace);
   // It is on screen already, so its button brings that window forward.

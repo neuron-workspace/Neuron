@@ -7,7 +7,7 @@
 export type WindowKind = 'workspace' | 'settings';
 
 /** The sections of the Settings window. */
-export const SETTINGS_SECTIONS = ['appearance', 'keyboard', 'editor', 'connectors', 'workspaces', 'about'] as const;
+export const SETTINGS_SECTIONS = ['workspaces', 'appearance', 'keyboard', 'editor', 'connectors', 'about'] as const;
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
 /**

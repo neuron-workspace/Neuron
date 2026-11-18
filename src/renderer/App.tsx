@@ -1182,7 +1182,7 @@ export default function App() {
             bindings={bindings} onBindingsChange={updateBindings}
             properties={propsSettings} onPropertiesChange={updatePropsSettings}
             recents={recents}
-            onCreateRepo={createRepository} onOpenRepo={openRepository} onSwitchRepo={switchRepository}
+            onSwitchRepo={switchRepository}
             onReloadRepos={reloadRepoState}
           />
         </TooltipProvider>
@@ -1223,7 +1223,7 @@ export default function App() {
           {!repoReady ? (
             <div className="grid place-items-center text-sm text-[var(--ink-muted)]">Loading…</div>
           ) : !repository ? (
-            <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
+            <RepositoryOnboarding onCreate={createRepository} onOpen={openRepository} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
             <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={openPlugins}

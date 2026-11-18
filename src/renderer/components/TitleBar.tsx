@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search,
+  Sparkles, PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search,
   FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Settings2, Share2, SlidersHorizontal } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
@@ -8,6 +8,8 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuCheckboxItem,
 } from './ui/dropdown-menu';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { useWorkspaceTemplates } from '../lib/useWorkspaceTemplates';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
 import { isMac, platform } from '../lib/platform';
@@ -72,6 +74,8 @@ export function parentFolder(dir: string): string {
 
 export default function TitleBar(props: TitleBarProps) {
   const { repository, recents } = props;
+  const { templates, busy, error, start } = useWorkspaceTemplates();
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   // Scope native overlay safe areas and macOS typography to the host.
   useEffect(() => {
     document.body.classList.add(`platform-${platform}`);
@@ -135,6 +139,9 @@ export default function TitleBar(props: TitleBarProps) {
             <DropdownMenuLabel>Workspace</DropdownMenuLabel>
             <DropdownMenuItem onClick={props.onOpenRepo}><FolderOpen className="h-4 w-4" /> Open folder…</DropdownMenuItem>
             <DropdownMenuItem onClick={props.onCreateRepo}><FolderPlus className="h-4 w-4" /> Create workspace…</DropdownMenuItem>
+            {templates.length > 0 && (
+              <DropdownMenuItem onSelect={() => setTemplatesOpen(true)}><Sparkles className="h-4 w-4" /> New workspace from template…</DropdownMenuItem>
+            )}
             {recents.length > 0 && (
               <>
                 <DropdownMenuSeparator />
@@ -154,6 +161,31 @@ export default function TitleBar(props: TitleBarProps) {
             <DropdownMenuItem onClick={props.onManageWorkspaces}><Settings2 className="h-4 w-4" /> Manage workspaces…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Dialog open={templatesOpen} onOpenChange={setTemplatesOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>New workspace from template</DialogTitle>
+              <DialogDescription>A template is copied into a folder you pick; the originals stay untouched.</DialogDescription>
+            </DialogHeader>
+            <div className="overflow-hidden rounded-md border border-[var(--divider)]">
+              {templates.map((template, index) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void start(template).then(() => setTemplatesOpen(false))}
+                  className={cn('interactive flex w-full flex-col items-start px-3 py-2 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60', index > 0 && 'border-t border-[var(--divider)]')}
+                >
+                  <span className="text-[13px] font-medium text-[var(--ink)]">{busy === template.id ? 'Creating…' : template.name}</span>
+                  <span className="text-xs text-[var(--ink-muted)]">
+                    {template.description || `${template.noteCount} note${template.noteCount === 1 ? '' : 's'} to start from`}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {error && <p role="alert" className="text-xs text-[var(--danger)]">{error}</p>}
+          </DialogContent>
+        </Dialog>
         <IconButton label={props.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} active={props.sidebarOpen} onClick={props.onToggleSidebar}>
           <PanelLeft className="h-4 w-4" />
         </IconButton>

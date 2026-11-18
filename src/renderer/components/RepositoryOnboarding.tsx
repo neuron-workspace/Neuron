@@ -1,130 +1,33 @@
-import { FolderPlus, FolderOpen, FolderGit2, Cloud, ArrowRight, Sparkles, AlertCircle } from 'lucide-react';
-import type { RepositoryInfo } from '../electron.d';
-import { Button } from './ui/button';
-import { useWorkspaceTemplates } from '../lib/useWorkspaceTemplates';
+import { useEffect, useRef } from 'react';
+import { FolderOpen, FolderPlus } from 'lucide-react';
 
 interface RepositoryOnboardingProps {
-  recents: RepositoryInfo[];
   onCreate: () => void;
   onOpen: () => void;
-  onSwitch: (dir: string) => void;
 }
 
-export default function RepositoryOnboarding({ recents, onCreate, onOpen, onSwitch }: RepositoryOnboardingProps) {
-  const { templates, busy, error, start: startFromTemplate } = useWorkspaceTemplates();
+const CHOICE = 'interactive flex flex-1 flex-col items-start gap-1 rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-5 text-left hover:border-[color-mix(in_oklch,var(--accent)_40%,var(--divider))] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]';
+
+/** Shown in a window with no workspace: two ways in, nothing else. */
+export default function RepositoryOnboarding({ onCreate, onOpen }: RepositoryOnboardingProps) {
+  const first = useRef<HTMLButtonElement>(null);
+  useEffect(() => { first.current?.focus(); }, []);
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-[var(--canvas)] px-6 py-10">
-      <div className="w-full max-w-2xl">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--accent)] text-[var(--canvas)]">
-            <FolderGit2 className="h-5 w-5" strokeWidth={2.2} />
-          </span>
-          <div>
-            <h1 className="text-lg font-semibold tracking-[-0.01em] text-[var(--ink)]">Open a workspace</h1>
-            <p className="text-sm text-[var(--ink-secondary)]">A workspace is just a folder of Markdown notes — local, or inside a synced folder.</p>
-          </div>
-        </div>
-
-        <div className="mt-7 grid gap-3 sm:grid-cols-2">
-          <button
-            onClick={onCreate}
-            className="interactive group flex flex-col items-start rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-5 text-left hover:border-[color-mix(in_oklch,var(--accent)_40%,var(--divider))]"
-          >
-            <span className="grid h-9 w-9 place-items-center rounded-md border border-[var(--divider)] bg-[var(--canvas)] text-[var(--accent-strong)]">
-              <FolderPlus className="h-4 w-4" />
-            </span>
-            <h2 className="mt-3 text-sm font-semibold text-[var(--ink)]">Create workspace</h2>
-            <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Pick a location and start a fresh workspace with a welcome note.</p>
-            <span className="mt-3 flex items-center gap-1 text-xs font-medium text-[var(--accent-strong)] opacity-0 transition-opacity group-hover:opacity-100">
-              New folder <ArrowRight className="h-3 w-3" />
-            </span>
+      <div className="w-full max-w-xl">
+        <h1 className="text-center text-2xl font-semibold tracking-[-0.01em] text-[var(--ink)]">Welcome to Neuron</h1>
+        <div className="mt-8 flex flex-col gap-3 min-[560px]:flex-row">
+          <button ref={first} type="button" onClick={onOpen} className={CHOICE}>
+            <FolderOpen className="h-5 w-5 text-[var(--accent-strong)]" aria-hidden="true" />
+            <span className="mt-2 text-sm font-semibold text-[var(--ink)]">Open existing folder</span>
+            <span className="text-xs leading-5 text-[var(--ink-secondary)]">Pick a folder of notes you already have.</span>
           </button>
-
-          <button
-            onClick={onOpen}
-            className="interactive group flex flex-col items-start rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-5 text-left hover:border-[color-mix(in_oklch,var(--accent)_40%,var(--divider))]"
-          >
-            <span className="grid h-9 w-9 place-items-center rounded-md border border-[var(--divider)] bg-[var(--canvas)] text-[var(--accent-strong)]">
-              <FolderOpen className="h-4 w-4" />
-            </span>
-            <h2 className="mt-3 text-sm font-semibold text-[var(--ink)]">Open existing folder</h2>
-            <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Point Neuron at any folder — including a OneDrive or Dropbox folder.</p>
-            <span className="mt-3 flex items-center gap-1 text-xs font-medium text-[var(--accent-strong)] opacity-0 transition-opacity group-hover:opacity-100">
-              Choose folder <ArrowRight className="h-3 w-3" />
-            </span>
+          <button type="button" onClick={onCreate} className={CHOICE}>
+            <FolderPlus className="h-5 w-5 text-[var(--accent-strong)]" aria-hidden="true" />
+            <span className="mt-2 text-sm font-semibold text-[var(--ink)]">Create new workspace</span>
+            <span className="text-xs leading-5 text-[var(--ink-secondary)]">Start an empty folder for new notes.</span>
           </button>
-        </div>
-
-        {templates.length > 0 && (
-          <div className="mt-7">
-            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-[var(--ink-muted)]">
-              <Sparkles className="h-3 w-3" /> Start from a template
-            </div>
-            <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
-              {templates.map((template, index) => (
-                <button
-                  key={template.id}
-                  onClick={() => void startFromTemplate(template)}
-                  disabled={busy !== null}
-                  className={`interactive flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60 ${index > 0 ? 'border-t border-[var(--divider)]' : ''}`}
-                >
-                  <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-[var(--ink)]">{template.name}</div>
-                    <div className="truncate text-[11px] text-[var(--ink-muted)]">
-                      {template.description || `${template.noteCount} note${template.noteCount === 1 ? '' : 's'} to start from`}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-[11px] text-[var(--ink-muted)]">
-                    {busy === template.id ? 'Creating…' : 'Choose folder'}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <p className="mt-2 text-[11px] leading-4 text-[var(--ink-muted)]">
-              A template is copied into a folder you pick, so the originals stay untouched and your notes are yours to edit.
-            </p>
-          </div>
-        )}
-
-        {error && (
-          <div className="mt-4 flex items-start gap-2 rounded-lg border border-[var(--danger)] bg-[color-mix(in_oklch,var(--danger)_8%,var(--surface))] px-3 py-2 text-xs text-[var(--ink)]">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--danger)]" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {recents.length > 0 && (
-          <div className="mt-7">
-            <div className="mb-2 text-[11px] font-medium text-[var(--ink-muted)]">Recent</div>
-            <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
-              {recents.map((repo, index) => (
-                <button
-                  key={repo.path}
-                  onClick={() => onSwitch(repo.path)}
-                  className={`interactive flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--surface-hover)] ${index > 0 ? 'border-t border-[var(--divider)]' : ''}`}
-                >
-                  <FolderGit2 className="h-4 w-4 shrink-0 text-[var(--ink-muted)]" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 text-sm font-medium text-[var(--ink)]">
-                      {repo.name}
-                      {repo.cloud && <Cloud className="h-3 w-3 text-[var(--ink-muted)]" />}
-                    </div>
-                    <div className="truncate font-mono text-[11px] text-[var(--ink-muted)]">{repo.path}</div>
-                  </div>
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <p className="mt-8 text-center text-[11px] text-[var(--ink-muted)]">
-          Your notes stay as plain files on disk. Neuron never uploads them.
-        </p>
-        <div className="mt-3 flex justify-center sm:hidden">
-          <Button variant="secondary" size="sm" onClick={onCreate}>Get started</Button>
         </div>
       </div>
     </div>
