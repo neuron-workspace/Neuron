@@ -18,6 +18,8 @@ import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
 import SettingsWindow from './views/SettingsWindow';
+import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
+import { workspaceApps } from './views/PluginsPage';
 import type { SettingsSection } from '../main/workspace-windows';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
@@ -217,6 +219,9 @@ export default function App() {
   const openSettings = useCallback((section: SettingsSection) => {
     void window.electronAPI?.windowControls?.openPage(section);
   }, []);
+  // Plugins are switched on per workspace, so they are set in this window.
+  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettingsSection | null>(null);
+  const openPlugins = useCallback(() => setWorkspaceSettings('plugins'), []);
   // Another window changed a shared setting: take the new value.
   useEffect(() => window.electronAPI?.settings.onChanged?.((key) => {
     if (key === 'appearance') void window.electronAPI.settings.get<Appearance>('appearance').then((stored) => { const next = normalizeAppearance(stored); remoteAppearance.current = JSON.stringify(next); applyTheme(next); setAppearance(next); });
@@ -654,6 +659,7 @@ export default function App() {
     [createdFolders, entries],
   );
   const explorerOther = useMemo(() => otherFiles.filter(notInConfig), [otherFiles]);
+  const workspaceAppList = useMemo(() => workspaceApps([...notes, ...(entries?.files ?? [])]), [notes, entries]);
   const explorerAllPaths = useMemo(() => [...explorerPaths, ...explorerOther], [explorerPaths, explorerOther]);
   const explorerFolders = useMemo(() => treeFolders.filter(notInConfig), [treeFolders]);
   const revealFile = useCallback((path: string) => {
@@ -1149,16 +1155,16 @@ export default function App() {
   }
 
   if (utilityWindow) {
-    // The plugin host runs here too, for the Plugins section. Its bridge sees
-    // no workspace, because this window has none.
+    // The plugin host runs here too, for the Connectors section. It has no
+    // workspace, so no plugin is on here.
     return (
-      <PluginProvider catalog={builtinPlugins} bridge={bridge}>
+      <PluginProvider catalog={builtinPlugins} bridge={bridge} workspace={null}>
         <TooltipProvider delayDuration={300}>
           <SettingsWindow
             appearance={appearance} onAppearanceChange={handleAppearanceChange}
             bindings={bindings} onBindingsChange={updateBindings}
             properties={propsSettings} onPropertiesChange={updatePropsSettings}
-            layout={layout} recents={recents}
+            recents={recents}
             onCreateRepo={createRepository} onOpenRepo={openRepository} onSwitchRepo={switchRepository}
             onReloadRepos={reloadRepoState}
           />
@@ -1168,7 +1174,7 @@ export default function App() {
   }
 
   return (
-    <PluginProvider catalog={builtinPlugins} bridge={bridge}>
+    <PluginProvider catalog={builtinPlugins} bridge={bridge} workspace={repository?.path ?? null}>
       <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
         <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
@@ -1186,6 +1192,7 @@ export default function App() {
             onToggleGraph={showOrToggleGraph}
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
             onManageWorkspaces={() => openSettings('workspaces')}
+            onOpenWorkspaceSettings={() => setWorkspaceSettings('general')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
             onOpenSettings={() => openSettings('appearance')}
             onSwitchRepo={switchRepository}
@@ -1202,13 +1209,13 @@ export default function App() {
             <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
-            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => openSettings('plugins')}
+            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={openPlugins}
               sidebar={
                 <Sidebar
                   collapsed={layout.sidebarCollapsed}
                   onToggleCollapsed={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
                   onSelectMode={(mode) => { setSidebarMode(mode); setView('notes'); }}
-                  onOpenSettings={openSettings}
+                  onOpenSettings={(section) => (section === 'plugins' ? openPlugins() : openSettings(section))}
                   graphOpen={graphOverlayOpen}
                   onToggleGraph={showOrToggleGraph}
                   sidebarSide={layout.sidebarSide}
@@ -1292,8 +1299,8 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => openSettings('plugins')} terminalChord={bindings['toggle-terminal']} />}
-          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={() => openSettings('plugins')} />
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
+          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
           <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 
@@ -1306,7 +1313,7 @@ export default function App() {
           onOpenChange={setPaletteOpen}
           notes={notes}
           onSelectNote={handleSelectNote}
-          onOpenMarketplace={() => openSettings('plugins')}
+          onOpenMarketplace={openPlugins}
           onOpenSettings={() => openSettings('appearance')}
           onCreate={() => requestCreate()}
           onCreateSurface={createSurfaceFile}
@@ -1330,6 +1337,17 @@ export default function App() {
           onCloseSide={() => openToSide(null)}
           bindings={bindings}
         />
+        {repository && (
+          <WorkspaceSettingsDialog
+            section={workspaceSettings}
+            onSectionChange={setWorkspaceSettings}
+            workspace={repository}
+            apps={workspaceAppList}
+            layout={layout}
+            onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })}
+            onRenamed={() => void reloadRepoState()}
+          />
+        )}
       </TooltipProvider>
       </ExplorerProvider>
     </PluginProvider>

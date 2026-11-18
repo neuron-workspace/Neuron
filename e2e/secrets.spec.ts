@@ -8,12 +8,12 @@ import { test, expect } from './fixtures';
 test('a stored secret cannot be read back by renderer code', async ({ page }) => {
   const probe = await page.evaluate(async () => {
     const api = (window as unknown as { electronAPI: any }).electronAPI;
-    await api.settings.setSecret('ai-claude', 'apiKey', 'sk-test-SHOULD-NEVER-LEAK');
+    await api.settings.setSecret('anthropic', 'apiKey', 'sk-test-SHOULD-NEVER-LEAK');
 
     return {
-      present: await api.settings.hasSecret('ai-claude', 'apiKey'),
+      present: await api.settings.hasSecret('anthropic', 'apiKey'),
       viaReservedKey: await api.settings.get('__secrets'),
-      viaPluginBlob: JSON.stringify((await api.settings.get('plugins')) ?? {}),
+      viaPluginBlob: JSON.stringify((await api.settings.get('plugins')) ?? {}) + JSON.stringify((await api.settings.get('connectors')) ?? {}),
       // There must be no getter at all, not merely a filtered one.
       getterExists: typeof api.settings.getSecret,
     };

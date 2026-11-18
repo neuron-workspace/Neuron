@@ -10,6 +10,7 @@ const aiClaude: PluginModule = {
     author: 'Neuron',
     description: 'Chat with Anthropic Claude about the note you are editing. Calls the Claude API through the desktop app.',
     category: 'ai',
+    connector: { id: 'anthropic', name: 'Claude', description: 'Anthropic Claude models, with your API key.' },
     configSchema: [
       { key: 'apiKey', label: 'Anthropic API key', type: 'password', placeholder: 'sk-ant-…', description: 'Stored in the main process. It is never readable by the app UI or by any plugin, including this one.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'claude-opus-4-8', description: 'Optional. Defaults to claude-opus-4-8.' },
@@ -22,11 +23,10 @@ const aiClaude: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
-          pluginId="ai-claude"
           host={runtime}
           provider="anthropic"
           defaultModel="claude-opus-4-8"
-          emptyHint="Ask Claude to summarize, rewrite, or expand the note you have open. Add your API key in plugin settings first."
+          emptyHint="Ask Claude to summarize, rewrite, or expand the note you have open. Set up Claude in Settings › Connectors first."
         />
       ),
     });

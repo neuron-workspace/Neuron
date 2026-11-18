@@ -253,16 +253,38 @@ export async function openSettings(app: ElectronApplication, page: Page, section
 }
 
 /**
- * Switch a built-in plugin on or off from the Settings window, then close it.
- * The workspace window picks the change up without a reload.
+ * Open this workspace window's Workspace settings dialog and return it.
+ * Plugins opens through the palette, which is there whatever the sidebar
+ * shows; General through the workspace switcher.
  */
-export async function setPluginEnabled(app: ElectronApplication, page: Page, name: string, on = true) {
-  const settings = await openSettings(app, page, 'plugins');
-  await settings.getByPlaceholder('Search plugins').fill(name);
-  const toggle = settings.getByRole('switch', { name: `Enable ${name}` });
+export async function openWorkspaceSettings(page: Page, section: 'plugins' | 'general' = 'plugins') {
+  if (section === 'plugins') {
+    await page.getByRole('button', { name: /Search & commands/ }).click();
+    const palette = page.locator('[role="dialog"]');
+    await palette.locator('input').first().fill('Plugins');
+    await palette.getByRole('option', { name: /Plugins & integrations/ }).click();
+  } else {
+    await page.locator('.titlebar').getByRole('button').first().click();
+    await page.getByRole('menuitem', { name: 'Workspace settings…' }).click();
+  }
+  const dialog = page.locator('[data-workspace-settings]');
+  await expect(dialog).toHaveAttribute('data-workspace-settings', section);
+  return dialog;
+}
+
+/**
+ * Switch a built-in plugin on or off for this window's workspace, in its
+ * Workspace settings dialog, then close the dialog. `app` is unused now that
+ * this happens in the workspace window; it stays so callers need not change.
+ */
+export async function setPluginEnabled(_app: ElectronApplication, page: Page, name: string, on = true) {
+  const dialog = await openWorkspaceSettings(page, 'plugins');
+  await dialog.getByPlaceholder('Search plugins').fill(name);
+  const toggle = dialog.getByRole('switch', { name: `Enable ${name}` });
   await expect(toggle).toBeVisible();
   await toggle.setChecked(on);
-  await settings.close();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
 }
 
 /** URLs the app handed to the OS browser, recorded by the stub above. */

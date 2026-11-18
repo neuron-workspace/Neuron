@@ -1,44 +1,38 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Blocks, FolderGit2, Info, Keyboard, Palette, PencilLine, Settings, SlidersHorizontal } from 'lucide-react';
+import { FolderGit2, Info, Keyboard, Palette, PencilLine, Plug, Settings } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
-import { isSettingsSection, type SettingsSection } from '../../main/workspace-windows';
+import { settingsSectionOf, type SettingsSection } from '../../main/workspace-windows';
 import type { Appearance } from '../lib/theme';
 import type { Bindings } from '../lib/keybindings';
-import type { WorkbenchLayout } from '../lib/layout';
 import { cn } from '../lib/utils';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { AboutSettings, AppearanceSettings, EditorSettings, KeyboardSettings, type PropertiesSettings } from './SettingsPage';
-import PluginsPage from './PluginsPage';
+import ConnectorsPage from './ConnectorsPage';
 import RepositoriesPage from './RepositoriesPage';
 
 const APP_SECTIONS: { id: SettingsSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
   { id: 'editor', label: 'Editor', icon: PencilLine },
-  { id: 'plugins', label: 'Plugins', icon: Blocks },
+  { id: 'connectors', label: 'Connectors', icon: Plug },
   { id: 'workspaces', label: 'Workspaces', icon: FolderGit2 },
   { id: 'about', label: 'About', icon: Info },
 ];
-
-const GENERAL_ICON = SlidersHorizontal;
 
 const HEADINGS: Record<SettingsSection, { title: string; description?: string }> = {
   appearance: { title: 'Appearance', description: 'Presets update the whole workspace immediately.' },
   keyboard: { title: 'Keyboard' },
   editor: { title: 'Editor' },
-  plugins: { title: 'Plugins & integrations' },
+  connectors: { title: 'Connectors', description: 'Services you set up once and use in every workspace.' },
   workspaces: { title: 'Workspaces', description: 'A workspace is just a folder of notes — local or in a synced folder like OneDrive or Google Drive.' },
   about: { title: 'About' },
-  workspace: { title: 'General', description: 'These apply to this workspace only.' },
 };
 
 function initialSection(): SettingsSection {
-  const asked = new URLSearchParams(window.location.search).get('section');
-  return isSettingsSection(asked) ? asked : 'appearance';
+  return settingsSectionOf(new URLSearchParams(window.location.search).get('section')) ?? 'appearance';
 }
 
-function SectionRow({ label, icon: Icon, selected, onSelect }: { label: string; icon: React.ComponentType<{ className?: string }>; selected: boolean; onSelect: () => void }) {
+/** A row in a settings section list; the Workspace settings dialog uses it too. */
+export function SectionRow({ label, icon: Icon, selected, onSelect }: { label: string; icon: React.ComponentType<{ className?: string }>; selected: boolean; onSelect: () => void }) {
   return (
     <button type="button" aria-current={selected ? 'page' : undefined} onClick={onSelect}
       className={cn('interactive flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)]',
@@ -49,36 +43,6 @@ function SectionRow({ label, icon: Icon, selected, onSelect }: { label: string; 
   );
 }
 
-function WorkspaceGeneral({ workspace, onRenamed }: { workspace: RepositoryInfo; onRenamed: (repo: RepositoryInfo) => void }) {
-  const [draft, setDraft] = useState(workspace.name);
-  useEffect(() => setDraft(workspace.name), [workspace.name, workspace.path]);
-  const save = async () => {
-    const result = await window.electronAPI.repository.setName(workspace.path, draft);
-    if (result?.repository) onRenamed(result.repository);
-  };
-  return (
-    <div className="space-y-6">
-      <div>
-        <label htmlFor="workspace-name" className="text-[13px] font-medium text-[var(--ink)]">Name</label>
-        <div className="mt-1.5 flex items-center gap-2">
-          <Input id="workspace-name" value={draft} onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void save(); }} className="h-8 max-w-sm" />
-          <Button size="sm" variant="outline" disabled={draft.trim() === workspace.name} onClick={() => void save()}>Save name</Button>
-        </div>
-        <p className="mt-1 text-xs text-[var(--ink-muted)]">Shown in the workspace switcher. Leave it empty to use the folder name.</p>
-      </div>
-      <div>
-        <p id="workspace-folder-label" className="text-[13px] font-medium text-[var(--ink)]">Folder</p>
-        <div className="mt-1.5 flex items-center gap-2">
-          <code aria-labelledby="workspace-folder-label" title={workspace.path} className="min-w-0 truncate font-mono text-xs text-[var(--ink-secondary)]">{workspace.path}</code>
-          <Button size="sm" variant="outline" className="shrink-0" onClick={() => void window.electronAPI.repository.reveal(workspace.path)}>Reveal</Button>
-        </div>
-      </div>
-      <p className="text-xs text-[var(--ink-muted)]">Layout for this workspace is set in .neuron/layout.json.</p>
-    </div>
-  );
-}
-
 interface SettingsWindowProps {
   appearance: Appearance;
   onAppearanceChange: (appearance: Appearance) => void;
@@ -86,7 +50,6 @@ interface SettingsWindowProps {
   onBindingsChange: (bindings: Bindings) => void;
   properties: PropertiesSettings;
   onPropertiesChange: (properties: PropertiesSettings) => void;
-  layout: WorkbenchLayout;
   recents: RepositoryInfo[];
   onCreateRepo: () => void;
   onOpenRepo: () => void;
@@ -111,7 +74,8 @@ export default function SettingsWindow(props: SettingsWindowProps) {
     loadOpener();
     // Another window asked for a section, possibly from another workspace.
     const unsubscribe = window.electronAPI?.windowControls.onShowSection((asked) => {
-      if (isSettingsSection(asked)) setSection(asked);
+      const next = settingsSectionOf(asked);
+      if (next) setSection(next);
       loadOpener();
     });
     // Workspaces open and close in other windows while this one waits.
@@ -123,18 +87,15 @@ export default function SettingsWindow(props: SettingsWindowProps) {
 
   const heading = HEADINGS[section];
   // The same icon as the section's row in the list beside it.
-  const HeadingIcon = section === 'workspace' ? GENERAL_ICON : APP_SECTIONS.find((row) => row.id === section)!.icon;
+  const HeadingIcon = APP_SECTIONS.find((row) => row.id === section)!.icon;
   let content: React.ReactNode;
   switch (section) {
     case 'appearance': content = <AppearanceSettings appearance={props.appearance} onAppearanceChange={props.onAppearanceChange} />; break;
     case 'keyboard': content = <KeyboardSettings bindings={props.bindings} onBindingsChange={props.onBindingsChange} />; break;
     case 'editor': content = <EditorSettings properties={props.properties} onPropertiesChange={props.onPropertiesChange} />; break;
-    case 'plugins': content = <PluginsPage layout={props.layout} />; break;
+    case 'connectors': content = <ConnectorsPage />; break;
     case 'workspaces': content = <RepositoriesPage opener={opener} recents={props.recents} onCreate={props.onCreateRepo} onOpen={props.onOpenRepo} onSwitch={props.onSwitchRepo} onReload={reload} />; break;
     case 'about': content = <AboutSettings />; break;
-    case 'workspace': content = opener
-      ? <WorkspaceGeneral workspace={opener} onRenamed={(repo) => { setOpener(repo); props.onReloadRepos(); }} />
-      : <p className="text-sm text-[var(--ink-muted)]">Open a workspace to change its settings.</p>; break;
   }
 
   return (
@@ -148,16 +109,6 @@ export default function SettingsWindow(props: SettingsWindowProps) {
           {APP_SECTIONS.map((row) => (
             <SectionRow key={row.id} label={row.label} icon={row.icon} selected={section === row.id} onSelect={() => setSection(row.id)} />
           ))}
-          <div role="group" aria-label="This workspace" className="mt-4 flex flex-col gap-0.5">
-            {opener ? (
-              <>
-                <p className="truncate px-2 pb-1 text-xs text-[var(--ink-muted)]" title={opener.path}>{opener.name}</p>
-                <SectionRow label="General" icon={GENERAL_ICON} selected={section === 'workspace'} onSelect={() => setSection('workspace')} />
-              </>
-            ) : (
-              <p className="px-2 text-xs leading-5 text-[var(--ink-muted)]">Open a workspace to change its settings.</p>
-            )}
-          </div>
         </nav>
         <main className="shell-card flex min-w-0 flex-1 flex-col" data-settings-section={section}>
           <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">

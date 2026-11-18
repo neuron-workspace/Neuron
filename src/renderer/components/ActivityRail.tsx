@@ -5,7 +5,7 @@ import { cn } from '../lib/utils';
 
 type View = 'notes' | 'gallery';
 export type SidebarMode = 'files' | 'search' | 'tags';
-/** The Settings window sections the sidebar opens. */
+/** What the sidebar opens: Workspace settings for 'plugins', the Settings window for the others. */
 export type SettingsTarget = 'plugins' | 'workspaces' | 'appearance';
 
 interface ActivityRailProps {
@@ -22,7 +22,7 @@ interface ActivityRailProps {
   dragHandle: React.ReactNode;
   /** Select the content shown below the navigation rows. */
   onSelectMode: (mode: SidebarMode) => void;
-  /** Plugins, Workspaces and Settings open the Settings window at that section. */
+  /** Plugins opens this workspace's settings; Workspaces and Settings open the Settings window. */
   onOpenSettings: (section: SettingsTarget) => void;
 }
 

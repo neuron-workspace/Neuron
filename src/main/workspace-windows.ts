@@ -6,13 +6,25 @@
  */
 export type WindowKind = 'workspace' | 'settings';
 
-/** The sections of the Settings window. `workspace` is the opener's own settings. */
-export const SETTINGS_SECTIONS = ['appearance', 'keyboard', 'editor', 'plugins', 'workspaces', 'about', 'workspace'] as const;
+/** The sections of the Settings window. */
+export const SETTINGS_SECTIONS = ['appearance', 'keyboard', 'editor', 'connectors', 'workspaces', 'about'] as const;
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
+
+/**
+ * Old section ids, still accepted from older callers. Plugins became
+ * Connectors; a workspace's own settings moved into its window.
+ */
+export const SETTINGS_ALIASES: Record<string, SettingsSection> = { plugins: 'connectors', workspace: 'appearance' };
 
 /** Shared by main, which gets this id over IPC, and the renderer, which reads it from its URL. */
 export function isSettingsSection(id: unknown): id is SettingsSection {
   return typeof id === 'string' && (SETTINGS_SECTIONS as readonly string[]).includes(id);
+}
+
+/** The section an id asks for, aliases included, or null for anything else. */
+export function settingsSectionOf(id: unknown): SettingsSection | null {
+  if (isSettingsSection(id)) return id;
+  return typeof id === 'string' && Object.prototype.hasOwnProperty.call(SETTINGS_ALIASES, id) ? SETTINGS_ALIASES[id] : null;
 }
 
 export interface WindowSummary {

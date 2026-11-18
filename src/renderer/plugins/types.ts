@@ -18,8 +18,20 @@ export interface PluginManifest {
   author?: string;
   description: string;
   category: PluginCategory;
-  /** Fields the marketplace renders into a config form (e.g. API key, endpoint). */
+  /**
+   * Config fields. For a plugin with a `connector` they are that connector's
+   * settings, set once in Settings › Connectors for every workspace; otherwise
+   * they are options of this plugin, per workspace.
+   */
   configSchema?: PluginConfigField[];
+  /** The global service this plugin uses. Its id is also the provider name main serves AI requests under. */
+  connector?: ConnectorInfo;
+}
+
+export interface ConnectorInfo {
+  id: string;
+  name: string;
+  description: string;
 }
 
 /** Workspace HTML app discovered under plugins/<folder>/; never activated in the built-in host. */

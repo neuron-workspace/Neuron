@@ -28,13 +28,11 @@ export interface AiMessage {
 }
 
 export interface AiCompleteRequest {
+  /** A connector id. Main answers with that connector's stored settings; the key itself never crosses IPC. */
   provider: string;
-  /** Identifies whose stored secret to use. The key itself never crosses IPC. */
-  pluginId?: string;
   model?: string;
   system?: string;
   messages: AiMessage[];
-  config?: Record<string, string>;
 }
 
 export interface AiCompleteResult {

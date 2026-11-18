@@ -1,4 +1,4 @@
-import { test, expect, openSettings } from './fixtures';
+import { test, expect, openSettings, openWorkspaceSettings, setPluginEnabled } from './fixtures';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -79,41 +79,125 @@ test('Settings opens in its own window, and a theme change there reaches the wor
   await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark');
 });
 
-test('Plugins opens Settings at Plugins, and the workspace window keeps its notes and graph', async ({ app, page }) => {
+/** The settings key a workspace's plugins are kept under, normalised as the app does. */
+const pluginsKey = (dir: string) => `plugins:${process.platform === 'win32' || process.platform === 'darwin' ? dir.toLowerCase() : dir}`;
+
+test('Plugins opens Workspace settings in this window, and the notes and graph stay', async ({ app, page }) => {
   await expect(page.locator('.note-row').first()).toBeVisible();
-  const settings = await openSettings(app, page, 'plugins', () => sidebarButton(page, 'Plugins & integrations').click());
-  await expect(settings.getByRole('heading', { name: 'Plugins & integrations', level: 1 })).toBeVisible();
-  // Nothing about plugins took over the workspace window's main area.
-  await expect(page.getByPlaceholder('Search plugins')).toHaveCount(0);
+  await sidebarButton(page, 'Plugins & integrations').click();
+  const dialog = page.locator('[data-workspace-settings="plugins"]');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Plugins' })).toBeVisible();
+  // No Settings window: plugins are this workspace's business.
+  expect(app.windows()).toHaveLength(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
   await expect(page.locator('.note-row').first()).toBeVisible();
 
   await sidebarButton(page, 'Graph').click();
   await expect(page.getByRole('complementary', { name: 'Workspace graph' })).toBeVisible();
 });
 
-test('a plugin switched on and off in Settings adds and removes its panel in the workspace window', async ({ app, page }) => {
+test('a plugin switched on and off in Workspace settings adds and removes its panel', async ({ page, workspace }) => {
   await page.getByRole('button', { name: 'Show panel', exact: true }).click();
   const daily = page.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Daily', exact: true });
   await expect(page.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Graph', exact: true })).toBeVisible();
   await expect(daily).toHaveCount(0);
 
-  const settings = await openSettings(app, page, 'plugins');
-  await settings.getByPlaceholder('Search plugins').fill('Daily Notes');
-  const toggle = settings.getByRole('switch', { name: 'Enable Daily Notes' });
+  const dialog = await openWorkspaceSettings(page, 'plugins');
+  await dialog.getByPlaceholder('Search plugins').fill('Daily Notes');
+  const toggle = dialog.getByRole('switch', { name: 'Enable Daily Notes' });
   await toggle.check();
-  // No reload: the workspace window follows the setting.
+  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
+  await page.keyboard.press('Escape');
   await expect(daily).toBeVisible();
-  await toggle.uncheck();
+  const again = await openWorkspaceSettings(page, 'plugins');
+  await again.getByPlaceholder('Search plugins').fill('Daily Notes');
+  await again.getByRole('switch', { name: 'Enable Daily Notes' }).uncheck();
+  await page.keyboard.press('Escape');
   await expect(daily).toHaveCount(0);
-  // Settings itself never echoed the value back over the newer one.
-  await expect.poll(() => api(page, 'api.settings.get("plugins")').then((s: any) => s?.enabled?.['daily-calendar'])).toBe(false);
+  // Kept per workspace, and the old global record is not written.
+  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(false);
+  expect(await api(page, 'api.settings.get("plugins")')).toBeNull();
+});
+
+test('the Terminal switched on in one workspace stays off in another', async ({ app, page, workspace }) => {
+  const other = otherWorkspace(workspace);
+  const second = await nextWindow(app, () => page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.switch(dir), other));
+  const offIn = (p: Page) => p.getByRole('button', { name: 'Enable the Terminal plugin' });
+  const onIn = (p: Page) => p.getByRole('button', { name: /^(Show|Hide) terminal$/ });
+
+  // Terminal is on by default; switch it off in both, then back on in the first only.
+  await setPluginEnabled(app, second, 'Workspace Terminal', false);
+  await expect(offIn(second)).toBeVisible();
+  await setPluginEnabled(app, page, 'Workspace Terminal', false);
+  await expect(offIn(page)).toBeVisible();
+  await setPluginEnabled(app, page, 'Workspace Terminal', true);
+  await expect(onIn(page)).toBeVisible();
+  await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: 'Bottom plugin peek' }).getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
+  // The other workspace's window did not follow.
+  await expect(offIn(second)).toBeVisible();
+  expect(await api(second, `api.settings.get(${JSON.stringify(pluginsKey(other))})`).then((s: any) => s?.enabled?.terminal)).toBe(false);
+});
+
+test('Settings shows Connectors and no plugin switches; a saved key is never shown again', async ({ app, page }) => {
+  const settings = await openSettings(app, page, 'connectors');
+  await expect(settings.getByRole('heading', { name: 'Connectors', level: 1 })).toBeVisible();
+  await expect(settings.getByRole('switch')).toHaveCount(0);
+  await expect(settings.getByPlaceholder('Search plugins')).toHaveCount(0);
+  for (const name of ['Claude', 'OpenAI', 'Gemini', 'OpenRouter', 'Local model']) {
+    await expect(settings.getByRole('heading', { name, exact: true, level: 3 })).toBeVisible();
+  }
+
+  const claude = settings.locator('[data-connector="anthropic"]');
+  await expect(claude).toContainText('Not set up');
+  await claude.getByRole('button', { name: 'Set up Claude' }).click();
+  await claude.getByLabel('Anthropic API key').fill('sk-ant-e2e-WRITE-ONLY');
+  await claude.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(claude).toContainText('Connected');
+  // Write-only: the key is nowhere in the page, not even in a field's value.
+  const leaked = () => settings.evaluate(() => document.documentElement.outerHTML.includes('WRITE-ONLY')
+    || [...document.querySelectorAll('input')].some((i) => i.value.includes('WRITE-ONLY')));
+  expect(await leaked()).toBe(false);
+  await claude.getByRole('button', { name: 'Change Claude' }).click();
+  await expect(claude.getByText('Saved', { exact: true })).toBeVisible();
+  await expect(claude.getByRole('button', { name: 'Replace' })).toBeVisible();
+  expect(await leaked()).toBe(false);
+  await claude.getByRole('button', { name: 'Cancel' }).click();
+
+  // Global: the workspace window sees it as set up too, without a reload.
+  const dialog = await openWorkspaceSettings(page, 'plugins');
+  await expect(dialog.locator('[data-plugin-row="ai-claude"] [data-connector-line="anthropic"]')).toContainText('Uses Claude');
+
+  await claude.getByRole('button', { name: 'Disconnect Claude' }).click();
+  await expect(claude).toContainText('Not set up');
+  await expect(dialog.locator('[data-plugin-row="ai-claude"]')).toContainText('Set up Claude in Settings');
+});
+
+test('a plugin whose connector is not set up offers to set it up, in Settings at Connectors', async ({ app, page }) => {
+  const dialog = await openWorkspaceSettings(page, 'plugins');
+  const row = dialog.locator('[data-plugin-row="ai-openai"]');
+  await expect(row).toContainText('Set up OpenAI in Settings');
+  const [settings] = await Promise.all([app.waitForEvent('window'), row.getByRole('button', { name: 'Set up', exact: true }).click()]);
+  await settings.waitForLoadState('domcontentloaded');
+  await expect(settings.locator('[data-settings-section="connectors"]')).toBeVisible();
+});
+
+test('the AI bridge refuses a provider with no connector set up, and never takes a key from the request', async ({ page }) => {
+  const result = await api(page, 'api.ai.complete({ provider: "openai", messages: [{ role: "user", content: "hi" }], config: { apiKey: "sk-from-renderer" } })') as { success: boolean; error: string };
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('not set up');
+  for (const junk of ['"toString"', '"__proto__"', '42', 'null']) {
+    expect((await api(page, `api.ai.complete({ provider: ${junk}, messages: [{ role: "user", content: "hi" }] })`) as { success: boolean }).success).toBe(false);
+  }
 });
 
 test('Settings sections switch, and asking again brings the same window forward at the new section', async ({ app, page }) => {
   const settings = await openSettings(app, page, 'appearance');
   const sections = settings.getByRole('navigation', { name: 'Settings sections' });
   const title = settings.getByRole('heading', { level: 1 });
-  for (const [row, heading] of [['Keyboard', 'Keyboard'], ['Editor', 'Editor'], ['Plugins', 'Plugins & integrations'], ['Workspaces', 'Workspaces'], ['About', 'About'], ['Appearance', 'Appearance']]) {
+  for (const [row, heading] of [['Keyboard', 'Keyboard'], ['Editor', 'Editor'], ['Connectors', 'Connectors'], ['Workspaces', 'Workspaces'], ['About', 'About'], ['Appearance', 'Appearance']]) {
     await sections.getByRole('button', { name: row, exact: true }).click();
     await expect(title).toHaveText(heading);
     await expect(sections.getByRole('button', { name: row, exact: true })).toHaveAttribute('aria-current', 'page');
@@ -124,33 +208,41 @@ test('Settings sections switch, and asking again brings the same window forward 
   expect(again).toBe(settings);
   await expect(title).toHaveText('Workspaces');
   expect(app.windows()).toHaveLength(2);
-  await openSettings(app, page, 'plugins', () => sidebarButton(page, 'Plugins & integrations').click());
-  await expect(title).toHaveText('Plugins & integrations');
+  // The old ids still open something sensible.
+  await openSettings(app, page, 'connectors', () => api(page, 'api.windowControls.openPage("plugins")'));
+  await expect(title).toHaveText('Connectors');
+  await openSettings(app, page, 'appearance', () => api(page, 'api.windowControls.openPage("workspace")'));
+  await expect(title).toHaveText('Appearance');
   expect(app.windows()).toHaveLength(2);
 });
 
-test('This workspace › General shows the opener, and a rename there reaches its switcher', async ({ app, page, workspace }) => {
+test('Workspace settings… in the switcher opens General, and a rename there reaches the switcher', async ({ app, page, workspace }) => {
   await expect(page.locator('.note-row').first()).toBeVisible();
-  const settings = await openSettings(app, page, 'workspace');
-  const group = settings.getByRole('group', { name: 'This workspace' });
-  await expect(group).toContainText('workspace');
-  await expect(settings.getByRole('heading', { name: 'General', level: 1 })).toBeVisible();
-  await expect(settings.getByLabel('Folder')).toHaveText(workspace);
+  const dialog = await openWorkspaceSettings(page, 'general');
+  await expect(dialog.getByRole('heading', { name: 'General' })).toBeVisible();
+  await expect(dialog.getByLabel('Folder')).toHaveText(workspace);
 
-  const name = settings.getByLabel('Name', { exact: true });
+  const name = dialog.getByLabel('Name', { exact: true });
   await expect(name).toHaveValue('workspace');
   await name.fill('Field notes');
-  await settings.getByRole('button', { name: 'Save name' }).click();
+  await dialog.getByRole('button', { name: 'Save name' }).click();
+  await expect(dialog.getByRole('navigation', { name: 'Workspace settings sections' })).toContainText('Field notes');
+  // The dialog is modal, so the switcher behind it is reachable once it closes.
+  await page.keyboard.press('Escape');
   await expect(page.locator('.titlebar').getByRole('button', { name: /Field notes/ })).toBeVisible();
-  await expect(group).toContainText('Field notes');
+
+  // The Settings window no longer has a section for one workspace.
+  const settings = await openSettings(app, page, 'appearance');
+  await expect(settings.getByRole('group', { name: 'This workspace' })).toHaveCount(0);
+  await expect(settings.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'General' })).toHaveCount(0);
 });
 
-test('Settings opened from a window with no workspace has no workspace section', async ({ app, page }) => {
+test('Settings opened from a window with no workspace still opens, with no opener', async ({ app, page }) => {
   // Forget the open workspace in its own window, which leaves that window empty.
   await page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.remove(dir),
     (await api(page, 'api.repository.getCurrent()') as { path: string }).path);
   const settings = await openSettings(app, page, 'appearance');
-  await expect(settings.getByText('Open a workspace to change its settings.')).toBeVisible();
+  await expect(settings.getByRole('heading', { name: 'Appearance', level: 1 })).toBeVisible();
   expect(await api(settings, 'api.windowControls.openerWorkspace()')).toBeNull();
 });
 

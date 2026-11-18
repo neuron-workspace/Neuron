@@ -108,7 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Privileged plugin capabilities
   ai: {
-    complete: (request: { provider: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> }) =>
+    complete: (request: { provider: string; model?: string; system?: string; messages: AiMessage[] }) =>
       ipcRenderer.invoke('ai:complete', request),
   },
   net: {
