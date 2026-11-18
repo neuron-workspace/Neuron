@@ -26,8 +26,12 @@ import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { PluginProvider, usePlugins } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
-import { getSurface } from './surfaces';
+import { getKindSurface, getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
+import './surfaces/ImageSurface'; // registers the image surface
+import './surfaces/MediaSurface'; // registers the video and audio surface
+import './surfaces/TextSurface'; // registers the plain text surface
+import { fileKind, MEDIA_KINDS, OPENS_AS_FILE, type FileKind } from '../main/file-kinds';
 import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
@@ -84,6 +88,14 @@ const isUrl = (s: string | null): s is string => !!s && /^https?:\/\//.test(s);
 const SHELL_CONFIG = '.neuron/layout.json';
 const notInConfig = (path: string) => path !== '.neuron' && !path.startsWith('.neuron/');
 const NO_FILES: string[] = [];
+/** The kind a listed file opens as: by name, or text when main found an unknown name to start as text. */
+const kindIn = (path: string, text: ReadonlySet<string>): FileKind => {
+  const kind = fileKind(path);
+  return kind === 'other' && text.has(path) ? 'text' : kind;
+};
+/** A file outside the note listing that opens in a surface of its own (image, video, audio, text). */
+const opensAsFile = (path: string, text: ReadonlySet<string>) => OPENS_AS_FILE.includes(kindIn(path, text));
+const isMediaPath = (path: string) => MEDIA_KINDS.includes(fileKind(path));
 import type { RepositoryInfo, WorkspaceEntries } from './electron.d';
 import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appearance } from './lib/theme';
 
@@ -413,7 +425,11 @@ export default function App() {
       const [fileList, listing] = await Promise.all([window.electronAPI.listNotes(), loadEntries()]);
       setNotes(fileList);
       if (listing) setEntries(listing);
-      setTabState((current) => removeMissing(current, fileList));
+      // An image or text file open in a tab is not a note but is still there.
+      const listed = listing ? new Set(listing.files) : null;
+      const text = new Set(listing?.text ?? []);
+      setTabState((current) => removeMissing(current, (path) => fileList.includes(path)
+        || (listed ? listed.has(path) && opensAsFile(path, text) : opensAsFile(path, text))));
       // Configuration is reachable in the explorer but is not knowledge: it is
       // not a graph node, it has no wiki-links, its words are not yours, and it
       // should not turn up in a search for something you wrote. `notes` keeps
@@ -588,6 +604,8 @@ export default function App() {
     openNoteRef.current = { path: selectedNote && !isUrl(selectedNote) ? selectedNote : null, saving: false };
     (async () => {
       if (!selectedNote || isUrl(selectedNote) || !window.electronAPI) { setNoteContent(''); setSaveState('idle'); return; }
+      // Media streams from neuron-file://; its bytes never come through here.
+      if (isMediaPath(selectedNote)) { setNoteContent(''); setSaveState('saved'); return; }
       try {
         const content = await window.electronAPI.readNote(selectedNote);
         if (!cancelled) { setNoteContent(content); setSaveState('saved'); }
@@ -601,6 +619,8 @@ export default function App() {
   // A preview by default: most routes here are a look at a file, and only a
   // double click, creating something or editing it says to keep the tab.
   const handleSelectNote = useCallback((note: string, options?: { keep?: boolean }) => {
+    // Programs and scripts never open, whichever route asked (a wiki-link, say).
+    if (!isUrl(note) && fileKind(note) === 'blocked') { setNotice(`Neuron does not open programs or scripts. “${note}” stays in its folder.`); return; }
     setTabState((current) => openTab(current, note, options?.keep === true));
     setView('notes');
     // Opening a file leaves home, whichever route got here -- sidebar, explorer,
@@ -669,17 +689,26 @@ export default function App() {
 
   // Files Neuron does not open, and every folder on disk. Shown beside the
   // notes so a folder of PDFs or images does not look empty, but never read.
-  const otherFiles = useMemo(() => {
-    if (!entries) return [];
-    const known = new Set(notes);
-    return entries.files.filter((path) => !known.has(path));
-  }, [entries, notes]);
+  // Images, video, audio and text open in surfaces of their own; programs,
+  // scripts and binaries stay other files.
+  const noteSet = useMemo(() => new Set(notes), [notes]);
+  const textFiles = useMemo(() => new Set(entries?.text ?? []), [entries]);
+  const { openFiles, otherFiles } = useMemo(() => {
+    const open: string[] = [];
+    const other: string[] = [];
+    for (const path of entries?.files ?? []) {
+      if (noteSet.has(path)) continue;
+      (opensAsFile(path, textFiles) ? open : other).push(path);
+    }
+    return { openFiles: open, otherFiles: other };
+  }, [entries, noteSet, textFiles]);
   const treeFolders = useMemo(
     () => [...new Set([...createdFolders, ...(entries?.folders ?? [])])],
     [createdFolders, entries],
   );
   const explorerOther = useMemo(() => otherFiles.filter(notInConfig), [otherFiles]);
-  const explorerAllPaths = useMemo(() => [...explorerPaths, ...explorerOther], [explorerPaths, explorerOther]);
+  const explorerFiles = useMemo(() => [...explorerPaths, ...openFiles.filter(notInConfig)], [explorerPaths, openFiles]);
+  const explorerAllPaths = useMemo(() => [...explorerFiles, ...explorerOther], [explorerFiles, explorerOther]);
   const explorerFolders = useMemo(() => treeFolders.filter(notInConfig), [treeFolders]);
   const revealFile = useCallback((path: string) => {
     void window.electronAPI?.revealInFolder(path).then((result) => {
@@ -845,12 +874,12 @@ export default function App() {
     void window.electronAPI?.settings.set('editorSplit', path);
   }, []);
   const explorerState = useMemo(() => ({
-    atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerPaths,
+    atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerFiles,
     otherFiles: explorerOther, fileInfo: entries?.info ?? {}, skipped: entries?.skipped ?? 0, truncated: entries?.truncated ?? false,
     folders: explorerFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
     openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder, reveal: revealFile,
     editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
-  }), [atHome, repository, explorerPaths, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
+  }), [atHome, repository, explorerFiles, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
     handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents]);
 
   // A deleted or renamed file, or another workspace, simply has no side pane.
@@ -1041,8 +1070,12 @@ export default function App() {
   );
 
   const browsing = isUrl(selectedNote);
-  const Surface = selectedNote && !browsing ? getSurface(selectedNote) : undefined;
-  const surfaceEditing = !!(selectedNote && Surface && surfaceSourceMode[selectedNote]);
+  // A file outside the note listing (an image, a video, a JSON file) opens in
+  // the surface for its kind. It has no separate source view: text is already
+  // source, and media has none to edit.
+  const KindSurface = selectedNote && !browsing && !noteSet.has(selectedNote) ? getKindSurface(kindIn(selectedNote, textFiles)) : undefined;
+  const Surface = selectedNote && !browsing ? getSurface(selectedNote) ?? KindSurface : undefined;
+  const surfaceEditing = !!(selectedNote && Surface && !KindSurface && surfaceSourceMode[selectedNote]);
   const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
 
   const editorHeader = (
@@ -1055,8 +1088,8 @@ export default function App() {
           {selectedNote.includes('/') && <span>{selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1)}</span>}
           <span className="text-[var(--ink-secondary)]">{selectedNote.split('/').pop()}</span>
         </div>
-        {!browsing && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{saveLabel}</span>}
-      {selectedNote && Surface ? (
+        {!browsing && !isMediaPath(selectedNote) && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{saveLabel}</span>}
+      {KindSurface ? null : selectedNote && Surface ? (
           <div className="flex shrink-0 items-center">
             <Segmented
               label="Surface mode"
@@ -1102,7 +1135,7 @@ export default function App() {
             // A CSV is read-only as source: the editor would turn CRLF into LF on
             // the first keystroke, and a CSV Neuron does not manage must not change.
             ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} readOnly={isCsvPath(selectedNote)} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
-            : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
+            : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} fileSize={entries?.info[selectedNote]?.size} /></SurfaceBoundary>
         ) : (
           <>
             {editorMode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={handleContentChange} onToggleTask={handleToggleTask} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
@@ -1255,6 +1288,7 @@ export default function App() {
                   repositoryName={repository.name}
                   folders={selectedTag ? createdFolders : treeFolders}
                   otherFiles={selectedTag ? NO_FILES : otherFiles}
+                  openFiles={selectedTag ? NO_FILES : openFiles}
                   onReveal={revealFile}
                   revealedFolder={revealedFolder}
                   tags={tags}

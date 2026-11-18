@@ -82,6 +82,8 @@ export interface ElectronAPI {
   listEntries: () => Promise<WorkspaceEntries>;
   /** Show a workspace file in the system file manager. Never opens it. */
   revealInFolder: (relativePath: string) => Promise<{ success: boolean }>;
+  /** A neuron-file:// URL for a workspace image, video or audio file ('' without a workspace). */
+  fileUrl: (relativePath: string) => string;
   /** A file or folder appeared or went away. */
   onWorkspaceChanged: (callback: () => void) => () => void;
   readNote: (relativePath: string) => Promise<string>;

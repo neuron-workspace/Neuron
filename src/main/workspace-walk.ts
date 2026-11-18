@@ -12,6 +12,8 @@ export interface WorkspaceEntries {
   skipped: number;
   /** The walk stopped at the limit. */
   truncated: boolean;
+  /** Files with a name the kind table does not know whose first bytes are text. Filled by main, not the walk. */
+  text?: string[];
 }
 
 export interface WalkFs {

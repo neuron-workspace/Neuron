@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 interface RepositoryInfo { path: string; name: string; cloud: boolean }
 interface AiMessage { role: 'user' | 'assistant'; content: string }
+let fileBase: string | undefined;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // The renderer used to sniff this from `navigator.platform`, which is
@@ -14,6 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listNotes: () => ipcRenderer.invoke('notes:list'),
   listEntries: () => ipcRenderer.invoke('workspace:entries'),
   revealInFolder: (relativePath: string) => ipcRenderer.invoke('workspace:reveal', relativePath),
+  // A neuron-file:// URL for a workspace image, video or audio file, carrying
+  // this window's token. Asked for once; '' when this window has no workspace.
+  fileUrl: (relativePath: string) => {
+    fileBase ??= ipcRenderer.sendSync('workspace:file-base') ?? undefined;
+    return fileBase ? fileBase + encodeURIComponent(relativePath) : '';
+  },
   onWorkspaceChanged: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('workspace:changed', listener);

@@ -3,7 +3,7 @@ import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { EditorView } from '@codemirror/view';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, syntaxHighlighting, type LanguageSupport } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 
 // Source colours come from the app theme. The stock CodeMirror themes paint
@@ -37,10 +37,12 @@ interface EditorProps {
   autoHeight?: boolean;
   autoFocus?: boolean;
   colorScheme?: 'dark' | 'light';
+  /** The language to highlight instead of Markdown; null for plain text. */
+  language?: LanguageSupport | null;
 }
 
 const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
-  { value, onChange, readOnly = false, autoHeight = false, autoFocus = false, colorScheme = 'dark' },
+  { value, onChange, readOnly = false, autoHeight = false, autoFocus = false, colorScheme = 'dark', language },
   ref
 ) {
   React.useEffect(() => {
@@ -77,10 +79,10 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
         theme={sourceThemes[colorScheme]}
         extensions={[
           sourceHighlight,
-          markdown({
+          ...(language === undefined ? [markdown({
             base: markdownLanguage,
             codeLanguages: languages,
-          }),
+          })] : language ? [language] : []),
           // Markdown paragraphs are one long line each. Without wrapping, the
           // split view cut every sentence off at the pane edge and asked the
           // writer to scroll sideways through their own prose.

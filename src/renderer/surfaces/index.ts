@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import type { FileKind } from '../../main/file-kinds';
 
 /** A note in memory: repo-relative path + raw file content. */
 export interface NoteData {
@@ -31,6 +32,8 @@ export interface SurfaceProps {
   onTagClick?: (tag: string) => void;
   removeEmptyFrontmatter?: boolean;
   defaultPropertiesCollapsed?: boolean;
+  /** Size on disk in bytes, from the workspace listing, when known. */
+  fileSize?: number;
 }
 
 export type Surface = ComponentType<SurfaceProps>;
@@ -46,6 +49,21 @@ export function registerSurface(extension: string, surface: Surface): void {
 export function getSurface(path: string): Surface | undefined {
   const ext = path.split('.').pop()?.toLowerCase();
   return ext ? registry.get(ext) : undefined;
+}
+
+/**
+ * Surfaces by file kind, for files outside the note listing (images, video,
+ * audio, text). Not by extension: a .json in `.neuron/` is workspace
+ * configuration and keeps opening the way it always has.
+ */
+const kindRegistry = new Map<FileKind, Surface>();
+
+export function registerKindSurface(kind: FileKind, surface: Surface): void {
+  kindRegistry.set(kind, surface);
+}
+
+export function getKindSurface(kind: FileKind): Surface | undefined {
+  return kindRegistry.get(kind);
 }
 
 /** Extensions that are special surfaces (used to label/route in the UI). */
