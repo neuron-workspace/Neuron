@@ -17,7 +17,7 @@ export const areas = [
   [/^(components\/(RunButton|XtermTerminal)\.tsx|lib\/terminal-bus\.ts|plugins\/builtin\/terminal\.tsx)$/, ['run-button']],
   [/^(plugins\/(host\.tsx|builtin\/ai-[^/]+\.tsx|builtin\/AssistantPanel\.tsx)|views\/PluginsPage\.tsx)$/, ['secrets']],
   [/^(lib\/(sanitize-html|view-security)\.ts|surfaces\/HtmxViewSurface\.tsx)$/, ['security']],
-  // Snake is a workspace HTML app; its renderer host is the HTMX surface.
+  // Snake is a plain HTML view; its renderer host is the HTMX surface.
   [/^surfaces\/HtmxViewSurface\.tsx$/, ['snake']],
 ];
 

@@ -19,7 +19,6 @@ import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
 import SettingsWindow from './views/SettingsWindow';
 import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
-import { workspaceApps } from './views/PluginsPage';
 import type { SettingsSection } from '../main/workspace-windows';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
@@ -667,7 +666,6 @@ export default function App() {
     [createdFolders, entries],
   );
   const explorerOther = useMemo(() => otherFiles.filter(notInConfig), [otherFiles]);
-  const workspaceAppList = useMemo(() => workspaceApps([...notes, ...(entries?.files ?? [])]), [notes, entries]);
   const explorerAllPaths = useMemo(() => [...explorerPaths, ...explorerOther], [explorerPaths, explorerOther]);
   const explorerFolders = useMemo(() => treeFolders.filter(notInConfig), [treeFolders]);
   const revealFile = useCallback((path: string) => {
@@ -1350,7 +1348,6 @@ export default function App() {
             section={workspaceSettings}
             onSectionChange={setWorkspaceSettings}
             workspace={repository}
-            apps={workspaceAppList}
             layout={layout}
             onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })}
             onRenamed={() => void reloadRepoState()}

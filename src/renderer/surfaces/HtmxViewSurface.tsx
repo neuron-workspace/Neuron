@@ -4,7 +4,6 @@ import { AlertTriangle, FileWarning, Loader2, RotateCw, ShieldCheck, ShieldQuest
 import { Button } from '@/components/ui/button';
 import { registerSurface, type SurfaceProps } from './index';
 import type { HtmxViewOpenResult } from '../electron.d';
-import { useOptionalPlugins } from '../plugins/host';
 
 // The HTMX view tab. The document itself renders inside a sandboxed <webview>
 // (no Node, no preload, isolated in-memory partition) pointed at the loopback
@@ -89,19 +88,14 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   // Reload the tab (not the app) when this view's source or .neuron config
   // changes on disk. A fresh session re-reads manifest and permissions.
   useEffect(() => {
-    // Plain views use .neuron/manifests; a folder app's co-located marker may
-    // turn its index.html into an app. Reload when any applicable manifest moves.
     const manifestPath = `.neuron/manifests/${path.replace(/\.html$/i, '.json')}`;
     const legacyManifest = path.replace(/\.html$/i, '.neuron.json');
-    const slash = path.lastIndexOf('/');
-    const appManifest = slash >= 0 ? `${path.slice(0, slash)}/neuron.app.json` : null;
     return window.electronAPI.onNotesChanged((_event, changed) => {
       // Not variables.json: views write variables through the API and a reload
       // on every variable change would wipe in-page form state.
       const mine = changed === path
         || changed === manifestPath
         || changed === legacyManifest
-        || changed === appManifest
         || /^\.neuron\/(fragments|styles)(\/|$)/.test(changed)
         || changed === '.neuron'
         || changed === '.neuron/config.json';
@@ -218,24 +212,6 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   );
 }
 
-/**
- * A workspace app in plugins/<folder>/ opens only while it is on for this
- * workspace. Switched off, it does not start at all: no session, no webview.
- */
-function GatedHtmxViewSurface(props: SurfaceProps) {
-  const plugins = useOptionalPlugins();
-  const folder = /^plugins\/([^/]+)\/index\.html$/i.exec(props.path)?.[1];
-  if (folder && plugins && !plugins.isAppEnabled(folder)) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center" data-app-disabled={folder}>
-        <FileWarning className="h-6 w-6 text-[var(--ink-muted)]" />
-        <p className="max-w-sm text-sm text-[var(--ink-secondary)]">This app is off for this workspace. Turn it on in Workspace settings › Plugins.</p>
-      </div>
-    );
-  }
-  return <HtmxViewSurface {...props} />;
-}
-
-registerSurface('html', GatedHtmxViewSurface);
+registerSurface('html', HtmxViewSurface);
 
 export default HtmxViewSurface;

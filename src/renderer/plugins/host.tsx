@@ -24,9 +24,6 @@ const LEGACY_WORKSPACES_KEY = 'pluginsLegacyWorkspaces';
 /** Non-secret connector settings, by connector id. Secrets are in main's write-only store. */
 const CONNECTORS_KEY = 'connectors';
 
-/** An HTML app in the workspace's plugins/ folder, as an enabled-state id. */
-export const appPluginId = (folder: string) => `app:${folder}`;
-
 interface AppBridge {
   activeNote: string | null;
   noteContent: string;
@@ -45,8 +42,6 @@ interface PluginContextValue {
   /** The folder whose plugins these are, or null in a window with no workspace. */
   workspace: string | null;
   isEnabled: (id: string) => boolean;
-  /** Workspace apps are on unless switched off: they already ask before reaching anything. */
-  isAppEnabled: (folder: string) => boolean;
   setEnabled: (id: string, on: boolean) => void;
   /** This workspace's own options for a plugin with no connector. */
   getConfig: (id: string) => Record<string, string>;
@@ -219,7 +214,6 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
   );
   const getConfig = useCallback((id: string) => state.config[id] ?? {}, [state.config]);
   const isEnabled = useCallback((id: string) => state.enabled[id] ?? false, [state.enabled]);
-  const isAppEnabled = useCallback((folder: string) => state.enabled[appPluginId(folder)] ?? true, [state.enabled]);
 
   const connectorOf = useCallback(
     (pluginId: string) => {
@@ -359,7 +353,6 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
       mdxComponents,
       workspace,
       isEnabled,
-      isAppEnabled,
       setEnabled,
       getConfig,
       setConfig,
@@ -374,16 +367,11 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
       ready,
       panelsReady,
     }),
-    [manifests, panels, commands, mdxComponents, workspace, isEnabled, isAppEnabled, setEnabled, getConfig, setConfig, connectors, connectorOf,
+    [manifests, panels, commands, mdxComponents, workspace, isEnabled, setEnabled, getConfig, setConfig, connectors, connectorOf,
       connectorValues, savedSecrets, connectorStatus, saveConnector, disconnect, runtimeFor, ready, panelsReady],
   );
 
   return <PluginContext.Provider value={value}>{children}</PluginContext.Provider>;
-}
-
-/** The plugin host if there is one above, for code that also renders without it. */
-export function useOptionalPlugins(): PluginContextValue | null {
-  return useContext(PluginContext);
 }
 
 export function usePlugins(): PluginContextValue {

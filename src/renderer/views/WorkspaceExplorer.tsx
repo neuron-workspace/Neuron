@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AppWindow, ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon, Table2 } from 'lucide-react';
+import { ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon, Table2 } from 'lucide-react';
 import { breadcrumbs, describeCounts, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
 import { nextUntitled } from '../lib/untitled';
 import { NEW_FILE_KINDS, startingCompanions, startingContent, type NewFileKind } from '../lib/new-file';
@@ -43,20 +43,20 @@ interface WorkspaceExplorerProps {
 type Item = { path: string; name: string; kind: 'folder' | 'file'; extension: string; other?: boolean };
 const isNote = (path: string) => /\.(md|mdx)$/i.test(path);
 const wordCount = (content: string) => content.trim() ? content.trim().split(/\s+/u).length : 0;
-const fileType = (entry: Item, paths: string[]) => {
+const fileType = (entry: Item) => {
   if (entry.other) return 'Other file';
   if (isNote(entry.path)) return 'Note';
   if (entry.extension === 'db') return 'Database';
   if (entry.extension === 'canvas') return 'Canvas';
   if (entry.extension === 'csv') return 'Table';
-  if (entry.extension === 'html') return paths.includes((parentFolder(entry.path) ? parentFolder(entry.path) + '/' : '') + 'neuron.app.json') ? 'App' : 'Web view';
+  if (entry.extension === 'html') return 'Web view';
   return entry.extension ? entry.extension.toUpperCase() + ' file' : 'File';
 };
 
-function ItemIcon({ item, type }: { item: Item; type?: string }) {
+function ItemIcon({ item }: { item: Item }) {
   if (item.kind === 'folder') return <Folder className="explorer-folder-icon" fill="currentColor" strokeWidth={1.25} />;
   if (item.other) return <OtherFileIcon path={item.path} strokeWidth={1.5} />;
-  const Icon = type === 'App' ? AppWindow : ({ db: Database, canvas: Frame, csv: Table2, html: FileCode2, mmd: GitBranch,
+  const Icon = ({ db: Database, canvas: Frame, csv: Table2, html: FileCode2, mmd: GitBranch,
     mermaid: GitBranch, png: ImageIcon, jpg: ImageIcon, jpeg: ImageIcon, gif: ImageIcon, svg: ImageIcon, webp: ImageIcon }[item.extension] ?? FileText);
   return <Icon strokeWidth={1.5} />;
 }
@@ -117,7 +117,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
   }, [paths, folders, words]);
   const counts = (path: string) => stats.get(path) ?? { notes: 0, folders: 0, other: 0, words: 0 };
   // A grid tile has room for the total only; the list and the preview say what it is made of.
-  const detail = (item: Item) => item.kind === 'folder' ? describeCounts(counts(item.path), view === 'grid') : fileType(item, paths);
+  const detail = (item: Item) => item.kind === 'folder' ? describeCounts(counts(item.path), view === 'grid') : fileType(item);
   const children = React.useMemo(
     () => preview.kind === 'folder' ? toItems(listFolder(paths, preview.path, folders)) : [],
     [paths, folders, preview.kind, preview.path, toItems],
@@ -265,7 +265,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
                 data-other-file={item.other ? item.path : undefined}
                 className="explorer-item interactive" style={{ order: item.kind === 'folder' ? 0 : 2 }} title={item.name}
                 onClick={() => select(item)} onDoubleClick={() => open(item)} onKeyDown={event => onKeyDown(event, item)}>
-                <ItemIcon item={item} type={fileType(item, paths)} />
+                <ItemIcon item={item} />
                 <span className="explorer-item-name">{item.name}</span>
                 <span className="explorer-item-detail">{detail(item)}</span>
                 {item.kind === 'file' && isNote(item.path) && <span className="explorer-word-count">{words.get(item.path) ?? 0} words</span>}
@@ -285,7 +285,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
             <p className="explorer-metadata">{describeCounts(previewCounts)}<br />{previewCounts.words} words</p>
             <button className="explorer-action interactive" onClick={() => open(preview)}>Open</button>
             <h3>Contents</h3>
-            {children.slice(0, 12).map(child => <div key={child.path} className="explorer-preview-child"><ItemIcon item={child} type={fileType(child, paths)} /><span>{child.name}</span></div>)}
+            {children.slice(0, 12).map(child => <div key={child.path} className="explorer-preview-child"><ItemIcon item={child} /><span>{child.name}</span></div>)}
             {children.length > 12 && <p className="explorer-metadata">and {children.length - 12} more</p>}
             {!children.length && <p className="explorer-metadata">This folder is empty.</p>}
           </> : preview.other ? <>
@@ -294,7 +294,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
             </p>
             {onReveal && <div className="explorer-tools"><button className="explorer-action interactive" onClick={() => onReveal(preview.path)}>Show in folder</button></div>}
           </> : <>
-            <p className="explorer-metadata">{fileType(preview, paths)}{isNote(preview.path) && ' · ' + (words.get(preview.path) ?? 0) + ' words'}</p>
+            <p className="explorer-metadata">{fileType(preview)}{isNote(preview.path) && ' · ' + (words.get(preview.path) ?? 0) + ' words'}</p>
             {tags.length > 0 && <p className="explorer-metadata" aria-label="Tags">{tags.map(tag => '#' + tag).join(' ')}</p>}
             <div className="explorer-tools"><button className="explorer-action interactive" onClick={() => open(preview)}>Open</button>
               {isNote(preview.path) && onOpenToSide && <button className="explorer-action interactive" onClick={() => onOpenToSide(preview.path)}>Open to the side</button>}</div>

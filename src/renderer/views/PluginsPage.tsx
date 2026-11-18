@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, Plug, PencilRuler, LayoutGrid, Search, PackagePlus, ShieldCheck, PanelRight, PanelBottom, TerminalSquare, AppWindow } from 'lucide-react';
+import { Sparkles, Plug, PencilRuler, LayoutGrid, Search, ShieldCheck, PanelRight, PanelBottom, TerminalSquare } from 'lucide-react';
 import { DOCKS, placePanels, type Dock, type WorkbenchLayout } from '../lib/layout';
-import { appPluginId, usePlugins } from '../plugins/host';
+import { usePlugins } from '../plugins/host';
 import type { PluginCategory, PluginManifest } from '../plugins/types';
 import { Input } from '../components/ui/input';
 import { Switch } from '../components/ui/switch';
@@ -16,19 +16,6 @@ const categoryMeta: Record<PluginCategory, { label: string; icon: React.Componen
   editor: { label: 'Editor', icon: PencilRuler },
   view: { label: 'Views', icon: LayoutGrid },
 };
-
-/** A workspace HTML app: a folder in plugins/ with a neuron.app.json marker. */
-export interface WorkspaceApp { folder: string; manifestPath: string }
-
-/** The apps a workspace carries, from its file list. */
-export function workspaceApps(paths: string[]): WorkspaceApp[] {
-  const apps = new Map<string, WorkspaceApp>();
-  for (const path of paths) {
-    const match = /^plugins\/([^/]+)\/neuron\.app\.json$/.exec(path);
-    if (match) apps.set(match[1], { folder: match[1], manifestPath: path });
-  }
-  return [...apps.values()].sort((a, b) => a.folder.localeCompare(b.folder));
-}
 
 /** Options of a plugin with no connector: per workspace, never secrets. */
 function WorkspaceOptions({ manifest }: { manifest: PluginManifest }) {
@@ -127,57 +114,23 @@ function EnableSwitch({ name, checked, onChange }: { name: string; checked: bool
   );
 }
 
-function AppRow({ app }: { app: WorkspaceApp }) {
-  const { isAppEnabled, setEnabled } = usePlugins();
-  const [info, setInfo] = useState<{ name: string; description: string }>({ name: app.folder, description: '' });
-  useEffect(() => {
-    let cancelled = false;
-    void window.electronAPI?.readNote(app.manifestPath).then((text) => {
-      try {
-        const parsed = JSON.parse(text) as { name?: unknown; description?: unknown };
-        if (!cancelled) setInfo({ name: typeof parsed.name === 'string' && parsed.name ? parsed.name : app.folder, description: typeof parsed.description === 'string' ? parsed.description : '' });
-      } catch { /* an unreadable marker keeps the folder name */ }
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [app.manifestPath, app.folder]);
-  const enabled = isAppEnabled(app.folder);
-  return (
-    <div className={cn('p-4', enabled && 'bg-[var(--surface)]')} data-app-row={app.folder}>
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
-          <AppWindow className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-[var(--ink)]">{info.name}</h3>
-            <Badge variant="outline">Workspace app</Badge>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">{info.description || `plugins/${app.folder}`}</p>
-        </div>
-        <EnableSwitch name={info.name} checked={enabled} onChange={(on) => setEnabled(appPluginId(app.folder), on)} />
-      </div>
-    </div>
-  );
-}
-
 /**
  * The Plugins section of the Workspace settings dialog. What is switched on
  * here is on for this workspace only, and only on this machine: the record is
  * in the app's settings, not in the workspace folder, so a shared workspace
  * cannot switch anything on for itself.
  */
-export default function PluginsPage({ layout, onOpenDock, apps }: { layout: WorkbenchLayout; onOpenDock?: (dock: Dock) => void; apps: WorkspaceApp[] }) {
+export default function PluginsPage({ layout, onOpenDock }: { layout: WorkbenchLayout; onOpenDock?: (dock: Dock) => void }) {
   const { plugins } = usePlugins();
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const filtered = plugins.filter((p) => !q || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
-  const filteredApps = apps.filter((a) => !q || a.folder.toLowerCase().includes(q));
 
   return (
     <div>
       <p className="flex items-start gap-1.5 text-xs leading-5 text-[var(--ink-secondary)]">
         <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
-        Built-ins are trusted Neuron code. Workspace apps run as capability-scoped HTML apps in an isolated webview.
+        Plugins are trusted Neuron code. Custom HTML views run isolated, with only the permissions you approve.
       </p>
       <label className="relative mt-3 block w-full max-w-xs">
         <span className="sr-only">Search plugins</span>
@@ -186,24 +139,13 @@ export default function PluginsPage({ layout, onOpenDock, apps }: { layout: Work
       </label>
 
       <div className="mt-4">
-        {filtered.length + filteredApps.length > 0 ? (
+        {filtered.length > 0 ? (
           <div className="divide-y divide-[var(--divider)] overflow-hidden rounded-md border border-[var(--divider)]">
             {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} layout={layout} onOpenDock={onOpenDock} />)}
-            {filteredApps.map((app) => <AppRow key={app.folder} app={app} />)}
           </div>
         ) : (
           <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>
         )}
-
-        <div className="mt-4 flex items-center gap-3 rounded-md border border-dashed border-[var(--divider)] p-4">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--ink-muted)]">
-            <PackagePlus className="h-4 w-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-[var(--ink)]">Add a workspace app</h3>
-            <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Copy a folder containing <code>index.html</code> and <code>neuron.app.json</code> into <code>plugins/</code>. It runs as an isolated HTML app, never as renderer code.</p>
-          </div>
-        </div>
       </div>
     </div>
   );

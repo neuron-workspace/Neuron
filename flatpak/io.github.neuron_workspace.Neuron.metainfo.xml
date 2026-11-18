@@ -36,7 +36,7 @@
     <ul>
       <li>Typed databases in plain-JSON .db files, with table and board views</li>
       <li>Spatial boards in the open JSON Canvas format</li>
-      <li>Custom HTML views and folder mini-apps, each sandboxed and limited to the paths its manifest declares</li>
+      <li>Custom HTML views, each sandboxed and limited to the paths its manifest declares</li>
       <li>A workspace graph, wiki-links and tags</li>
       <li>Version history backed by a local write journal</li>
       <li>An integrated terminal</li>

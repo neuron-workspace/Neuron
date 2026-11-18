@@ -29,7 +29,7 @@ Then start at **getting-started** in the sidebar and follow the links.
 | Custom dashboard.html | A scripted HTML view: computed metrics, a status board, quick capture |
 | Planner.db | A multi-table database with table, board, and card layouts |
 | Idea board.canvas | A JSON Canvas spatial board with groups and labelled connections |
-| Snake/ | A folder mini-app — a game that asks for two capabilities and no file access |
+| Snake.html | A small game as a plain HTML view that needs no permissions |
 
 ## The guides
 
@@ -45,7 +45,7 @@ Then start at **getting-started** in the sidebar and follow the links.
 
 ## Try these
 
-- Open **Snake/** — it renders as one app, not a file listing, because the folder holds a `neuron.app.json`. Its high score is the only thing it can write.
+- Open **Snake.html** — a game in an isolated view tab. It has no manifest, so it can reach nothing in the workspace.
 - Open **Dashboard.mdx** and press a **Run** button — the command runs in the workspace terminal, and the button shows you exactly what it will run before you click.
 - Open **Custom dashboard.html** — it renders in an isolated view tab; use the Source toggle to edit its HTML.
 - Open **Idea board.canvas** — Shift-drag to multi-select, right-click for align/z-order/arrows, Ctrl+Z to undo; cards render Markdown.

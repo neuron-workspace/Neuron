@@ -5,7 +5,7 @@ import type { Dock, WorkbenchLayout } from '../lib/layout';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import PluginsPage, { type WorkspaceApp } from './PluginsPage';
+import PluginsPage from './PluginsPage';
 import { SectionRow } from './SettingsWindow';
 
 export type WorkspaceSettingsSection = 'plugins' | 'general';
@@ -50,14 +50,13 @@ interface WorkspaceSettingsDialogProps {
   section: WorkspaceSettingsSection | null;
   onSectionChange: (section: WorkspaceSettingsSection | null) => void;
   workspace: RepositoryInfo;
-  apps: WorkspaceApp[];
   layout: WorkbenchLayout;
   onOpenDock: (dock: Dock) => void;
   onRenamed: () => void;
 }
 
 /** This workspace's own settings, in its window: its plugins, its name and folder. */
-export default function WorkspaceSettingsDialog({ section, onSectionChange, workspace, apps, layout, onOpenDock, onRenamed }: WorkspaceSettingsDialogProps) {
+export default function WorkspaceSettingsDialog({ section, onSectionChange, workspace, layout, onOpenDock, onRenamed }: WorkspaceSettingsDialogProps) {
   const current = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
   const Icon = current.icon;
   return (
@@ -78,7 +77,7 @@ export default function WorkspaceSettingsDialog({ section, onSectionChange, work
             <DialogDescription className="mt-1 text-[13px] leading-5">{current.description}</DialogDescription>
             <div className="mt-5">
               {current.id === 'plugins'
-                ? <PluginsPage layout={layout} apps={apps} onOpenDock={(dock) => { onSectionChange(null); onOpenDock(dock); }} />
+                ? <PluginsPage layout={layout}onOpenDock={(dock) => { onSectionChange(null); onOpenDock(dock); }} />
                 : <WorkspaceGeneral workspace={workspace} onRenamed={onRenamed} />}
             </div>
           </div>

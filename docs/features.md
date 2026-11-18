@@ -5,7 +5,7 @@ small custom interfaces. Your workspace is an ordinary folder, your content is
 stored in plain files you can keep in Git or a sync folder, and Neuron itself
 does not require an account.
 
-The unusual part is the view platform. Shareable `.html` and folder mini-app
+The unusual part is the view platform. Shareable `.html`
 views run away from Neuron's privileged interface and receive
 only named capabilities and workspace paths. That is a stronger boundary than
 all-or-nothing plugin trust: built-in plugins are reviewed application code,
@@ -29,8 +29,6 @@ The workspace watcher recognises these user-facing document types:
 | `.db` | Typed database | JSON schema, view state, and rows |
 | `.csv` | Table | Plain CSV; Neuron writes it only when it manages it (see below) |
 | `.html` | Sandboxed view | HTML with optional htmx attributes, inline CSS, and JavaScript |
-| `index.html` | Folder mini-app entry point | HTML view inside a marked app folder |
-| `neuron.app.json` | Folder mini-app marker and manifest | Capabilities and allowed paths for `index.html` |
 | `.neuron/manifests/*.json` | View manifests | Capabilities and allowed paths for standalone `.html` views |
 | `.neuron/layout.json` | Workspace shell | JSON layout tree; starting sidebar and terminal |
 
@@ -277,7 +275,7 @@ metadata behind and the file is read-only again. Files over 5 MB or 50,000
 rows, and files that are not UTF-8 text, open read-only and cannot be
 converted. Source mode shows a CSV's text but does not edit it.
 
-## Build a dashboard or folder mini-app
+## Build a dashboard or custom view
 
 Use the command palette or `Ctrl/Cmd+G` to create an `.html` file in the
 current folder. Opening it starts an isolated view tab; use the tab's
@@ -285,15 +283,11 @@ current folder. Opening it starts an isolated view tab; use the tab's
 starter templates and supporting files under `.neuron/` without overwriting
 existing files.
 
-Choose the surface according to the job:
+`.html` accepts htmx attributes, inline CSS, and JavaScript. Workspace apps
+(folders with a `neuron.app.json`) were removed in favour of HTML views; an old
+app folder is now an ordinary folder.
 
-- `.html` accepts htmx attributes, inline CSS, and JavaScript. Neuron always
-  supplies htmx and its themed component stylesheet.
-- A non-root folder containing `index.html` and `neuron.app.json` becomes a
-  folder mini-app. The Explorer shows the folder as one app entry instead of
-  exposing its internal files.
-
-Both forms use a sandboxed webview with no Node or preload bridge. Each open tab
+A view uses a sandboxed webview with no Node or preload bridge. Each open tab
 gets an isolated session. The API exposes specific operations for files,
 directories, note metadata, tags, search, typed variables, and reusable HTML
 fragments. There is no command-execution endpoint or generic filesystem proxy.
@@ -301,14 +295,12 @@ fragments. There is no command-execution endpoint or generic filesystem proxy.
 Without a manifest, an `.html` file renders but receives no capabilities and
 cannot read workspace data. A manifest requests named capabilities and allowed
 paths; every requested capability prompts for one-time or persistent approval
-tied to the exact manifest content. Folder mini-apps always use their adjacent
-manifest, and a manifest with no permissions grants nothing. Network policy is
+tied to the exact manifest content. A manifest with no permissions grants nothing. Network policy is
 always `none`: views cannot fetch remote content, navigate away, or open popups.
 
 Follow the full [HTMX view user guide](htmx-views.md#user-guide) for templates,
 manifests, routes, variables, limits, and examples. The demo workspace contains
-`Custom dashboard.html`, and `Snake/` as a folder
-mini-app.
+`Custom dashboard.html` and `Snake.html`, a small game.
 
 ### Dashboard path: list your notes
 

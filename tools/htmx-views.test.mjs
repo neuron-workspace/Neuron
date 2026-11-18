@@ -94,22 +94,17 @@ assert.deepEqual([...noManifestGrants.caps], [], 'an unmanifested view gets no c
 assert.deepEqual(noManifestGrants.readPatterns, [], 'an unmanifested view gets no readable paths');
 assert.ok(!noManifestGrants.needsApproval, 'an unmanifested view renders without an empty prompt');
 
-// --- view + manifest paths (plain files vs folder apps) -----------------------
+// --- view + manifest paths -----------------------------------------------------
 assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
-assert.ok(m.isViewPath('Snake/index.html'), 'a folder app uses index.html');
+assert.ok(m.isViewPath('Snake.html'), 'a plain HTML file is a view');
 assert.ok(!m.isViewPath('notes/readme.md'), 'plain notes are not views');
 assert.ok(!m.isViewPath('notes/readme.htm'), 'only the .html extension is a view');
-assert.equal(m.appManifestPathFor('Snake/index.html'), 'Snake/neuron.app.json');
-assert.equal(m.appManifestPathFor('index.html'), null, 'the workspace root cannot be a folder app');
-assert.equal(m.appManifestPathFor('Snake/report.html'), null, 'only index.html can be a folder app entry');
-// Plain-view manifests mirror their path under .neuron/manifests:
+assert.equal(typeof m.appManifestPathFor, 'undefined', 'folder apps are gone');
+// View manifests mirror their path under .neuron/manifests:
 assert.equal(m.manifestPathFor('projects/tracker.html'), '.neuron/manifests/projects/tracker.json');
 assert.equal(m.manifestPathFor('projects/index.html'), '.neuron/manifests/projects/index.json');
-// A folder app's manifest is the co-located marker, never under .neuron:
-assert.equal(m.manifestPathFor('Snake/index.html', true), 'Snake/neuron.app.json');
 assert.equal(m.legacyManifestPathFor('projects/tracker.html'), 'projects/tracker.neuron.json');
-assert.equal(m.defaultViewName('Snake/index.html', true), 'Snake', 'folder app is named for its folder');
-assert.equal(m.defaultViewName('a/b/Report.html'), 'Report', 'plain view is named for its file');
+assert.equal(m.defaultViewName('a/b/Report.html'), 'Report', 'a view is named for its file');
 
 // --- variables validation ---------------------------------------------------------
 const vars = m.validateVariablesFile({ version: 1, variables: { status: { type: 'string', value: 'active', writable: true } } });
