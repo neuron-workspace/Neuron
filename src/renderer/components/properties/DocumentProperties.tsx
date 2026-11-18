@@ -30,6 +30,8 @@ const TYPE_ICON: Record<PropertyType, typeof Type> = {
 };
 
 // Suggested property names for the add control (users are not restricted to these).
+export const FULL_WIDTH_KEY = /^full[-_]?width$/i;
+
 const SUGGESTED = ['tags', 'aliases', 'status', 'due', 'priority', 'created', 'updated', 'completed'];
 
 export default function DocumentProperties(props: DocumentPropertiesProps) {
@@ -58,7 +60,9 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
   const move = (key: string, dir: -1 | 1) => {
     const entries = asEntries();
     const i = entries.findIndex((e) => e.key === key);
-    const j = i + dir;
+    // Step over the hidden fullWidth entry so "Move up" always moves a visible row.
+    let j = i + dir;
+    while (entries[j] && FULL_WIDTH_KEY.test(entries[j].key)) j += dir;
     if (i < 0 || j < 0 || j >= entries.length) return;
     [entries[i], entries[j]] = [entries[j], entries[i]];
     commit(entries);
@@ -94,45 +98,55 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
     );
   }
 
-  const count = props_.length;
+  // `fullWidth` has its own control in the note header; it is only hidden here,
+  // so asEntries() above still carries it through every rewrite.
+  const visible = props_.filter((p) => !FULL_WIDTH_KEY.test(p.key));
+  const count = visible.length;
+  if (readOnly && count === 0) return null;
   const showCollapse = count > 0;
+  // One or two rows do not earn a collapsible header.
+  const compact = count > 0 && count < 3;
+
+  const controls = !readOnly && (
+    <div className={`${compact ? 'flex h-6 justify-end' : 'ml-auto flex items-center'} gap-0.5 opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100`}>
+      <button type="button" aria-label="Add property" title="Add property" className="interactive grid h-6 w-6 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setAdding(true)}>
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label="Properties actions" className="interactive grid h-6 w-6 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setAdding(true)}><Plus className="mr-2 h-4 w-4" /> Add property</DropdownMenuItem>
+          {onViewRaw && <><DropdownMenuSeparator /><DropdownMenuItem onSelect={onViewRaw}><Code2 className="mr-2 h-4 w-4" /> Edit as YAML</DropdownMenuItem></>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 
   return (
-    <section className="doc-props mx-auto w-full border-b border-[var(--divider)] pb-2" aria-label="Document properties">
-      <header className="group/header flex min-h-8 items-center gap-1.5">
-        <button
-          type="button"
-          className="interactive flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]"
-          aria-expanded={!collapsed}
-          onClick={() => setCollapsed((c) => !c)}
-          disabled={!showCollapse}
-        >
-          {showCollapse && <ChevronRight className={`h-3.5 w-3.5 transition-transform ${collapsed ? '' : 'rotate-90'}`} aria-hidden />}
-          <span>Properties{count ? ` · ${count}` : ''}</span>
-        </button>
-        {!readOnly && (
-          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100">
-            <button type="button" aria-label="Add property" title="Add property" className="interactive grid h-6 w-6 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setAdding(true)}>
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button type="button" aria-label="Properties actions" className="interactive grid h-6 w-6 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]">
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => setAdding(true)}><Plus className="mr-2 h-4 w-4" /> Add property</DropdownMenuItem>
-                {onViewRaw && <><DropdownMenuSeparator /><DropdownMenuItem onSelect={onViewRaw}><Code2 className="mr-2 h-4 w-4" /> Edit as YAML</DropdownMenuItem></>}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )}
-      </header>
+    <section className="doc-props group/header mx-auto w-full border-b border-[var(--divider)] pb-2" aria-label="Document properties">
+      {!compact && (
+        <header className="flex min-h-8 items-center gap-1.5">
+          <button
+            type="button"
+            className="interactive flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((c) => !c)}
+            disabled={!showCollapse}
+          >
+            {showCollapse && <ChevronRight className={`h-3.5 w-3.5 transition-transform ${collapsed ? '' : 'rotate-90'}`} aria-hidden />}
+            <span>Properties{count ? ` · ${count}` : ''}</span>
+          </button>
+          {controls}
+        </header>
+      )}
 
-      {!collapsed && (
+      {(compact || !collapsed) && (
         <div>
-          {props_.map((p, i) => (
+          {visible.map((p, i) => (
             <PropertyRow
               key={p.key}
               property={p}
@@ -155,6 +169,7 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
               <Plus className="h-3.5 w-3.5" /> Add property
             </button>
           ) : null)}
+          {compact && !adding && controls}
         </div>
       )}
     </section>
