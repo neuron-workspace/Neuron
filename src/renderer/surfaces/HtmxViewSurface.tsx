@@ -45,9 +45,11 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   // resolved last won, and if that was the first one the webview loaded A's URL
   // after A had been revoked -- "This view session is no longer valid."
   const openTicket = useRef(0);
+  const openedAt = useRef(0);
 
   const open = useCallback(async () => {
     const ticket = ++openTicket.current;
+    openedAt.current = Date.now();
     setPhase({ kind: 'loading' });
     if (sessionRef.current) { void window.electronAPI.htmxViews.close(sessionRef.current); sessionRef.current = null; }
     const result: HtmxViewOpenResult = await window.electronAPI.htmxViews.open(path, colorScheme ?? 'dark');
@@ -91,6 +93,13 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
     const manifestPath = `.neuron/manifests/${path.replace(/\.html$/i, '.json')}`;
     const legacyManifest = path.replace(/\.html$/i, '.neuron.json');
     return window.electronAPI.onNotesChanged((_event, changed) => {
+      // Opening a view scaffolds any missing .neuron files, and the watcher
+      // reports them a moment later. Reloading for that would tear down the view
+      // that has just started, in every workspace that lacks those files.
+      // The native watcher can report a new file as 'change', so any kind counts.
+      const scaffolded = (changed === '.neuron' || changed === '.neuron/config.json' || /^\.neuron\/(fragments|styles|templates)(\/|$)/.test(changed))
+        && Date.now() - openedAt.current < 3000;
+      if (scaffolded) return;
       // Not variables.json: views write variables through the API and a reload
       // on every variable change would wipe in-page form state.
       const mine = changed === path

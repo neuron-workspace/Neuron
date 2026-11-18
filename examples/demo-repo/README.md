@@ -18,7 +18,7 @@ Then start at **getting-started** in the sidebar and follow the links.
 | projects/ | Project notes with frontmatter, matching the projects in `Planner.db` |
 | daily/ | A dated journal entry |
 | properties/ | Frontmatter examples, including one with deliberately invalid YAML |
-| .neuron/ | Workspace config: layout, variables, view manifests, templates, fragments |
+| .neuron/ | Workspace config: the shell layout and the view manifest (Neuron adds the starter variables, fragments and templates when you open a view) |
 
 ## The showcase files
 
