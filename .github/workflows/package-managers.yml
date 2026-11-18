@@ -136,6 +136,22 @@ jobs:
             echo "have=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # The submission branch is created in our fork of winget-pkgs. A fork far
+      # behind upstream fails that with "does not have the correct permissions
+      # to execute CreateRef" -- v0.5.0's did, 33,541 commits behind -- so bring
+      # it up to date first. merge-upstream merges rather than resets, so the
+      # fork's own commits survive. A failure here is a warning, not a stop: the
+      # submission may still work, and its own error is the one to read.
+      - name: Sync the winget-pkgs fork
+        if: steps.token.outputs.have == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          FORK: ${{ github.repository_owner }}/winget-pkgs
+        run: |
+          gh api -X POST "repos/$FORK/merge-upstream" -f branch=master ||
+            echo "::warning::Could not sync $FORK with microsoft/winget-pkgs. If the submission below fails with a CreateRef permission error, press Sync fork on $FORK."
+
       # Opens a pull request against microsoft/winget-pkgs. It is a no-op when
       # the version is already there, so a re-run does not open a second one.
       #

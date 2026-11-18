@@ -22,8 +22,8 @@ const painted = (page: Page) => page.evaluate(() => new Promise<void>(resolve =>
 test(`measure a ${NOTES}-note workspace`, async ({ page, launchTiming }) => {
   // Root folders prove the corpus loaded; enter one to observe actual note cards.
   const explorer = page.locator('[data-workspace-explorer]');
-  await explorer.locator('[data-folder="Research"]').click();
-  await explorer.locator('[data-folder="Research/Batch-0000"]').click();
+  await explorer.locator('[data-folder="Research"]').dblclick();
+  await explorer.locator('[data-folder="Research/Batch-0000"]').dblclick();
   await expect(explorer.locator('[data-file$="Note-00000.md"]')).toBeVisible();
   await painted(page);
   const launchToExplorerMs = performance.now() - launchTiming.startedAt;

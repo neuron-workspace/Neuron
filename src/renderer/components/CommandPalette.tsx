@@ -1,7 +1,9 @@
-import { Blocks, Chrome, FileCode2, FolderPlus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
+import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
-import type { WorkbenchLayout } from '../lib/layout';
+import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
+import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
+import { parentFolder, sharedName } from './TitleBar';
 import { formatChord, type Bindings } from '../lib/keybindings';
 
 /**
@@ -22,11 +24,23 @@ function Shortcut({ chord }: { chord?: string }) {
 
 interface CommandPaletteProps {
   layout: WorkbenchLayout;
+  savedLayouts?: SavedLayout[];
+  /** Full-text search lives in the sidebar; this is its way in now that it has no row there. */
+  onSearchNotes?: () => void;
+  sideNoteOpen?: boolean;
+  canOpenToSide?: boolean;
+  onOpenToSide?: () => void;
+  onCloseSide?: () => void;
+  onApplySavedLayout?: (id: string) => void;
   onLayoutChange: (patch: Partial<WorkbenchLayout>) => void;
   onResetLayout: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   notes: string[];
+  recents: RepositoryInfo[];
+  onOpenRepo: () => void;
+  onCreateRepo: () => void;
+  onSwitchRepo: (dir: string) => void;
   onSelectNote: (note: string) => void;
   onOpenMarketplace: () => void;
   onOpenSettings: () => void;
@@ -43,7 +57,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, onLayoutChange, onResetLayout, open, onOpenChange, notes, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const close = () => onOpenChange(false);
 
@@ -65,7 +79,22 @@ export default function CommandPalette({ layout, onLayoutChange, onResetLayout, 
           <CommandItem onSelect={() => { onOpenSettings(); close(); }}><Settings /> Open settings</CommandItem>
         </CommandGroup>
 
+        <CommandGroup heading="Workspaces">
+          <CommandItem onSelect={() => { close(); onOpenRepo(); }}><FolderOpen /> Open folder…</CommandItem>
+          <CommandItem onSelect={() => { close(); onCreateRepo(); }}><FolderPlus /> Create workspace…</CommandItem>
+          {recents.map((repo) => (
+            <CommandItem key={repo.path} value={'Switch workspace: ' + repo.name + ' ' + repo.path} onSelect={() => { close(); onSwitchRepo(repo.path); }}>
+              <FolderOpen /> Switch workspace: {repo.name}
+              {sharedName(recents, repo) && <span className="ml-1 truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+
         <CommandGroup heading="Layout">
+          <CommandItem onSelect={() => { onLayoutChange({ sidebar: true, sidebarCollapsed: !layout.sidebarCollapsed }); close(); }}><PanelsTopLeft /> {layout.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar to icons'}</CommandItem>
+          <CommandItem onSelect={() => { onLayoutChange({ statusBar: !layout.statusBar }); close(); }}><PanelsTopLeft /> {layout.statusBar ? 'Hide' : 'Show'} status bar</CommandItem>
+          <CommandItem onSelect={() => { close(); void window.electronAPI.windowControls.toggleFullScreen(); }}><Focus /> Toggle full screen<Shortcut chord={bindings['toggle-fullscreen']} /></CommandItem>
+          <CommandItem onSelect={() => { onLayoutChange({ zen: !layout.zen }); close(); }}><Focus /> {layout.zen ? 'Exit zen mode' : 'Zen mode'}<Shortcut chord={bindings['toggle-zen']} /></CommandItem>
           {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
             <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
               <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}
@@ -74,6 +103,12 @@ export default function CommandPalette({ layout, onLayoutChange, onResetLayout, 
           <CommandItem disabled={layout.sidebarSide === 'left'} onSelect={() => { onLayoutChange({ sidebarSide: 'left' }); close(); }}><PanelsTopLeft /> Move sidebar to the left</CommandItem>
           <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
           <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
+          <CommandItem onSelect={() => { onSearchNotes?.(); close(); }}><PanelsTopLeft /> Search in notes</CommandItem>
+          <CommandItem disabled={!canOpenToSide} onSelect={() => { onOpenToSide?.(); close(); }}><PanelsTopLeft /> Open current note to the side</CommandItem>
+          {sideNoteOpen && <CommandItem onSelect={() => { onCloseSide?.(); close(); }}><PanelsTopLeft /> Close side pane</CommandItem>}
+          {savedLayouts.map((saved) => (
+            <CommandItem key={saved.id} onSelect={() => { onApplySavedLayout?.(saved.id); close(); }}><PanelsTopLeft /> Layout: switch to {saved.name}</CommandItem>
+          ))}
         </CommandGroup>
 
         {commands.length > 0 && (

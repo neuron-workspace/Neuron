@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter } from 'electron';
+import type { WebContents } from 'electron';
+import { decideOpen, ownsPtyKey, ptyKey, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -10,15 +12,17 @@ import { importChromeCookies } from './chrome-cookies';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
+import { folderKey, uniqueRecents } from './recentRepos';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import { configureUpdater } from './updater';
 import { createDiagnosticLogger, errorDetails } from './diagnostic-logger';
 import { configureCrashReporter } from './crash-reporter';
-import { workspacePathFromArgv } from './workspace-argv';
+import { installDirectory, isInsideInstall, workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { watchWorkspace } from './workspace-watcher';
 import { exec } from 'child_process';
@@ -26,8 +30,35 @@ import * as pty from 'node-pty';
 
 
 const RENDERER_ROOT = pathToFileURL(path.join(__dirname, '../renderer') + path.sep).href;
-let mainWindow: BrowserWindow | null = null;
-let watcher: { close(): void } | null = null;
+/**
+ * Every window, and the workspace it owns.
+ *
+ * There is no global "active workspace". A request is served against the
+ * workspace of the window that sent it, so one window can never read or write
+ * another's files, and opening a second workspace cannot disturb the first.
+ */
+interface AppWindow {
+  window: BrowserWindow;
+  kind: WindowKind;
+  repo: string | null;
+  watcher: { close(): void } | null;
+}
+const appWindows = new Map<number, AppWindow>();
+/** The workspace window used last, for things with no sender (a second launch). */
+let lastWorkspaceId: number | null = null;
+type Sender = { sender: WebContents };
+const entryOf = (event: Sender): AppWindow | null => appWindows.get(event.sender.id) ?? null;
+const windowOf = (event: Sender): BrowserWindow | null => {
+  const window = entryOf(event)?.window;
+  return window && !window.isDestroyed() ? window : null;
+};
+/** The workspace of the window that sent this request. A sender that is not one of our windows has none. */
+const repoOf = (event: Sender): string | null => entryOf(event)?.repo ?? null;
+function focusWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
 const diagnostics = createDiagnosticLogger(app.getPath('logs'));
 let handlingFatalError = false;
 
@@ -123,7 +154,6 @@ function readSettings(): Settings {
 }
 
 function writeSettings(settings: Settings): void {
-  activeRepoCache = undefined;
   try {
     fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2), 'utf-8');
   } catch (err) {
@@ -136,26 +166,45 @@ function writeSettings(settings: Settings): void {
 // can live anywhere, including a cloud-synced folder.
 // ==========================================================================
 
-// Every note read resolves its path against the active workspace, and opening a
-// workspace reads every note. Re-reading and re-parsing the settings file and
-// stat-ing the folder for each of them cost about 5 ms a note on Windows --
-// 24 s of a blocked main thread for 5,000 notes before the explorer appeared.
-// Settings only change through writeSettings, which clears this.
-let activeRepoCache: string | null | undefined;
 
-function activeRepoPath(): string | null {
-  if (activeRepoCache !== undefined) return activeRepoCache;
-  const current = readSettings().repositories.current;
-  activeRepoCache = current && fs.existsSync(current) && fs.statSync(current).isDirectory() ? current : null;
-  return activeRepoCache;
+const INSTALL_FOLDER_MESSAGE = 'That folder is where Neuron is installed. Updates replace it, so choose another folder for your notes.';
+
+function isInstallWorkspace(dir: string): boolean {
+  return app.isPackaged && isInsideInstall(dir, installDirectory(app.getPath('exe')));
+}
+
+async function refuseInstallWorkspace(dir: string, parent: BrowserWindow | null): Promise<boolean> {
+  if (!isInstallWorkspace(dir)) return false;
+  const options = { type: 'warning' as const, message: INSTALL_FOLDER_MESSAGE };
+  if (parent) await dialog.showMessageBox(parent, options);
+  else await dialog.showMessageBox(options);
+  return true;
+}
+
+/** A folder that can be a workspace right now, or null. */
+function usableRepo(dir: string | null | undefined): string | null {
+  return dir && !isInstallWorkspace(dir) && fs.existsSync(dir) && fs.statSync(dir).isDirectory() ? dir : null;
+}
+
+/** The workspace to reopen on launch: the one used last. */
+function savedRepo(): string | null {
+  return usableRepo(readSettings().repositories.current);
 }
 
 const CLOUD_HINTS = ['onedrive', 'dropbox', 'google drive', 'icloud', 'box sync'];
 
+function demoRepoPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'examples', 'demo-repo')
+    : path.join(process.cwd(), 'examples', 'demo-repo');
+}
+
 function repoInfo(dir: string) {
   const lower = dir.toLowerCase();
   const names = readSettings().repositories.names ?? {};
-  const base = path.basename(dir) || dir;
+  // In development the demo is in the list, and a workspace copied from it is
+  // usually a folder called demo-repo too: two rows reading "demo-repo".
+  const base = folderKey(dir) === folderKey(demoRepoPath()) ? 'Demo workspace' : path.basename(dir) || dir;
   return {
     path: dir,
     name: names[dir] || base,
@@ -163,21 +212,23 @@ function repoInfo(dir: string) {
   };
 }
 
-/** On first launch, auto-open the bundled demo repository if one is present. */
+/** Repair saved workspace paths and keep the development demo discoverable. */
 function ensureDefaultRepo(): void {
   const settings = readSettings();
   const isDir = (p: string) => fs.existsSync(p) && fs.statSync(p).isDirectory();
-  const demo = app.isPackaged
-    ? path.join(process.resourcesPath, 'examples', 'demo-repo')
-    : path.join(process.cwd(), 'examples', 'demo-repo');
+  const demo = demoRepoPath();
   const demoExists = isDir(demo);
 
-  // Prune repositories whose folders no longer exist (e.g. renamed/removed).
-  settings.repositories.recent = settings.repositories.recent.filter(isDir);
+  // Prune repositories whose folders no longer exist (e.g. renamed/removed),
+  // and collapse entries that are the same folder spelled differently.
+  settings.repositories.recent = uniqueRecents(settings.repositories.recent.filter((p) => !isInstallWorkspace(p) && isDir(p)), null);
 
-  // Always keep the bundled demo repository in the recents list so it stays
-  // discoverable on the Repositories page, even after other repos are opened.
-  if (demoExists && !settings.repositories.recent.includes(demo)) {
+  if (settings.repositories.current && isInstallWorkspace(settings.repositories.current)) {
+    settings.repositories.current = null;
+  }
+
+  // Only the checkout's demo is a writable workspace; packaged templates are copied.
+  if (!app.isPackaged && demoExists && !settings.repositories.recent.some((p) => folderKey(p) === folderKey(demo))) {
     settings.repositories.recent = [...settings.repositories.recent, demo];
   }
 
@@ -192,21 +243,47 @@ function ensureDefaultRepo(): void {
   writeSettings(settings);
 }
 
-function setActiveRepo(dir: string): void {
+/** Record a workspace as the one to reopen, and at the top of Recent. */
+function rememberRepo(dir: string): void {
   const settings = readSettings();
   settings.repositories.current = dir;
-  settings.repositories.recent = [dir, ...settings.repositories.recent.filter((p) => p !== dir)].slice(0, 8);
+  settings.repositories.recent = [dir, ...uniqueRecents(settings.repositories.recent, dir)].slice(0, 8);
   writeSettings(settings);
+}
+
+/** Point one window at a workspace (or at none). */
+function bindRepo(entry: AppWindow, dir: string | null): void {
   revokeAllViewSessions(); // HTMX view tokens are workspace-bound
-  // The shell's working directory is fixed when it starts, and since the panel
-  // reuses one shell for the life of the window it would otherwise sit in the
-  // previous workspace forever. Ending it here lets the panel start a new one
-  // rooted in the workspace the user just opened. Writing `cd` into the running
-  // shell would be shell-specific, land in their scrollback, and break if they
-  // were mid-command.
-  disposeWindowPty();
-  setupWatcher();
-  if (mainWindow) mainWindow.webContents.send('repository:changed', repoInfo(dir));
+  // A shell's working directory is fixed when it starts, so this window's
+  // shells belong to the workspace it is leaving. Ending them lets the panel
+  // start new ones rooted in the workspace it now shows.
+  disposeWindowPtys(entry.window.webContents.id);
+  entry.repo = dir;
+  setupWatcher(entry);
+  if (dir && !entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', repoInfo(dir));
+}
+
+/**
+ * Open a workspace without disturbing one that is already open.
+ *
+ * Already on screen: that window comes forward. Asked for by an empty first-run
+ * window: it takes the folder. Otherwise the folder gets a window of its own.
+ */
+function openWorkspace(dir: string, from: AppWindow | null): boolean {
+  if (!usableRepo(dir)) return false;
+  rememberRepo(dir);
+  const decision = decideOpen(
+    dir,
+    [...appWindows.entries()].map(([id, entry]) => ({ id, kind: entry.kind, repo: entry.repo })),
+    from ? from.window.webContents.id : null,
+    folderKey,
+  );
+  if (decision.action === 'new') { createWindow('workspace', dir); return true; }
+  const target = appWindows.get(decision.id);
+  if (!target) return false;
+  if (decision.action === 'adopt') bindRepo(target, dir);
+  focusWindow(target.window);
+  return true;
 }
 
 function seedWelcomeNote(dir: string): void {
@@ -224,18 +301,18 @@ function seedWelcomeNote(dir: string): void {
 // File watcher — re-initializes against the active repository.
 // ==========================================================================
 
-function setupWatcher() {
-  if (watcher) {
-    watcher.close();
-    watcher = null;
+function setupWatcher(entry: AppWindow) {
+  if (entry.watcher) {
+    entry.watcher.close();
+    entry.watcher = null;
   }
-  const dir = activeRepoPath();
+  const dir = entry.repo;
   if (!dir) return;
 
-  watcher = watchWorkspace(dir, (event, relativePath) => {
-    if (!mainWindow) return;
+  entry.watcher = watchWorkspace(dir, (event, relativePath) => {
+    if (entry.window.isDestroyed()) return;
     if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
-      mainWindow.webContents.send('notes:changed', event, relativePath);
+      entry.window.webContents.send('notes:changed', event, relativePath);
     }
   });
 }
@@ -244,117 +321,134 @@ function setupWatcher() {
 // Window
 // ==========================================================================
 
-function createWindow() {
+function createWindow(kind: WindowKind = 'workspace', repo: string | null = savedRepo()): AppWindow {
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
     : path.join(process.cwd(), 'build', 'icon.png');
+  // Set only by e2e/fixtures.ts: a test run opens a hundred windows, and each one
+  // used to land on top of whatever the developer was doing and take the
+  // keyboard. In this mode the window is placed off-screen and shown without
+  // focus. It must still render and run timers at full speed while nobody can
+  // see it, or tests that wait on a frame would stall.
+  const testInBackground = !app.isPackaged && process.env.NEURON_E2E_BACKGROUND === '1';
 
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1320,
     height: 860,
+    ...(testInBackground ? { x: -32000, y: -32000, show: false } : {}),
     minWidth: 720,
     minHeight: 560,
     title: 'Neuron',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    // Window chrome is the one part of this app that must not be the same
-    // everywhere.
-    //
-    // Windows and Linux keep the frameless window and the title bar Neuron
-    // draws itself. macOS keeps its real frame: `hiddenInset` hides the title
-    // bar but leaves the traffic lights, so the window can be moved, zoomed and
-    // taken full screen the way every other Mac app can. Going frameless there
-    // removed all of that and replaced it with buttons that only look like the
-    // system's.
-    //
-    // trafficLightPosition centres the lights in a 40px bar; the default sits
-    // them for a taller one and they end up clipped against the top edge.
+    // Windows and Linux: the OS draws the frame and the window buttons
+    // (Window Controls Overlay) beside Neuron's 40px toolbar. A frameless window
+    // overhung the screen when maximised and needed a padding hack, which then
+    // left a strip across the top in full screen. 39px leaves the toolbar's
+    // bottom border visible under the buttons. macOS keeps its traffic lights.
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 13 } }
-      : { frame: false }),
+      : { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 39, color: '#f3f4f6', symbolColor: '#171a1f' } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true, // enables in-app browser tabs (<webview>)
+      ...(testInBackground ? { backgroundThrottling: false } : {}),
     },
-    backgroundColor: '#11181c',
+    backgroundColor: '#f3f4f6',
   });
+  if (testInBackground) window.once('ready-to-show', () => { if (!window.isDestroyed()) window.showInactive(); });
+  // Settings and the workspace manager are small windows with no workspace of their own.
+  if (kind !== 'workspace') { window.setMinimumSize(640, 480); window.setSize(980, 720); }
+  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null };
+  const id = window.webContents.id;
+  appWindows.set(id, entry);
+  if (kind === 'workspace') lastWorkspaceId = id;
 
   // Windows and Linux hide Electron's default menu bar entirely; the in-app
   // title bar is the menu there. On macOS the menu bar is not part of the
   // window at all, so hiding it would be meaningless and the real application
   // menu is installed instead.
-  if (process.platform !== 'darwin') mainWindow.setMenuBarVisibility(false);
-  installApplicationMenu(() => mainWindow);
+  if (process.platform !== 'darwin') window.setMenuBarVisibility(false);
+  installApplicationMenu(() => BrowserWindow.getFocusedWindow());
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL(DEV_URL);
+    void window.loadURL(kind === 'workspace' ? DEV_URL : DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + 'window=' + kind);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void window.loadFile(path.join(__dirname, '../renderer/index.html'), kind === 'workspace' ? undefined : { query: { window: kind } });
   }
 
-  // What the renderer is really being told here is "compensate for the maximise
-  // bleed", not "the window is maximised".
-  //
-  // A frameless Windows window overhangs the screen by 8px when maximised, and
-  // the title bar pads itself to match. Full screen does not overhang, but
-  // entering it from a maximised window fires neither `unmaximize` nor
-  // `maximize` and `isMaximized()` keeps reporting true — so the padding stayed
-  // and showed up as a strip of empty chrome across the top. Reported as a gap
-  // in full screen on Windows, and it was.
-  const emitMaxState = () => {
-    if (mainWindow) mainWindow.webContents.send('window:chrome-state-changed', chromeState(mainWindow));
+  // Full screen hides the toolbar; editors also use these events to remeasure.
+  // The event says which way it went. On Windows isFullScreen() still reports
+  // the old state while enter-full-screen fires, so asking would hide nothing.
+  const emitChromeState = (fullScreen: boolean) => {
+    if (!window.isDestroyed()) window.webContents.send('window:chrome-state-changed', { fullScreen });
   };
-  mainWindow.on('maximize', emitMaxState);
-  mainWindow.on('unmaximize', emitMaxState);
-  mainWindow.on('enter-full-screen', emitMaxState);
-  mainWindow.on('leave-full-screen', emitMaxState);
+  window.on('enter-full-screen', () => emitChromeState(true));
+  window.on('leave-full-screen', () => emitChromeState(false));
+  // The workspace used last is the one the next launch reopens.
+  window.on('focus', () => {
+    if (entry.kind !== 'workspace') return;
+    lastWorkspaceId = id;
+    if (entry.repo && readSettings().repositories.current !== entry.repo) {
+      const settings = readSettings();
+      settings.repositories.current = entry.repo;
+      writeSettings(settings);
+    }
+  });
 
-  mainWindow.on('closed', () => {
-    killAllPtys();
-    mainWindow = null;
+  window.on('closed', () => {
+    disposeWindowPtys(id);
+    entry.watcher?.close();
+    entry.watcher = null;
+    appWindows.delete(id);
+    if (lastWorkspaceId === id) lastWorkspaceId = null;
   });
   // ...and again on the way out, because 'closed' is not on every exit path.
   // A shell that outlives the app is not a test problem: it is a process the
   // user never sees and cannot stop.
   app.once('before-quit', killAllPtys);
 
-  setupWatcher();
+  setupWatcher(entry);
+  return entry;
 }
 
 // ==========================================================================
 // IPC — window controls
 // ==========================================================================
 
-/**
- * Whether the renderer should pad its title bar for the maximise bleed.
- *
- * Only a frameless window overhangs the screen when maximised, and only when it
- * is maximised rather than full screen. macOS keeps its native frame, so it
- * never bleeds and never needs the inset; a full-screen window does not bleed
- * either, and treating it as maximised is what put a strip of empty chrome
- * across the top of the window on Windows.
- */
-function needsMaximizeInset(window: BrowserWindow): boolean {
-  if (process.platform === 'darwin') return false;
-  return window.isMaximized() && !window.isFullScreen();
-}
-
 /** What the renderer needs to know to draw its chrome correctly. */
 function chromeState(window: BrowserWindow) {
-  return { inset: needsMaximizeInset(window), fullScreen: window.isFullScreen() };
+  return { fullScreen: window.isFullScreen() };
 }
 
-ipcMain.handle('window:minimize', () => mainWindow?.minimize());
-ipcMain.handle('window:toggle-maximize', () => {
-  if (!mainWindow) return false;
-  if (mainWindow.isMaximized()) mainWindow.unmaximize();
-  else mainWindow.maximize();
-  return mainWindow.isMaximized();
+ipcMain.handle('window:chrome-state', (event) => {
+  const window = windowOf(event);
+  return window ? chromeState(window) : { fullScreen: false };
 });
-ipcMain.handle('window:close', () => mainWindow?.close());
-ipcMain.handle('window:chrome-state', () => (mainWindow ? chromeState(mainWindow) : { inset: false, fullScreen: false }));
+// Windows and Linux have no application menu, so its togglefullscreen role does
+// not exist there; F11 and the palette reach full screen through this.
+ipcMain.handle('window:toggle-fullscreen', (event) => {
+  const window = windowOf(event);
+  window?.setFullScreen(!window.isFullScreen());
+});
+// Pages that are about the app, not one workspace, get a window of their own:
+// one per page, brought forward if it is already open.
+ipcMain.handle('window:open-page', (event, page: unknown) => {
+  if (!entryOf(event) || (page !== 'settings' && page !== 'workspaces')) return { success: false };
+  const open = [...appWindows.values()].find((entry) => entry.kind === page);
+  focusWindow((open ?? createWindow(page, null)).window);
+  return { success: true };
+});
+ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
+  const window = windowOf(event);
+  if ((process.platform !== 'win32' && process.platform !== 'linux') || !window) return;
+  if (event.senderFrame !== window.webContents.mainFrame) return;
+  if (typeof colors?.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.color)
+    || typeof colors?.symbolColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.symbolColor)) return;
+  window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor });
+});
 
 // ==========================================================================
 // IPC — settings (generic key/value; used for plugin config + state)
@@ -389,11 +483,16 @@ ipcMain.handle('settings:get', (_event, key: string) => {
   }
   return null;
 });
-ipcMain.handle('settings:set', (_event, key: string, value: unknown) => {
+ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
   if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
   const settings = readSettings();
   settings[key] = value;
   writeSettings(settings);
+  // Settings are shared by every window; the others reload what changed. Only
+  // the key is sent, never the value.
+  for (const [id, entry] of appWindows) {
+    if (id !== event.sender.id && !entry.window.isDestroyed()) entry.window.webContents.send('settings:changed', key);
+  }
   return { success: true };
 });
 
@@ -421,27 +520,31 @@ ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => 
 // IPC — repository
 // ==========================================================================
 
-ipcMain.handle('repository:get-current', () => {
-  const dir = activeRepoPath();
+ipcMain.handle('repository:get-current', (event) => {
+  const dir = repoOf(event);
   return dir ? repoInfo(dir) : null;
 });
 
-ipcMain.handle('repository:list-recent', () => {
+// The open workspace is not "recent": the switcher already shows it on its
+// button, and listing it again underneath was the name appearing twice.
+ipcMain.handle('repository:list-recent', (event) => {
   const recent = readSettings().repositories.recent;
-  return recent.filter((p) => fs.existsSync(p)).map(repoInfo);
+  return uniqueRecents(recent.filter((p) => !isInstallWorkspace(p) && fs.existsSync(p)), repoOf(event)).map(repoInfo);
 });
 
-ipcMain.handle('repository:create', async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('repository:create', async (event) => {
+  const parent = windowOf(event);
+  if (!parent) return null;
+  const result = await dialog.showOpenDialog(parent, {
     title: 'Create or choose a workspace folder',
     buttonLabel: 'Use this folder',
     properties: ['openDirectory', 'createDirectory'],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const dir = result.filePaths[0];
+  if (await refuseInstallWorkspace(dir, parent)) return null;
   seedWelcomeNote(dir);
-  setActiveRepo(dir);
+  if (!openWorkspace(dir, entryOf(event))) return null;
   return repoInfo(dir);
 });
 
@@ -456,14 +559,15 @@ ipcMain.handle('templates:list', () =>
  * they keep their files. Opening the bundled folder directly is what put the
  * app's own installation directory on the writing end of every edit.
  */
-ipcMain.handle('templates:create', async (_event, templateId: string) => {
-  if (!mainWindow) return null;
+ipcMain.handle('templates:create', async (event, templateId: string) => {
+  const parent = windowOf(event);
+  if (!parent) return null;
 
   const templates = listTemplates(templatesRoot(app.isPackaged, process.resourcesPath));
   const template = templates.find((t) => t.id === templateId);
   if (!template) return { error: `No template called "${templateId}".` };
 
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(parent, {
     title: `Where should the ${template.name} workspace go?`,
     buttonLabel: 'Create here',
     properties: ['openDirectory', 'createDirectory'],
@@ -471,6 +575,7 @@ ipcMain.handle('templates:create', async (_event, templateId: string) => {
   if (result.canceled || result.filePaths.length === 0) return null;
 
   const dir = result.filePaths[0];
+  if (await refuseInstallWorkspace(dir, parent)) return null;
   // Refuse rather than merge. Copying a template over someone's existing notes
   // is not something they can undo from in here.
   if (hasNotes(dir)) {
@@ -483,28 +588,31 @@ ipcMain.handle('templates:create', async (_event, templateId: string) => {
     return { error: `Could not create the workspace: ${(err as Error).message}` };
   }
 
-  setActiveRepo(dir);
+  if (!openWorkspace(dir, entryOf(event))) return null;
   return { repository: repoInfo(dir) };
 });
 
-ipcMain.handle('repository:open', async () => {
-  if (!mainWindow) return null;
-  const result = await dialog.showOpenDialog(mainWindow, {
+ipcMain.handle('repository:open', async (event) => {
+  const parent = windowOf(event);
+  if (!parent) return null;
+  const result = await dialog.showOpenDialog(parent, {
     title: 'Open a workspace folder',
     buttonLabel: 'Open workspace',
     properties: ['openDirectory'],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const dir = result.filePaths[0];
-  setActiveRepo(dir);
+  if (await refuseInstallWorkspace(dir, parent)) return null;
+  if (!openWorkspace(dir, entryOf(event))) return null;
   return repoInfo(dir);
 });
 
-ipcMain.handle('repository:switch', (_event, dir: string) => {
+ipcMain.handle('repository:switch', (event, dir: string) => {
+  if (typeof dir !== 'string' || !entryOf(event)) return { success: false, error: 'Folder no longer exists.' };
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     return { success: false, error: 'Folder no longer exists.' };
   }
-  setActiveRepo(dir);
+  if (!openWorkspace(dir, entryOf(event))) return { success: false, error: INSTALL_FOLDER_MESSAGE };
   return { success: true, repository: repoInfo(dir) };
 });
 
@@ -516,20 +624,23 @@ ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
   else delete names[dir];
   settings.repositories.names = names;
   writeSettings(settings);
-  if (mainWindow && settings.repositories.current === dir) {
-    mainWindow.webContents.send('repository:changed', repoInfo(dir));
+  for (const entry of appWindows.values()) {
+    if (entry.repo === dir && !entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', repoInfo(dir));
   }
   return { success: true, repository: repoInfo(dir) };
 });
 
-ipcMain.handle('repository:remove', (_event, dir: string) => {
+ipcMain.handle('repository:remove', (event, dir: string) => {
   const settings = readSettings();
   settings.repositories.recent = settings.repositories.recent.filter((p) => p !== dir);
   if (settings.repositories.names) delete settings.repositories.names[dir];
-  const wasActive = settings.repositories.current === dir;
-  if (wasActive) settings.repositories.current = null;
+  if (settings.repositories.current === dir) settings.repositories.current = null;
   writeSettings(settings);
-  if (wasActive) setupWatcher();
+  // Forgetting a workspace closes it in the window that asked. Another window
+  // showing it keeps working: its files are still there.
+  const entry = entryOf(event);
+  const wasActive = !!entry && entry.repo === dir;
+  if (entry && wasActive) bindRepo(entry, null);
   return { success: true, clearedActive: wasActive };
 });
 
@@ -542,8 +653,8 @@ ipcMain.handle('repository:reveal', (_event, dir: string) => {
 // IPC — notes (operate against the active repository, with traversal guard)
 // ==========================================================================
 
-function resolveInRepo(relativePath: string): { repo: string; fullPath: string } | null {
-  const repo = activeRepoPath();
+function resolveInRepo(event: Sender, relativePath: string): { repo: string; fullPath: string } | null {
+  const repo = repoOf(event);
   if (!repo) return null;
   const fullPath = resolveInside(repo, relativePath);
   if (!fullPath || !realpathInside(repo, fullPath)) return null;
@@ -571,8 +682,8 @@ function walkRepoFiles(repo: string): string[] {
   return files;
 }
 
-ipcMain.handle('notes:list', async () => {
-  const repo = activeRepoPath();
+ipcMain.handle('notes:list', async (_event) => {
+  const repo = repoOf(_event);
   if (!repo) return [];
   try {
     return walkRepoFiles(repo).filter((file) => WORKSPACE_FILE.test(file));
@@ -583,7 +694,7 @@ ipcMain.handle('notes:list', async () => {
 });
 
 ipcMain.handle('notes:read', async (_event, relativePath: string) => {
-  const resolved = resolveInRepo(relativePath);
+  const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return 'Error: No workspace is open.';
   try {
     // Async: opening a workspace reads every note at once, and synchronous
@@ -601,7 +712,7 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
 });
 
 ipcMain.handle('notes:write', async (_event, relativePath: string, content: string) => {
-  const resolved = resolveInRepo(relativePath);
+  const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
     const dir = path.dirname(resolved.fullPath);
@@ -620,7 +731,7 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
 });
 
 ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
-  const resolved = resolveInRepo(relativePath);
+  const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
     if (fs.existsSync(resolved.fullPath)) {
@@ -640,21 +751,21 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
 // pre-images from across the whole workspace, so exposing it to a capability-scoped
 // view would hand it file contents outside its path policy (DECISIONS.md D20).
 ipcMain.handle('journal:list', (_event, relativePath?: string) => {
-  const repo = activeRepoPath();
+  const repo = repoOf(_event);
   if (!repo) return [];
   const entries = listJournalEntries(repo);
   return relativePath ? entries.filter((e) => e.relativePath === relativePath) : entries;
 });
 
 ipcMain.handle('journal:restore', (_event, entryId: string) => {
-  const repo = activeRepoPath();
+  const repo = repoOf(_event);
   if (!repo) return { success: false, error: 'No workspace is open.' };
   const result = restoreJournalEntry(repo, entryId);
   return result.success ? { success: true } : { success: false, error: result.error };
 });
 
 ipcMain.handle('notes:create-section', async (_event, relativePath: string) => {
-  const resolved = resolveInRepo(relativePath);
+  const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
     fs.mkdirSync(resolved.fullPath, { recursive: true });
@@ -666,7 +777,7 @@ ipcMain.handle('notes:create-section', async (_event, relativePath: string) => {
   }
 });
 
-ipcMain.handle('notes:get-dir', () => activeRepoPath());
+ipcMain.handle('notes:get-dir', (event) => repoOf(event));
 
 // ==========================================================================
 // IPC — surface file helpers
@@ -676,7 +787,7 @@ ipcMain.handle('notes:get-dir', () => activeRepoPath());
 // ponytail: whole-file base64 over IPC — fine for note-sized images; switch to a custom protocol if galleries get huge.
 const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
 ipcMain.handle('views:file', (_event, relativePath: string) => {
-  const resolved = resolveInRepo(relativePath);
+  const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
     if (!fs.existsSync(resolved.fullPath)) return { success: false, error: `File not found: ${relativePath}` };
@@ -695,7 +806,7 @@ ipcMain.handle('cookies:import-chrome', (_event, domain?: string) =>
 );
 
 ipcMain.handle('terminal:run', async (_event, cmd: string) => {
-  const dir = activeRepoPath() || process.cwd();
+  const dir = repoOf(_event) || process.cwd();
   return new Promise((resolve) => {
     exec(cmd, { cwd: dir }, (error, stdout, stderr) => {
       resolve({
@@ -732,6 +843,9 @@ const TERMINAL_HISTORY_LIMIT = 200 * 1024;
  * keys.
  */
 const ptyByKey = new Map<string, number>();
+/** Which window started each pty. A window may only drive its own shells. */
+const ptyOwner = new Map<number, number>();
+const ownsPty = (event: Sender, id: number) => ptyOwner.get(id) === event.sender.id;
 let nextPtyId = 1;
 
 /** The first of these that exists on PATH, or null. */
@@ -804,13 +918,15 @@ function appendHistory(history: string, data: string): string {
  * was started in, so after opening a different workspace every existing shell is
  * pointing at the old one.
  */
-function disposeWindowPty(): void {
-  for (const id of ptyByKey.values()) {
+function disposeWindowPtys(ownerId: number): void {
+  for (const [key, id] of [...ptyByKey]) {
+    if (!ownsPtyKey(ownerId, key)) continue;
     try { ptys.get(id)?.kill(); } catch { /* already gone */ }
     ptys.delete(id);
     ptyHistory.delete(id);
+    ptyOwner.delete(id);
+    ptyByKey.delete(key);
   }
-  ptyByKey.clear();
 }
 
 function killAllPtys() {
@@ -820,10 +936,13 @@ function killAllPtys() {
   ptys.clear();
   ptyHistory.clear();
   ptyByKey.clear();
+  ptyOwner.clear();
 }
 
 ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; key?: string } = {}) => {
-  const key = opts.key || 'default';
+  if (!entryOf(_event)) throw new Error('terminals are only available to app windows');
+  const owner = _event.sender;
+  const key = ptyKey(owner.id, opts.key || 'default');
   const known = ptyByKey.get(key);
   if (known != null) {
     const existing = ptys.get(known);
@@ -848,7 +967,7 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
       name: 'xterm-color',
       cols: opts.cols ?? 80,
       rows: opts.rows ?? 24,
-      cwd: activeRepoPath() || process.cwd(),
+      cwd: repoOf(_event) || process.cwd(),
       env: process.env as { [key: string]: string },
     });
   } catch (error) {
@@ -857,31 +976,44 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
   ptys.set(id, proc);
   ptyHistory.set(id, '');
   ptyByKey.set(key, id);
+  ptyOwner.set(id, owner.id);
   proc.onData((data) => {
     ptyHistory.set(id, appendHistory(ptyHistory.get(id) ?? '', data));
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:data', id, data);
+    if (!owner.isDestroyed()) owner.send('terminal:data', id, data);
   });
   proc.onExit(({ exitCode }) => {
     ptys.delete(id);
     ptyHistory.delete(id);
+    ptyOwner.delete(id);
     if (ptyByKey.get(key) === id) ptyByKey.delete(key);
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', id, exitCode);
+    if (!owner.isDestroyed()) owner.send('terminal:exit', id, exitCode);
   });
   return id;
 });
 
-ipcMain.handle('terminal:history', (_event, id: number) => ptyHistory.get(id) ?? '');
+ipcMain.handle('terminal:history', (_event, id: number) => (ownsPty(_event, id) ? ptyHistory.get(id) ?? '' : ''));
 
 ipcMain.handle('terminal:write', (_event, id: number, data: string) => {
+  if (!ownsPty(_event, id)) return;
   try { ptys.get(id)?.write(data); } catch { /* pty closed */ }
 });
 
 ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: number) => {
+  if (!ownsPty(_event, id)) return;
   try { ptys.get(id)?.resize(Math.max(1, cols), Math.max(1, rows)); } catch { /* pty closed */ }
+});
+// ConPTY wraps long lines itself. xterm.js reflows them again on resize unless
+// told it is attached to ConPTY -- which is what split a prompt path across two
+// lines after narrowing the panel. node-pty uses ConPTY on every Windows build
+// Electron 42 supports, so the build number is all the renderer needs.
+ipcMain.handle('terminal:windows-pty', () => {
+  if (process.platform !== 'win32') return null;
+  const buildNumber = Number(os.release().split('.')[2]);
+  return Number.isFinite(buildNumber) ? { backend: 'conpty' as const, buildNumber } : null;
 });
 
 ipcMain.handle('terminal:kill', (_event, id: number) => {
-  const proc = ptys.get(id);
+  const proc = ownsPty(_event, id) ? ptys.get(id) : undefined;
   if (proc) { try { proc.kill(); } catch { /* already gone */ } ptys.delete(id); }
 });
 
@@ -1077,17 +1209,16 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 app.on('second-instance', (_event, commandLine) => {
-  const workspace = workspacePathFromArgv(commandLine, app.isPackaged);
-  if (workspace) setActiveRepo(workspace);
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  const workspace = workspacePathFromArgv(commandLine, app.isPackaged, isInstallWorkspace);
+  // A second launch with a folder opens it (in its own window unless it is
+  // already on screen); without one it brings the app forward.
+  if (workspace && openWorkspace(workspace, null)) return;
+  const last = (lastWorkspaceId !== null ? appWindows.get(lastWorkspaceId) : undefined) ?? [...appWindows.values()][0];
+  if (last) focusWindow(last.window);
 });
 
 initHtmxViews({
-  getRepoRoot: activeRepoPath,
+  getRepoRoot: repoOf,
   getSetting: (key) => {
     const settings = readSettings();
     return key in settings ? settings[key] : null;
@@ -1136,8 +1267,8 @@ app.on('ready', () => {
   });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
-  const workspace = workspacePathFromArgv(process.argv, app.isPackaged);
-  if (workspace) setActiveRepo(workspace);
+  const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);
+  if (workspace && usableRepo(workspace)) rememberRepo(workspace);
   createWindow();
   // GitHub-backed in-app updates. What counts as an update, and whether to look
   // at all, lives in ./updater so the rules are testable without Electron --
@@ -1160,5 +1291,5 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('activate', () => {
-  if (mainWindow === null) createWindow();
+  if (appWindows.size === 0) createWindow();
 });

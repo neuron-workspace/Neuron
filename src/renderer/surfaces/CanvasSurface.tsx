@@ -74,6 +74,11 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
   const selEdgesRef = useRef(selEdges); selEdgesRef.current = selEdges;
   const gestureRef = useRef<Gesture | null>(null);
   const lastWritten = useRef<string | null>(null);
+  const pendingWrite = useRef<string | null>(null);
+  const writeSequence = useRef(0);
+  const unsaved = useRef(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const activePath = useRef(path);
   const historyRef = useRef(new CanvasHistory());
   const pendingBefore = useRef<CanvasDoc | null>(null); // pre-change doc of an in-flight staged edit
   const nudgeTimer = useRef<number | null>(null);
@@ -94,11 +99,30 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
     setSelEdges((prev) => (([...prev].every((id) => edgeIds.has(id))) ? prev : new Set([...prev].filter((id) => edgeIds.has(id)))));
   }, []);
 
-  const persist = useCallback((next: CanvasDoc) => {
+  const persist = useCallback(async (next: CanvasDoc) => {
     adopt(next);
     const text = serializeCanvas(next);
-    lastWritten.current = text;
-    void window.electronAPI.writeNote(path, text);
+    const sequence = ++writeSequence.current;
+    unsaved.current = true;
+    // Watcher IPC can beat the write reply; keep its echo separate from confirmed saves.
+    pendingWrite.current = text;
+    try {
+      const result = await window.electronAPI.writeNote(path, text);
+      if (sequence !== writeSequence.current) return;
+      pendingWrite.current = null;
+      if (result.success) {
+        lastWritten.current = text;
+        // Only a write in flight or a failed one holds off reloads from disk.
+        unsaved.current = false;
+        setSaveError(null);
+      } else {
+        setSaveError(result.error ?? 'Unknown error');
+      }
+    } catch (error) {
+      if (sequence !== writeSequence.current) return;
+      pendingWrite.current = null;
+      setSaveError(error instanceof Error ? error.message : String(error));
+    }
   }, [adopt, path]);
 
   const d = () => docRef.current;
@@ -144,16 +168,27 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
 
   // Adopt file content (initial open, Source-mode edits; our own echo excluded).
   useEffect(() => {
-    if (content === lastWritten.current) return;
+    if (activePath.current !== path) {
+      activePath.current = path;
+      lastWritten.current = null;
+      pendingWrite.current = null;
+      writeSequence.current++;
+      unsaved.current = false;
+      setSaveError(null);
+      loadedOnce.current = false;
+    }
+    if (unsaved.current || content === pendingWrite.current || content === lastWritten.current) return;
     applyParsed(content, true);
-  }, [content, applyParsed]);
+  }, [content, path, applyParsed]);
 
   // External edits (Obsidian, git, scripts) land live via the workspace watcher.
   useEffect(() => {
     return window.electronAPI.onNotesChanged((event, changed) => {
       if (changed !== path || event === 'unlink') return;
+      const sequence = writeSequence.current;
       void window.electronAPI.readNote(path).then((text) => {
-        if (text.startsWith('Error:') || text === lastWritten.current) return;
+        if (activePath.current !== path || sequence !== writeSequence.current || unsaved.current
+          || text.startsWith('Error:') || text === pendingWrite.current || text === lastWritten.current) return;
         applyParsed(text, true);
       });
     });
@@ -576,6 +611,12 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
       role="application"
       aria-label="Canvas"
     >
+      {saveError && (
+        <div role="alert" className="absolute left-3 right-3 top-14 z-30 flex items-center gap-3 rounded border border-[var(--divider)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--danger)] shadow-sm" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <button type="button" className="interactive shrink-0 rounded px-2 py-1 font-medium hover:bg-[var(--surface-hover)]" onClick={() => void persist(docRef.current)}>Retry</button>
+          <span className="min-w-0 truncate" title={saveError}>Couldn't save {path.split(/[\\/]/).pop()}: {saveError}</span>
+        </div>
+      )}
       <div className="absolute left-0 top-0" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0' }}>
         {/* Groups (behind everything) */}
         {doc.nodes.filter((n) => n.type === 'group').map((n) => {

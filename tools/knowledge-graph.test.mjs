@@ -47,6 +47,24 @@ assert.ok(m.graph.hasDirectedEdge('a.md', 'Missing.md'));
 assert.deepEqual(graphPreferences(null), GRAPH_DEFAULTS);
 assert.equal(graphPreferences({ depth: 99, repel: NaN, arrows: 'yes' }).depth, 5);
 assert.equal(graphPreferences({ repel: NaN }).repel, GRAPH_DEFAULTS.repel);
+
+for (const [name, content] of [
+  ["backtick fence", "```\n[[inside]]\n```"],
+  ["tilde fence", "~~~\n[[inside]]\n~~~"],
+  ["language tag", "```ts\n[[inside]]\n```"],
+  ["longer closing fence", "```\n[[inside]]\n`````"],
+  ["unclosed fence", "```\n[[inside]]"],
+  ["prose after closing fence", "```\n[[inside]]\n```\n[[after]]"],
+  ["tilde inside backtick fence", "```\n~~~\n[[inside]]\n```"],
+]) {
+  const fenced = new KnowledgeGraph();
+  fenced.sync([
+    { path: 'source.md', content },
+    { path: 'inside.md', content: '' },
+    { path: 'after.md', content: '' },
+  ]);
+  assert.deepEqual(fenced.graph.outNeighbors('source.md'), name === 'prose after closing fence' ? ['after.md'] : [], name);
+}
 console.log('knowledge graph: resolution, incremental updates, traversal, stability, validation passed');
 
 // Exercise the actual library worker in Node with only its messaging transport

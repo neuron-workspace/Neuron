@@ -1,8 +1,10 @@
 import { test, expect, openNote } from './fixtures';
 import type { Locator } from '@playwright/test';
 
-// T-026. The graph is a floating square over the editor, on by default, drawing
-// the whole workspace -- not a full-height column showing the active note alone.
+// T-026. The graph is a floating square over the editor, drawing the whole
+// workspace -- not a full-height column showing the active note alone. It is off
+// by default, because floating over the editor it covered content and controls;
+// the toolbar's graph button opens it, so it is one visible click away.
 
 /**
  * Wait until Sigma has actually painted a frame.
@@ -22,11 +24,15 @@ const painted = (canvas: Locator) => canvas.evaluate((el: any) => new Promise<vo
   el.sigma.refresh();
 }));
 
-test('the graph is visible without touching a shortcut', async ({ page }) => {
-  // No keypress, no focus juggling. It is on by default because it replaced a
-  // panel that was always on; a graph you must discover a shortcut for is a
-  // graph nobody sees. This also sidesteps the real problem that a global
-  // keydown handler does nothing while the terminal or a webview holds focus.
+test.beforeEach(async ({ page }) => {
+  // Every test here starts from an open graph, reached the way a user reaches it.
+  await page.getByRole('button', { name: 'Show graph', exact: true }).click();
+});
+
+test('the toolbar opens the graph without touching a shortcut', async ({ page }) => {
+  // No keypress, no focus juggling: a visible toolbar button, so the graph is
+  // not something you must discover a shortcut for, and it works while the
+  // terminal or a webview holds focus, where the global keydown does nothing.
   const graph = page.getByRole('complementary', { name: 'Workspace graph' });
   await expect(graph).toBeVisible();
 
@@ -65,9 +71,10 @@ test('no full-height graph column remains in the shell layout', async ({ page, w
   const layout = JSON.parse(readFileSync(join(workspace, '.neuron', 'layout.json'), 'utf-8'));
   const panels = JSON.stringify(layout);
   expect(panels).not.toContain('"graph"');
-  // The editor gets the width back: it is the only panel besides the terminal.
+  // The editor gets the whole width: the terminal is a dock panel now, not part
+  // of this file, so a workspace never shows two of them.
   expect(panels).toContain('"editor"');
-  expect(panels).toContain('"terminal"');
+  expect(panels).not.toContain('"terminal"');
   // And the floating graph is what shows the workspace instead.
   await expect(page.getByRole('complementary', { name: 'Workspace graph' })).toBeVisible();
 });
@@ -89,10 +96,27 @@ test('the graph recentres on the open note, zooms, and pans', async ({ page }) =
   await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
   await page.mouse.wheel(0, -240);
   await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getCamera().ratio)).toBeLessThan(before);
+  // The wheel zoom is animated, and an animation in flight overwrites the
+  // camera each frame, so a drag begun during it is undone.
+  await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getCamera().isAnimated())).toBe(false);
   const camera = await canvas.evaluate((el: any) => el.sigma.getCamera().getState());
-  await page.mouse.move(rect.x + 12, rect.y + rect.height - 12);
+  // Start the drag on empty canvas. A press that lands on a node moves that
+  // node, not the camera, and a fixed corner is sometimes where a node sits.
+  const start = await canvas.evaluate((el: any) => {
+    const s = el.sigma, g = s.getGraph();
+    const nodes = g.nodes().map((id: string) => s.graphToViewport(g.getNodeAttributes(id)));
+    let best = { x: 12, y: 12, clear: -1 };
+    for (let x = 16; x < el.clientWidth - 76; x += 12) {
+      for (let y = 56; y < el.clientHeight - 16; y += 12) {
+        const clear = Math.min(...nodes.map((n: { x: number; y: number }) => Math.hypot(n.x - x, n.y - y)));
+        if (clear > best.clear) best = { x, y, clear };
+      }
+    }
+    return best;
+  });
+  await page.mouse.move(rect.x + start.x, rect.y + start.y);
   await page.mouse.down();
-  await page.mouse.move(rect.x + 72, rect.y + rect.height - 52, { steps: 8 });
+  await page.mouse.move(rect.x + start.x + 60, rect.y + start.y - 40, { steps: 8 });
   await page.mouse.up();
   await expect.poll(() => canvas.evaluate((el: any) => el.sigma.getCamera().x)).not.toBe(camera.x);
 });

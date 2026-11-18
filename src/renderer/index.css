@@ -3,23 +3,23 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
-  /* Default app palette: "Graphite" (refined dark). Theme presets override
+  color-scheme: light;
+  /* Default app palette: "Light". Theme presets override
      these on <html> at runtime — see src/renderer/lib/theme.ts. */
-  --canvas: #16181d;
-  --nav: #121419;
-  --surface: #1d2128;
-  --surface-hover: #272c35;
-  --divider: rgba(255, 255, 255, 0.09);
-  --ink: #e6e8ec;
-  --ink-secondary: #b3b9c4;
-  --ink-muted: #7c8493;
-  --accent: #7fb1e3;
-  --accent-strong: #a9cef0;
-  --positive: #7ed8a4;
-  --danger: #f08a8a;
-  --warning: #e6c07a;
-  --info: #7fb1e3;
+  --canvas: #ffffff;
+  --nav: #f3f4f6;
+  --surface: #f7f8fa;
+  --surface-hover: #e9ebef;
+  --divider: rgba(17,24,39,0.10);
+  --ink: #171a1f;
+  --ink-secondary: #454d5a;
+  --ink-muted: #5f6875;
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --positive: #15803d;
+  --danger: #c62828;
+  --warning: #a06107;
+  --info: #2563eb;
 
   /* Markdown render colors — overridable per-element in Settings. */
   --md-heading: var(--ink);
@@ -38,6 +38,8 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* shadcn token bridge — these resolve to full color values, consumed by tailwind.config.js */
+  --card-radius: 10px;
+  --shell-gap: 8px;
   --radius: 4px;
   --background: var(--canvas);
   --foreground: var(--ink);
@@ -96,7 +98,7 @@
   font-synthesis: none;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; caret-color: var(--accent); }
 
 html,
 body,
@@ -107,7 +109,7 @@ body,
   min-height: 540px;
   margin: 0;
   overflow: hidden;
-  background: var(--canvas);
+  background: var(--nav);
   color: var(--ink);
 }
 
@@ -116,12 +118,9 @@ input { font: inherit; }
 
 button { -webkit-app-region: no-drag; }
 
-button:focus-visible,
-input:focus-visible,
-[role="button"]:focus-visible,
-[tabindex]:focus-visible {
-  outline: none;
-  box-shadow: var(--focus);
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 ::selection {
@@ -129,9 +128,9 @@ input:focus-visible,
   background: color-mix(in oklch, var(--accent) 34%, transparent);
 }
 
-.app-shell { background: var(--canvas); color: var(--ink); }
+.app-shell { background: var(--nav); color: var(--ink); }
 
-/* Custom window bar */
+/* App toolbar beneath native window controls. */
 .titlebar {
   -webkit-app-region: drag;
   height: 40px;
@@ -143,36 +142,20 @@ input:focus-visible,
   -webkit-user-select: none;
 }
 .titlebar-no-drag { -webkit-app-region: no-drag; }
-.window-control { -webkit-app-region: no-drag; display: grid; place-items: center; width: 46px; height: 40px; color: var(--ink-muted); transition: color 160ms var(--ease-out), background-color 160ms var(--ease-out); }
-.window-control:hover { color: var(--ink); background: var(--surface-hover); }
-.window-control.danger:hover { color: #fff; background: var(--danger); }
+/* Electron updates these safe-area variables as native controls move or resize. */
+body.platform-win32 .titlebar,
+body.platform-linux .titlebar {
+  padding-left: calc(env(titlebar-area-x, 0px) + 8px);
+  padding-right: calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100% - 140px)));
+}
 
 /* App shell grid: titlebar row + workspace row + status bar */
 .workspace-grid { display: grid; grid-template-rows: 40px minmax(0, 1fr) 24px; height: 100vh; width: 100vw; }
 .workspace-grid.no-status { grid-template-rows: 40px minmax(0, 1fr); }
 
-/* Compensation for the 8px a frameless Windows window overhangs the screen by
-   when maximised. It is scoped to Windows because it is a workaround for a
-   Windows behaviour: macOS keeps its native frame and never bleeds, so applying
-   this there would simply indent the title bar for no reason.
-
-   Main decides when this class applies and deliberately withholds it in full
-   screen, which does not overhang either — leaving it on there is what put a
-   strip of empty chrome across the top of the window. */
-body.platform-win32.window-maximized .workspace-grid {
-  grid-template-rows: 48px minmax(0, 1fr) 24px;
-}
-body.platform-win32.window-maximized .workspace-grid.no-status {
-  grid-template-rows: 48px minmax(0, 1fr);
-}
-body.platform-win32.window-maximized .titlebar {
-  padding-top: 8px;
-  height: 48px;
-}
-body.platform-win32.window-maximized .window-control {
-  height: 40px;
-  margin-top: 8px;
-}
+body.window-fullscreen .titlebar { display: none; }
+body.window-fullscreen .workspace-grid { grid-template-rows: minmax(0, 1fr) 24px; }
+body.window-fullscreen .workspace-grid.no-status { grid-template-rows: minmax(0, 1fr); }
 
 /* macOS shell chrome.
 
@@ -184,25 +167,27 @@ body.platform-darwin .titlebar,
 body.platform-darwin .status-bar {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
 }
-/* In full screen macOS takes the traffic lights away, so the space reserved for
-   them is dead. The renderer removes the padding when it hears about it. */
-body.platform-darwin.window-fullscreen .titlebar {
-  padding-left: 0.5rem;
-}
-.status-bar { height: 24px; background: var(--nav); border-top: 1px solid var(--divider); }
+.status-bar { height: 24px; background: var(--nav); }
 
-/* Resizable dock dividers (react-resizable-panels) */
-.resize-handle { position: relative; background: var(--divider); transition: background-color 160ms var(--ease-out); }
-.resize-handle:hover, .resize-handle[data-resize-handle-active] { background: var(--accent); }
-.resize-handle-v { width: 1px; cursor: col-resize; }
-.resize-handle-h { height: 1px; cursor: row-resize; }
-/* Widen the hit target without shifting layout */
-.resize-handle-v::after { content: ""; position: absolute; inset: 0 -3px; }
-.resize-handle-h::after { content: ""; position: absolute; inset: -3px 0; }
+/* Handles occupy the shell gap, with the full gap available to pointer/keyboard users. */
+.resize-handle { position: relative; flex-shrink: 0; background: transparent; }
+.resize-handle:hover, .resize-handle[data-resize-handle-active], .resize-handle:focus-visible { background: var(--surface-hover); }
+.resize-handle:focus-visible { outline-offset: -2px; }
+.resize-handle-v { width: var(--shell-gap); min-width: 6px; cursor: col-resize; }
+.resize-handle-h { height: var(--shell-gap); min-height: 6px; cursor: row-resize; }
+.shell-workspace { padding: var(--shell-gap); }
+.shell-workspace > nav { margin-right: var(--shell-gap); }
+.shell-card { background: var(--canvas); border: 1px solid var(--divider); border-radius: var(--card-radius); overflow: hidden; }
+.zen .shell-workspace { padding: 0; }
+.zen main.shell-card { border: 0; border-radius: 0; }
+.editor-tab-header :focus-visible { outline-offset: -2px; }
 .textarea-reset { font: inherit; }
 .nav-surface { background: var(--nav); border-color: var(--divider); }
 .work-surface { background: var(--surface); border-color: var(--divider); }
 .canvas-surface { background: var(--canvas); border-color: var(--divider); }
+/* Reading and Live share this frame; a scrollbar that came and went with Live's
+   trailing "Start writing…" line shifted the page sideways between the two. */
+.canvas-surface[data-live-preview], .canvas-surface:has(> article.preview-prose) { scrollbar-gutter: stable; }
 .divider-color { border-color: var(--divider); }
 .text-primary { color: var(--ink); }
 .text-secondary { color: var(--ink-secondary); }
@@ -300,17 +285,17 @@ body.platform-darwin.window-fullscreen .titlebar {
 .field:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px var(--accent); }
 
 .note-row {
-  min-height: 34px;
+  min-height: 28px;
   border: 1px solid transparent;
   border-radius: 6px;
   color: var(--ink-secondary);
 }
 
-.note-row:hover { color: var(--ink); background: var(--surface); }
+.note-row:hover { color: var(--ink); background: var(--surface-hover); }
 .note-row[data-selected="true"] {
   color: var(--ink);
-  border-color: color-mix(in oklch, var(--accent) 34%, var(--divider));
-  background: color-mix(in oklch, var(--accent) 12%, var(--surface));
+  border-color: transparent;
+  background: var(--surface-hover);
 }
 
 .tag-button {
@@ -322,12 +307,29 @@ body.platform-darwin.window-fullscreen .titlebar {
 }
 
 .tag-button:hover { color: var(--ink); background: var(--surface-hover); }
-.tag-button[aria-pressed="true"] { border-color: var(--accent); color: var(--canvas); background: var(--accent); }
+.tag-button[aria-pressed="true"] { color: var(--ink); background: var(--surface-hover); }
 
 .pane-header {
   min-height: 42px;
-  background: var(--nav);
+  background: var(--surface);
   border-color: var(--divider);
+}
+
+.pane-header.editor-tab-header {
+  height: 32px;
+  min-height: 32px;
+  background: var(--surface);
+  flex-shrink: 0;
+  padding-block: 0;
+}
+
+.note-header .segmented {
+  background: var(--surface);
+  padding: 0;
+}
+
+.note-header .segmented button {
+  min-height: 22px;
 }
 
 .status-dot {
@@ -362,6 +364,26 @@ body.platform-darwin.window-fullscreen .titlebar {
 .preview-prose h3 { text-wrap: balance; letter-spacing: -0.02em; }
 .preview-prose p,
 .preview-prose li { text-wrap: pretty; }
+/* Reading rhythm. Every source line is its own element, so consecutive lines
+   sit tight and only a blank line in the source ([data-gap]) opens a gap. */
+.preview-prose > p,
+.preview-prose > ul,
+.preview-prose > ol { font-size: 15px; line-height: 1.7; margin-block: 0 !important; }
+.preview-prose > [data-gap] + p,
+.preview-prose > [data-gap] + ul,
+.preview-prose > [data-gap] + ol { margin-top: 0.85rem !important; }
+.preview-prose > ul + ul,
+.preview-prose > ol + ol { margin-top: 0.2rem !important; }
+.preview-prose > p + ul,
+.preview-prose > p + ol { margin-top: 0.35rem !important; }
+.preview-prose > h1 { font-size: 1.75rem; line-height: 1.25; margin: 2rem 0 0.5rem !important; }
+.preview-prose > h2 { font-size: 1.3rem; line-height: 1.3; margin: 1.9rem 0 0.4rem !important; }
+.preview-prose > h3 { font-size: 1.05rem; line-height: 1.4; margin: 1.4rem 0 0.3rem !important; }
+.preview-prose > h1:first-child,
+.preview-prose > h2:first-child,
+.preview-prose > h3:first-child { margin-top: 0 !important; }
+.preview-prose > blockquote { font-size: 15px; line-height: 1.7; font-style: normal; background: transparent; border-width: 0 0 0 0; border-radius: 0; padding: 0 0 0 1rem; box-shadow: inset 2px 0 0 var(--md-quote-border); }
+.preview-prose :not(pre) > code { font-size: 0.9em; padding: 0.1em 0.35em; border-radius: 4px; }
 
 .callout {
   border: 1px solid var(--divider);
@@ -382,73 +404,31 @@ body.platform-darwin.window-fullscreen .titlebar {
 .cm-editor,
 .cm-scroller { height: 100%; }
 .cm-editor { background: var(--canvas) !important; color: var(--ink-secondary); }
-.cm-gutters { background: var(--nav) !important; border-right: 1px solid var(--divider) !important; color: var(--ink-muted) !important; }
+.cm-gutters { background: var(--canvas) !important; border-right: 0 !important; color: var(--ink-muted) !important; }
+.cm-lineNumbers .cm-gutterElement { padding-inline: 12px 10px !important; font-size: 12px; }
 .cm-activeLine,
 .cm-activeLineGutter { background: color-mix(in oklch, var(--surface) 72%, transparent) !important; }
 .cm-selectionBackground { background: color-mix(in oklch, var(--accent) 22%, transparent) !important; }
 .cm-cursor { border-left-color: var(--accent-strong) !important; }
 .cm-focused { outline: none !important; }
 
-/* Live editor */
-.cm-live-editor .cm-content { padding: 2rem 1.5rem; max-width: 768px; margin: 0 auto; font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-size: 16px; color: var(--md-text); }
-/* Same note, same flag, so switching between reading and live does not change
-   the width the document is written at. */
-.cm-live-editor[data-full-width] .cm-content { max-width: none; }
-.cm-live-editor .cm-line { line-height: 1.7; }
-.cm-live-editor .cm-lp-prose { color: var(--md-text); }
-.cm-live-editor .cm-lp-prose > span { color: inherit !important; }
-.cm-live-editor .cm-lp-h1 { font-size: 1.7em; font-weight: 700; line-height: 1.3; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h2 { font-size: 1.4em; font-weight: 700; line-height: 1.3; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h3 { font-size: 1.2em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h4 { font-size: 1.08em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h5 { font-size: 1em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-h6 { font-size: 0.95em; font-weight: 600; color: var(--md-heading); }
-.cm-live-editor .cm-lp-strong { font-weight: 700; color: var(--md-bold) !important; }
-.cm-live-editor .cm-lp-em { color: var(--md-text) !important; font-style: italic; }
-.cm-live-editor .cm-lp-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--md-code-bg); border: 1px solid var(--divider); border-radius: 4px; padding: 0.05em 0.35em; color: var(--md-code) !important; }
-.cm-live-editor .cm-lp-link { color: var(--md-link) !important; font-weight: 500; text-decoration: underline dotted; text-underline-offset: 0.2em; }
-.cm-live-editor .cm-lp-quote { border: 1px solid var(--md-quote-border); border-radius: 4px; padding: 0.25em 0.85em; color: var(--md-quote); font-style: italic; }
+/* Live uses Reading's elements and spacing; only editing chrome is added. */
+.live-text { cursor: text; white-space: pre-wrap; min-width: 1ch; }
+/* Drawn inside the element, so a scroll container or card edge never clips it. */
+.live-text:focus { outline: none; border-radius: 4px; background: color-mix(in srgb, var(--accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+.live-text:empty::before { content: attr(data-placeholder); opacity: 0.65; pointer-events: none; }
+.live-block { position: relative; }
+.live-edit-action { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 4px; padding: 0.25rem 0.5rem; font: inherit; cursor: pointer; }
+.live-edit-action:hover { background: var(--surface-hover); }
+.live-edit-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.live-edit-button { position: absolute; top: 0.25rem; right: 0.25rem; z-index: 1; font-size: 0.75rem; line-height: 1.25rem; font-style: normal; font-weight: 400; opacity: 0; pointer-events: none; }
+.live-block:hover > .live-edit-button,
+.live-block:focus-within > .live-edit-button { opacity: 1; pointer-events: auto; }
+.live-block-editor:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+.live-block-editor .cm-editor { height: auto; }
+.live-block-editor .cm-scroller { height: auto !important; }
+.live-block-editor .cm-content { min-height: 4.5rem; }
 .task-checkbox { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); vertical-align: -0.15em; }
-.cm-lp-task-checkbox { margin-right: 0.5rem; cursor: pointer; }
-.cm-live-editor .cm-lp-task-completed { color: var(--ink-muted) !important; text-decoration: line-through; text-decoration-thickness: 1px; }
-.cm-lp-widget-block { display: block; }
-.cm-lp-widget-inline { display: inline-block; vertical-align: middle; }
-
-/* Notion-style block chrome for rendered components (Callout, Counter, Table).
-   Handle + toolbar are absolutely positioned so they never change the measured
-   block height (keeping CodeMirror's click → caret mapping correct), and the
-   whole block is contenteditable=false so clicks don't steal the text caret. */
-/* flow-root establishes a block formatting context so the rendered component's
-   vertical margins (my-4/my-5) are contained inside the widget's measured box.
-   Without it those margins collapse out, CodeMirror under-measures the block
-   height, and clicks below it land on the wrong line. */
-.cm-lp-block { position: relative; display: flow-root; }
-.cm-lp-block-body { display: flow-root; }
-.cm-lp-block-handle {
-  position: absolute; left: -1.45rem; top: 0.5rem; z-index: 4;
-  display: grid; place-items: center; width: 1.15rem; height: 1.45rem;
-  border: 0; border-radius: 4px; background: transparent; color: var(--ink-muted);
-  cursor: pointer; opacity: 0; font-size: 0.7rem; line-height: 1; letter-spacing: -0.12em;
-  transition: opacity 140ms var(--ease-out), background-color 140ms var(--ease-out), color 140ms var(--ease-out);
-}
-.cm-lp-block:hover .cm-lp-block-handle { opacity: 0.65; }
-.cm-lp-block-handle:hover { opacity: 1; background: var(--surface-hover); color: var(--ink); }
-.cm-lp-block-toolbar {
-  position: absolute; top: -0.65rem; right: 0.25rem; z-index: 5;
-  display: flex; gap: 0.2rem; padding: 0.2rem;
-  border: 1px solid var(--divider); border-radius: 6px; background: var(--nav);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-  opacity: 0; transform: translateY(-2px); pointer-events: none;
-  transition: opacity 140ms var(--ease-out), transform 140ms var(--ease-out);
-}
-.cm-lp-block:hover .cm-lp-block-toolbar { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.cm-lp-block-action {
-  border: 0; border-radius: 4px; padding: 0.15rem 0.5rem;
-  font-family: "Geist", ui-sans-serif, sans-serif; font-size: 0.7rem; font-weight: 500;
-  color: var(--ink-secondary); background: transparent; cursor: pointer;
-}
-.cm-lp-block-action:hover { background: var(--surface-hover); color: var(--ink); }
-.cm-lp-block-action.danger:hover { background: var(--danger-surface); color: var(--danger); }
 
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -600,28 +580,103 @@ html[data-theme='light'] .neuron-logo {
   z-index: calc(var(--z-overlay) + 1);
   display: grid;
   place-items: center;
-  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: color-mix(in srgb, var(--accent) 8%, var(--canvas));
   color: var(--ink-secondary);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
 }
 .workbench-drop-zone[data-visible="true"] { opacity: 1; pointer-events: auto; }
 .workbench-drop-zone[data-hover="true"] {
-  border-style: solid;
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  background: color-mix(in srgb, var(--accent) 16%, var(--canvas));
   color: var(--ink);
 }
-.workbench-drop-zone-left { left: 6px; top: 46px; bottom: 84px; width: 72px; }
-.workbench-drop-zone-right { right: 6px; top: 46px; bottom: 84px; width: 72px; }
-.workbench-drop-zone-bottom { left: 6px; right: 6px; bottom: 6px; height: 72px; }
-.workbench-drop-zone-left, .workbench-drop-zone-right { writing-mode: vertical-rl; }
+/* Dragging a panel or the sidebar: the destination opens as an empty slot that
+   pushes the layout aside, and the thing being moved looks lifted. */
+.dock-slot { flex: 0 0 0px; min-width: 0; min-height: 0; overflow: hidden; transition: flex-basis 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.dock-slot-v[data-hover="true"][data-open="false"] { flex-basis: 240px; }
+.dock-slot-h[data-hover="true"][data-open="false"] { flex-basis: 180px; }
+.dock-slot-fill { width: 100%; height: 100%; border-radius: var(--card-radius); border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--canvas)); }
+.dock-slot-v .dock-slot-fill { min-width: 232px; }
+.dock-slot-v[data-dock-zone="left"] { padding-right: var(--shell-gap); }
+.dock-slot-v[data-dock-zone="right"] { padding-left: var(--shell-gap); }
+.dock-slot-h { padding-top: var(--shell-gap); }
+.dock-slot[data-hover="false"], .dock-slot[data-open="true"] { padding: 0; }
+.drag-source { opacity: 0.45; transition: opacity 150ms ease-out; }
+.shell-card[data-drop-target] { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .workbench-drop-zone, .dock-slot, .drag-source { transition: none; }
+}
+/* Edge targets on one dock card: drop to split it into a new group. */
+/* Above the whole-dock targets, which would otherwise cover a card's edge. */
+.dock-split-zone { z-index: calc(var(--z-overlay) + 2); }
+.dock-split-zone-v-before { left: 6px; right: 6px; top: 34px; height: 36px; }
+.dock-split-zone-v-after { left: 6px; right: 6px; bottom: 6px; height: 36px; }
+.dock-split-zone-h-before { left: 6px; top: 34px; bottom: 6px; width: 56px; writing-mode: vertical-rl; }
+.dock-split-zone-h-after { right: 6px; top: 34px; bottom: 6px; width: 56px; writing-mode: vertical-rl; }
 @media (prefers-reduced-motion: reduce) {
   .workbench-drop-zone { transition: none; }
 }
+
+.field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+
+.note-header .segmented button { border: 1px solid transparent; }
+.note-header .segmented button[aria-pressed="true"] { background: var(--canvas); border-color: var(--divider); box-shadow: none; }
+.pane-header.dock-header { height: 28px; min-height: 28px; flex-shrink: 0; }
+
+/* The workspace explorer stays flat inside its editor card. */
+.workspace-explorer { container-type: inline-size; display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--ink); font-size: 13px; }
+.explorer-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--divider); }
+.explorer-breadcrumb { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.explorer-breadcrumb > * { overflow-wrap: anywhere; }
+.explorer-breadcrumb button { border-radius: 4px; padding: 4px; color: var(--ink-secondary); }
+.explorer-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.explorer-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 28px; padding: 2px 6px; border-radius: 6px; font-size: 12px; color: var(--ink-secondary); }
+.explorer-action svg { width: 14px; height: 14px; }
+.explorer-action:hover, .explorer-breadcrumb button:hover, .explorer-recent:hover { background: var(--surface-hover); }
+.explorer-action:disabled { opacity: .5; cursor: wait; }
+.explorer-body { display: flex; flex: 1; min-height: 0; }
+.explorer-list-scroll { flex: 1; min-width: 0; overflow: auto; padding: 8px; }
+.explorer-items { display: grid; gap: 4px; align-content: start; }
+.explorer-list { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.explorer-grid { grid-template-columns: repeat(auto-fill, 132px); }
+.explorer-listbox { display: contents; }
+.explorer-listbox:empty { display: block; min-height: 4px; }
+.explorer-item { display: grid; grid-template-columns: 16px minmax(80px, 1fr) minmax(70px, auto) 70px; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 8px; border-radius: 6px; cursor: default; user-select: none; }
+.explorer-item:hover, .explorer-item[aria-selected="true"] { background: var(--surface-hover); }
+.explorer-item:focus-visible, .explorer-listbox:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.explorer-item > svg { width: 16px; height: 16px; color: var(--ink-muted); }
+.explorer-item svg.explorer-folder-icon, .explorer-preview-child svg.explorer-folder-icon { color: color-mix(in srgb, var(--accent) 70%, var(--ink-muted)); }
+.explorer-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-item-detail, .explorer-word-count, .explorer-metadata { color: var(--ink-muted); font-size: 12px; }
+.explorer-word-count { text-align: right; font-variant-numeric: tabular-nums; }
+.explorer-item-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-grid .explorer-item { display: flex; flex-direction: column; gap: 4px; width: 132px; height: auto; min-height: 116px; padding: 12px 6px; text-align: center; }
+.explorer-grid .explorer-item > svg { width: 40px; height: 40px; flex-shrink: 0; margin-bottom: 4px; }
+.explorer-grid .explorer-item-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; width: 100%; line-height: 16px; }
+.explorer-grid .explorer-item-detail { max-width: 100%; font-size: 11px; }
+.explorer-grid .explorer-word-count { display: none; }
+.explorer-draft { min-width: 0; padding: 4px; }
+.explorer-draft input { height: 28px; padding: 2px 6px; font-size: 13px; }
+.explorer-draft p { margin-top: 4px; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.explorer-empty { padding: 16px 8px; color: var(--ink-muted); }
+.explorer-empty .explorer-tools { margin-top: 8px; }
+.explorer-recents { margin-top: 24px; padding: 0 8px; color: var(--ink-muted); font-size: 12px; }
+.explorer-recent { display: block; max-width: 100%; height: 28px; padding: 4px 6px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.explorer-preview { width: 300px; flex: 0 0 300px; min-height: 0; overflow: auto; padding: 16px; border-left: 1px solid var(--divider); }
+.explorer-preview h2 { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.explorer-preview-path { color: var(--ink-muted); overflow-wrap: anywhere; font-size: 12px; margin: 4px 0 12px; }
+.explorer-preview h3 { margin: 20px 0 8px; font-size: 12px; font-weight: 600; }
+.explorer-preview .explorer-tools, .explorer-preview > .explorer-action { margin-top: 8px; }
+.explorer-preview-child { display: flex; align-items: center; gap: 6px; height: 28px; font-size: 12px; }
+.explorer-preview-child svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--ink-muted); }
+.explorer-preview-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-note-preview { margin-top: 16px; max-height: 480px; overflow: auto; }
+.explorer-note-preview .preview-prose { padding: 0; font-size: 12px; }
+@container (max-width: 719px) { .explorer-preview { display: none; } }
+@container (max-width: 420px) { .explorer-list .explorer-item { grid-template-columns: 16px minmax(0, 1fr) auto; } .explorer-list .explorer-word-count { display: none; } }

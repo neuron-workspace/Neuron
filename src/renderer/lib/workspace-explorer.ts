@@ -58,10 +58,15 @@ export function parentFolder(path: string): string {
  * between renders is unusable, so the comparison never depends on locale
  * collation of mixed case.
  */
-export function listFolder(paths: readonly string[], folder: string): FolderListing {
+export function listFolder(paths: readonly string[], folder: string, knownFolders: readonly string[] = []): FolderListing {
   const prefix = folder === '' ? '' : `${folder}/`;
   const folders = new Map<string, number>();
   const files: FileEntry[] = [];
+  for (const path of knownFolders) {
+    if (!path.startsWith(prefix)) continue;
+    const name = path.slice(prefix.length).split('/')[0];
+    if (name) folders.set(prefix + name, 0);
+  }
 
   for (const path of paths) {
     if (prefix && !path.startsWith(prefix)) continue;
@@ -86,7 +91,7 @@ export function listFolder(paths: readonly string[], folder: string): FolderList
   }
 
   const byName = (a: { name: string }, b: { name: string }) =>
-    a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name);
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) || a.name.localeCompare(b.name);
 
   return {
     folders: [...folders.entries()]

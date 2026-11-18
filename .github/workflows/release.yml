@@ -259,20 +259,20 @@ jobs:
         # none of its own betas and said it had tidied up.
         run: node tools/prune-releases.mjs '${{ github.ref_name }}'
 
-  # Uploads the Store package to Partner Center as a DRAFT submission. Nothing
-  # reaches the Store until someone opens Partner Center and submits the draft
-  # for certification -- `--noCommit` is what keeps it that way. Drop the flag
-  # only once a few drafts have gone through cleanly.
+  # Uploads the Store package to Partner Center and submits it for
+  # certification, once someone approves the `store` environment -- that
+  # approval is the only human step.
   #
-  # After the GitHub release, so a release that failed to publish never leaves
-  # a Store draft behind; stable tags only, because Store users opted into
-  # nothing. The `store` environment is where an approval rule belongs.
+  # After the GitHub release, so a release that failed to publish never
+  # reaches the Store; stable tags only, because Store users opted into
+  # nothing.
   #
-  # `msstore publish` replaces any pending draft with a new one built from the
-  # last published submission, so edits made by hand to an unsubmitted draft
-  # are lost when this runs.
+  # `msstore publish` replaces any pending submission with a new one built from
+  # the last published submission, so edits made by hand to an unsubmitted
+  # draft are lost when this runs, and one created in the website blocks it
+  # until deleted.
   store:
-    name: Draft Microsoft Store submission
+    name: Submit to the Microsoft Store
     needs: [build, release]
     if: ${{ !contains(github.ref_name, '-') }}
     uses: ./.github/workflows/store.yml

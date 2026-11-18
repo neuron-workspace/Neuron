@@ -55,7 +55,7 @@ check('it can still be run by hand', () => {
     'a failed token needs a re-run without cutting a new tag');
 });
 
-// --- the Microsoft Store draft ----------------------------------------------
+// --- the Microsoft Store submission -----------------------------------------
 // Partner Center is the one destination where a mistake reaches users of a
 // store that signs and auto-updates the app, so its guards are asserted rather
 // than trusted to survive edits to release.yml.
@@ -64,17 +64,19 @@ const storeWorkflow = parse(readFileSync(join(root, '.github/workflows/store.yml
 const store = storeWorkflow.jobs.store;
 const ci = parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf-8'));
 
-check('the Store job only drafts, behind its environment, after the release', () => {
+check('the Store job submits only behind its environment, after the release', () => {
   assert.ok(store, 'release.yml must have a store job');
   assert.equal(store.environment, 'store', 'secrets and any approval rule live on the store environment');
   assert.equal(release.jobs.store.uses, './.github/workflows/store.yml');
   assert.equal(release.jobs.store.secrets, 'inherit');
-  assert.ok(release.jobs.store.needs.includes('release'), 'a release that failed to publish must not leave a Store draft');
+  assert.ok(release.jobs.store.needs.includes('release'), 'a release that failed to publish must not reach the Store');
   assert.match(release.jobs.store.if, /!contains\(github\.ref_name, '-'\)/, 'prereleases must not reach the Store');
   assert.deepEqual(store.permissions, { contents: 'read', actions: 'read' });
   const publish = store.steps.find((s) => /msstore publish/.test(s.run ?? ''));
   assert.ok(publish, 'the job must publish with msstore');
-  assert.match(publish.run, /--noCommit/, 'drop --noCommit only deliberately, together with this assertion');
+  // It submits for certification. The environment approval asserted above is
+  // the human review, so that guard is what this relies on.
+  assert.doesNotMatch(publish.run, /--noCommit/, 'an uncommitted draft never shows the new package in Partner Center');
   const setup = store.steps.find((s) => /microsoft-store-apppublisher/.test(s.uses ?? ''));
   assert.match(setup.uses, /@[0-9a-f]{40}$/, 'a third-party action holding Partner Center credentials is pinned by commit');
   const configure = store.steps.find((s) => /msstore reconfigure/.test(s.run ?? ''))?.run ?? '';
@@ -138,6 +140,14 @@ check('manual package redelivery selects a channel', () => {
     assert.ok(condition.includes("inputs.channel == 'all'"));
     assert.ok(condition.includes("inputs.channel == '" + channel + "'"));
   }
+});
+
+check('WinGet syncs the fork before submitting', () => {
+  const steps = workflow.jobs.winget.steps;
+  const sync = steps.findIndex((s) => /merge-upstream/.test(s.run ?? ''));
+  const submit = steps.findIndex((s) => /winget-releaser/.test(s.uses ?? ''));
+  assert.ok(sync >= 0 && sync < submit, 'a fork far behind upstream fails CreateRef');
+  assert.match(steps[sync].env.GH_TOKEN, /WINGET_TOKEN/, 'the fork belongs to the account behind WINGET_TOKEN');
 });
 
 check('WinGet is told the release tag', () => {

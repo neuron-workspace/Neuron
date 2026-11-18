@@ -7,10 +7,15 @@ import type { GraphCanvasProps } from './GraphCanvas';
 
 const labels = { gravity: 'Centre / gravity', repel: 'Repel', attraction: 'Link attraction', distance: 'Link distance', nodeSize: 'Node size', linkThickness: 'Link thickness', labelThreshold: 'Label fade threshold', depth: 'Local depth' };
 const duration = () => matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 320;
+// Links are the muted ink at low strength: visible as structure, never louder than a node.
+const fade = (hex: string, alpha: number) => {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  return m ? `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})` : hex;
+};
 const readColors = () => {
   const style = getComputedStyle(document.documentElement);
   const get = (key: string) => style.getPropertyValue(key).trim();
-  return { accent: get('--accent'), ink: get('--ink'), muted: get('--ink-muted'), faint: get('--surface-hover'), edge: get('--divider') };
+  return { accent: get('--accent'), ink: get('--ink'), label: get('--ink-secondary'), muted: get('--ink-muted'), faint: get('--surface-hover'), edge: fade(get('--ink-muted'), 0.35) };
 };
 
 export default function SigmaGraph(props: GraphCanvasProps) {
@@ -87,17 +92,26 @@ export default function SigmaGraph(props: GraphCanvasProps) {
     let sigma: Sigma<GraphNode, GraphEdge>;
     try {
     sigma = new Sigma(graph, host.current, {
-      allowInvalidContainer: true, stagePadding: 30, labelSize: 11, labelDensity: props.compact ? 0.3 : 0.7,
+      allowInvalidContainer: true, stagePadding: 40, labelSize: 11, zIndex: true, labelDensity: props.compact ? 0.3 : 0.7,
       labelRenderedSizeThreshold: 0, minCameraRatio: 0.03, maxCameraRatio: 8,
       labelFont: getComputedStyle(document.body).fontFamily,
+      // Labels sit centred under their node and fade out as the view zooms
+      // away, so a large graph reads as a shape first and names second.
       defaultDrawNodeLabel: (ctx, data, settings) => {
         if (!data.label) return;
         const ratio = sigma.getCamera().ratio;
         const alpha = data.forceLabel ? 1 : Math.max(0, Math.min(1, (pref.current.labelThreshold - ratio) * 3 + 0.5));
         if (!alpha) return;
-        ctx.globalAlpha = alpha; ctx.fillStyle = colors.current.ink;
-        ctx.font = `${settings.labelSize}px ${settings.labelFont}`;
-        ctx.fillText(data.label, data.x + data.size + 3, data.y + 4); ctx.globalAlpha = 1;
+        ctx.globalAlpha = alpha; ctx.fillStyle = data.forceLabel ? colors.current.ink : colors.current.label;
+        ctx.font = `${data.forceLabel ? 500 : 400} ${settings.labelSize}px ${settings.labelFont}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(data.label, data.x, data.y + data.size + 4);
+        ctx.globalAlpha = 1; ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      },
+      // A quiet ring instead of Sigma's boxed, shadowed hover label.
+      defaultDrawNodeHover: (ctx, data) => {
+        ctx.beginPath(); ctx.arc(data.x, data.y, data.size + 3, 0, Math.PI * 2);
+        ctx.strokeStyle = colors.current.accent; ctx.lineWidth = 1.5; ctx.stroke();
       },
       nodeReducer: (id, attrs) => {
         const p = pref.current;
@@ -105,17 +119,17 @@ export default function SigmaGraph(props: GraphCanvasProps) {
         const related = !hovered.current || relatedNodes.current.has(id);
         const matches = !queryRef.current || attrs.label.toLowerCase().includes(queryRef.current.toLowerCase());
         return { ...attrs, size: p.nodeSize + Math.min(7, Math.sqrt(attrs.degree) * 1.2) + (active ? 2 : 0),
-          color: !related || !matches ? colors.current.faint : active ? colors.current.accent : colors.current.muted,
+          color: !related || !matches ? colors.current.faint : active || id === hovered.current ? colors.current.accent : colors.current.muted,
           label: attrs.kind === 'unresolved' ? `${attrs.label} (missing)` : attrs.label,
           forceLabel: active || id === hovered.current,
           hidden: (!!filter.current && !filter.current.has(id)) || (!p.orphans && attrs.degree === 0) || (!p.unresolved && attrs.kind === 'unresolved'),
-          highlighted: active,
         };
       },
       edgeReducer: (id, attrs) => {
         const [a, b] = graph.extremities(id);
-        return { ...attrs, type: pref.current.arrows ? 'arrow' : 'line', size: pref.current.linkThickness,
-          color: hovered.current && a !== hovered.current && b !== hovered.current ? colors.current.faint : colors.current.edge };
+        const touching = !!hovered.current && (a === hovered.current || b === hovered.current);
+        return { ...attrs, type: pref.current.arrows ? 'arrow' : 'line', size: pref.current.linkThickness * (touching ? 1.6 : 1),
+          color: touching ? colors.current.accent : hovered.current ? colors.current.faint : colors.current.edge, zIndex: touching ? 1 : 0 };
       },
     });
     } catch {

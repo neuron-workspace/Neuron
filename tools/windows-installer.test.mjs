@@ -14,7 +14,7 @@ await build({
   bundle: true,
   platform: 'node',
 });
-const { workspacePathFromArgv } = await import('file://' + bundled.replace(/\\/g, '/'));
+const { installDirectory, isInsideInstall, workspacePathFromArgv } = await import('file://' + bundled.replace(/\\/g, '/'));
 
 let checks = 0;
 const check = (what, fn) => { fn(); checks += 1; console.log(`  ok  ${what}`); };
@@ -54,6 +54,57 @@ check('a file is not a workspace', () => {
 check('an Electron flag is not a workspace', () => {
   assert.equal(workspacePathFromArgv(['Neuron.exe', `--user-data-dir=${spaceDir}`], true), null);
   assert.equal(workspacePathFromArgv(['Neuron.exe', '--user-data-dir', spaceDir], true), null);
+});
+
+const install = join(out, 'Neuron');
+const demo = join(install, 'resources', 'examples', 'demo-repo');
+const sibling = join(out, 'NeuronNotes');
+mkdirSync(demo, { recursive: true });
+mkdirSync(sibling);
+const exclude = (dir) => isInsideInstall(dir, install);
+
+check('install directory and descendants are rejected, including the bundled demo', () => {
+  for (const dir of [install, join(install, 'resources'), demo]) {
+    assert.equal(exclude(dir), true);
+    assert.equal(workspacePathFromArgv(['Neuron.exe', dir], true, exclude), null);
+  }
+});
+
+check('a similarly named sibling is accepted, including after an excluded argument', () => {
+  assert.equal(exclude(sibling), false);
+  assert.equal(workspacePathFromArgv(['Neuron.exe', install, sibling], true, exclude), sibling);
+  assert.equal(workspacePathFromArgv(['electron.exe', '.', demo, sibling], false, exclude), sibling);
+});
+
+check('without exclude, installation paths remain valid argv directories', () => {
+  assert.equal(workspacePathFromArgv(['Neuron.exe', install], true), install);
+  assert.equal(workspacePathFromArgv(['Neuron.exe', demo], true), demo);
+});
+
+const missingRealpath = () => { throw new Error('unavailable'); };
+check('Windows comparison ignores case and slash differences with realpath fallback', () => {
+  const base = 'C:/Users/Maintainer/Programs/Neuron';
+  for (const dir of ['c:/users/maintainer/programs/NEURON/', 'C:/Users/Maintainer/Programs/Neuron/resources/examples/demo-repo']) {
+    assert.equal(isInsideInstall(dir.replaceAll('/', String.fromCharCode(92)), base, 'win32', missingRealpath), true);
+  }
+  assert.equal(isInsideInstall(base + 'Notes', base, 'win32', missingRealpath), false);
+  assert.equal(isInsideInstall(base + '/../NeuronNotes', base, 'win32', missingRealpath), false);
+  assert.equal(isInsideInstall('D:/Neuron', base, 'win32', missingRealpath), false);
+});
+
+check('real paths resolve aliases for both the installation and workspace', () => {
+  const realpath = (dir) => ({ '/alias': '/opt/Neuron', '/notes': '/opt/Neuron/resources/demo' }[dir] ?? dir);
+  assert.equal(isInsideInstall('/notes', '/alias', 'linux', realpath), true);
+  assert.equal(isInsideInstall('/opt/NeuronNotes', '/alias', 'linux', realpath), false);
+});
+
+check('macOS ignores case, Linux preserves it, and the nearest app bundle is protected', () => {
+  assert.equal(installDirectory('/Applications/Neuron.app/Contents/MacOS/Neuron', 'darwin'), '/Applications/Neuron.app');
+  assert.equal(installDirectory('/Outer.app/Inner.app/Contents/MacOS/Neuron', 'darwin'), '/Outer.app/Inner.app');
+  assert.equal(installDirectory('/usr/local/bin/neuron', 'darwin'), '/usr/local/bin');
+  assert.equal(installDirectory('C:/Programs/Neuron/Neuron.exe', 'win32').replaceAll(String.fromCharCode(92), '/'), 'C:/Programs/Neuron');
+  assert.equal(isInsideInstall('/applications/neuron.APP/Contents/Resources/demo', '/Applications/Neuron.app', 'darwin', missingRealpath), true);
+  assert.equal(isInsideInstall('/opt/neuron', '/opt/Neuron', 'linux', missingRealpath), false);
 });
 
 const nsh = readFileSync('build/installer.nsh', 'utf-8');

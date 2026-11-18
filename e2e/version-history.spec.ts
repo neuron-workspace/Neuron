@@ -10,14 +10,15 @@ test('an earlier version can be restored from the side peek', async ({ page, wor
   const original = readFileSync(file, 'utf-8');
 
   await openNote(page, 'guides/markdown-basics.mdx');
-  const prose = page.locator('.preview-prose').first();
+  const prose = page.locator('article.preview-prose');
   await expect(prose).toBeVisible();
   await prose.dblclick();
 
-  const editor = page.locator('.cm-content').first();
+  const editor = page.locator('[data-live-preview] p[contenteditable="true"]').first();
   await expect(editor).toBeVisible();
   await editor.click();
   await page.keyboard.type('CLOBBERED');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().focus();
   await expect
     .poll(() => readFileSync(file, 'utf-8').includes('CLOBBERED'), { timeout: 15_000 })
     .toBe(true);

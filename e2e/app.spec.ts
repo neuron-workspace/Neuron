@@ -20,18 +20,19 @@ test('an edit reaches disk as plain Markdown', async ({ page, workspace }) => {
   await openNote(page, 'guides/markdown-basics.mdx');
 
   // Markdown opens in reading view by default (App.tsx defaultEditorMode), so
-  // .cm-content does not exist yet. Double-clicking the prose is the documented
+  // Double-clicking the prose is the documented
   // way into the live editor and is the path a user actually takes.
-  const prose = page.locator('.preview-prose').first();
+  const prose = page.locator('article.preview-prose');
   await expect(prose).toBeVisible();
   await prose.dblclick();
 
-  const editor = page.locator('.cm-content').first();
+  const editor = page.locator('[data-live-preview] p[contenteditable="true"]').first();
   await expect(editor).toBeVisible();
   await editor.click();
   await page.keyboard.type('e2e-marker');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().focus();
 
-  // Neuron saves on keystroke with no save button; poll the file rather than
+  // Live commits on blur; poll the file rather than
   // guessing a debounce interval.
   const file = join(workspace, 'guides', 'markdown-basics.mdx');
   await expect

@@ -1,6 +1,6 @@
 import { TerminalSquare } from 'lucide-react';
 import type { PluginModule } from '../types';
-import XtermTerminal from '../../components/XtermTerminal';
+import TerminalPanel from '../../components/TerminalPanel';
 
 const terminal: PluginModule = {
   manifest: {
@@ -20,7 +20,7 @@ const terminal: PluginModule = {
       // The panel rail's terminal. Named, so it keeps its own shell and
       // scrollback rather than sharing with a terminal a workspace layout
       // happens to declare.
-      render: () => <XtermTerminal sessionKey="panel" />,
+      render: () => <TerminalPanel />,
     });
   },
 };

@@ -8,7 +8,7 @@ export function parseSemanticType(value: string | undefined): SemanticType {
 
 interface BadgeProps {
   type?: SemanticType;
-  text: string;
+  text: React.ReactNode;
 }
 
 export function Badge({ type = 'info', text }: BadgeProps) {
@@ -23,7 +23,7 @@ export function Badge({ type = 'info', text }: BadgeProps) {
 
 interface CalloutProps {
   type?: SemanticType;
-  title?: string;
+  title?: React.ReactNode;
   children: React.ReactNode;
 }
 

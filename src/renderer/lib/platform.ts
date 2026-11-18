@@ -34,12 +34,3 @@ export const platform: Platform = detect();
 export const isMac = platform === 'darwin';
 export const isWindows = platform === 'win32';
 export const isLinux = platform === 'linux';
-
-/**
- * Whether the window is drawn with our own title bar and controls.
- *
- * macOS keeps the native frame and its traffic lights, so the app must not draw
- * its own minimise/maximise/close buttons on top of them. Everywhere else the
- * frame is off and those buttons are the only way to work the window.
- */
-export const usesCustomWindowControls = !isMac;

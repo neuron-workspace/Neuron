@@ -15,7 +15,7 @@ on:
 
 jobs:
   store:
-    name: Draft Microsoft Store submission
+    name: Submit to the Microsoft Store
     runs-on: windows-latest
     environment: store
     # Caller jobs using reusable workflows cannot set continue-on-error.
@@ -106,6 +106,12 @@ jobs:
       # --inputDirectory, not the --inputFile the published docs still name:
       # the CLI publishes every .appx at the top of that directory, which is
       # why the artifact gets a directory of its own.
-      - name: Upload the package as a draft submission
+      #
+      # It commits, which submits for certification: approving the `store`
+      # environment is the review step. A --noCommit draft cannot be reviewed
+      # anyway -- Partner Center only processes an uploaded package on commit,
+      # so the draft showed the previous version (v0.5.0 found this). The CLI
+      # waits only while the commit starts, not through certification.
+      - name: Upload the package and submit it for certification
         shell: bash
-        run: msstore publish . --inputDirectory store-package --appId "$STORE_APP_ID" --noCommit
+        run: msstore publish . --inputDirectory store-package --appId "$STORE_APP_ID"

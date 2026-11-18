@@ -55,7 +55,8 @@ test('the answer stays hidden in the live editor too', async ({ page }) => {
   await page.getByRole('button', { name: 'Refresh explorer' }).click();
   await openNote(page, 'cards.mdx');
   await page.getByRole('button', { name: 'Live', exact: true }).first().click();
-  await expect(page.locator('.cm-live-editor')).toBeVisible();
+  await expect(page.locator('[data-live-preview]')).toBeVisible();
+  await expect(page.locator('.cm-editor')).toHaveCount(0);
 
   await expect(page.getByText('Where do Neuron notes live?')).toBeVisible();
   await expect(page.getByText(ANSWER)).toHaveCount(0);

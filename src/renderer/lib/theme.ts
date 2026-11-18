@@ -38,9 +38,9 @@ function preset(id: string, label: string, colorScheme: ColorScheme, values: str
 // Order of values matches TOKEN_KEYS above.
 export const PRESETS: Record<string, ThemePreset> = {
   graphite: preset('graphite', 'Graphite', 'dark', [
-    '#16181d', '#121419', '#1d2128', '#272c35', 'rgba(255,255,255,0.09)',
-    '#e6e8ec', '#b3b9c4', '#838b99',
-    '#7fb1e3', '#a9cef0', '#7ed8a4', '#f08a8a', '#e6c07a', '#7fb1e3',
+    '#1b1d23', '#131519', '#20232a', '#2a2e37', 'rgba(255,255,255,0.09)',
+    '#e7e9ee', '#b6bcc8', '#8a92a0',
+    '#8b8cf6', '#b3b4fa', '#7ed8a4', '#f08a8a', '#e6c07a', '#7fb1e3',
   ]),
   void: preset('void', 'Void', 'dark', [
     '#131313', '#121212', '#1b1b1b', '#2a2a2a', 'rgba(255,255,255,0.10)',
@@ -52,19 +52,14 @@ export const PRESETS: Record<string, ThemePreset> = {
     '#eceff4', '#d8dee9', '#a6b1c2',
     '#88c0d0', '#a3d4e0', '#a3be8c', '#d9a2a8', '#ebcb8b', '#99b3cd',
   ]),
-  // Chrome and content were 1.5% apart in lightness, so in light mode the
-  // sidebar, title bar and status bar all dissolved into the page and the shell
-  // read as one flat white plane. Nav and surface are pushed down far enough to
-  // be planes; the ink and semantic roles come down with them, which also lifts
-  // the whole preset off the 4.61:1 floor it was scraping against AA.
   light: preset('light', 'Light', 'light', [
-    '#ffffff', '#eef0f4', '#e9ecf1', '#dde2ea', 'rgba(0,0,0,0.14)',
-    '#1a1d21', '#454b54', '#5c636e',
-    '#1f63c9', '#17539f', '#1c6d45', '#c22626', '#7d5214', '#1f63c9',
+    '#ffffff', '#f3f4f6', '#f7f8fa', '#e9ebef', 'rgba(17,24,39,0.10)',
+    '#171a1f', '#454d5a', '#5f6875',
+    '#4f46e5', '#4338ca', '#15803d', '#c62828', '#a06107', '#2563eb',
   ]),
 };
 
-export const DEFAULT_PRESET = 'graphite';
+export const DEFAULT_PRESET = 'light';
 
 export const MARKDOWN_FIELDS: MarkdownField[] = [
   { key: 'heading', label: 'Headings', cssVar: '--md-heading' },
@@ -104,6 +99,14 @@ export function applyTheme(appearance: Appearance): void {
   }
   root.style.setProperty('color-scheme', themePreset.colorScheme);
   root.setAttribute('data-theme', themePreset.colorScheme);
+
+  const api = window.electronAPI;
+  if (api?.platform === 'win32' || api?.platform === 'linux') {
+    void api.windowControls.setOverlayColors({
+      color: themePreset.tokens['--nav'],
+      symbolColor: themePreset.tokens['--ink'],
+    }).catch((error) => console.error('Failed to update window overlay colors:', error));
+  }
 
   for (const field of MARKDOWN_FIELDS) {
     const override = appearance.markdownOverrides[field.key];

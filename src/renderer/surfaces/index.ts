@@ -27,6 +27,10 @@ export interface SurfaceProps {
   onChangeNote?: (value: string) => void;
   /** Editor color scheme for the internal shell editor panel. */
   colorScheme?: 'light' | 'dark';
+  tagSuggestions?: string[];
+  onTagClick?: (tag: string) => void;
+  removeEmptyFrontmatter?: boolean;
+  defaultPropertiesCollapsed?: boolean;
 }
 
 export type Surface = ComponentType<SurfaceProps>;
