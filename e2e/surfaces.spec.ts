@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { test, expect } from './fixtures';
 
 // Each workspace file type routes to its own surface (src/renderer/surfaces).
@@ -128,6 +130,52 @@ test('the dashboard view actually loads its data, not just its markup', async ({
   // is its clay; the kit's card is white or near-black depending on scheme, so
   // this fails loudly either way if the defaults start winning again.
   expect(view!.clayBg).toBe('rgb(184, 80, 60)');
+});
+
+test('a full-document view is served as written and can call neuron.context()', async ({ app, page, workspace }) => {
+  // A whole document, not a fragment: its own lang and title must survive, and
+  // the neuron helper Neuron adds to its head must be there before its script.
+  writeFileSync(join(workspace, 'Vue complete.html'), `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Ma vue</title>
+</head>
+<body>
+  <p>Espace : <span id="name">…</span></p>
+  <script>
+    neuron.context().then((c) => { document.getElementById('name').textContent = c.workspace.name; });
+  </script>
+</body>
+</html>
+`);
+  await page.locator('.note-row', { hasText: 'Vue complete' }).first().click();
+  // No manifest, so no prompt: it renders straight away with no capabilities,
+  // and context() needs none.
+  await expect(page.locator('webview')).toHaveCount(1);
+
+  const view = await app.evaluate(async ({ webContents }) => {
+    const read = async () => {
+      const wc = webContents.getAllWebContents().find((w) => w.getType() === 'webview');
+      if (!wc) return null;
+      return wc.executeJavaScript(`({
+        lang: document.documentElement.lang,
+        title: document.title,
+        name: (document.getElementById('name')?.textContent ?? '').trim(),
+      })`).catch(() => null);
+    };
+    for (let i = 0; i < 40; i++) {
+      const snap = await read();
+      if (snap && snap.name && snap.name !== '…') return snap;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return read();
+  });
+
+  expect(view, 'no webview attached').not.toBeNull();
+  expect(view!.name).toBe(basename(workspace));
+  expect(view!.lang).toBe('fr');
+  expect(view!.title).toBe('Ma vue');
 });
 
 test('a folder mini-app collapses to one explorer entry', async ({ page }) => {

@@ -1,19 +1,129 @@
 # Building HTMX views
 
-Neuron can render custom local interfaces from plain HTML files with
-[htmx](https://htmx.org) attributes. Open **Custom dashboard.html** in this
-workspace to see one live, or press Ctrl/Cmd + K and run **New HTMX view in
-current folder** to start an empty one from a template.
+Neuron can render custom local interfaces from plain HTML files. Open
+**Custom dashboard.html** in this workspace to see one live, or press Ctrl/Cmd +
+K and run **New HTMX view in current folder** to start one from a template.
 
 ## How it works
 
 - An `.html` file is ordinary HTML. Opening it renders an isolated view tab;
   the **Source** toggle in the tab header edits the same file as text.
-- htmx attributes (`hx-get`, `hx-post`, `hx-trigger`, `hx-target`, `hx-swap`, …)
-  talk to Neuron's local API at `/api/v1/...`. htmx is bundled with Neuron —
-  views work fully offline and cannot load remote scripts.
+- A view fetches workspace data from Neuron's local API at `/api/v1/...`,
+  either with the `neuron` helper from JavaScript or with
+  [htmx](https://htmx.org) attributes. Both are bundled with Neuron, so views
+  work fully offline and cannot load remote scripts.
 - Create a new view from the command palette (**New HTMX view in current
   folder**, default shortcut `Ctrl+G`).
+
+## A view is a whole HTML document
+
+Write a complete document, with your own `lang`, `<meta>` tags and `<title>`:
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reading list</title>
+  <link rel="stylesheet" href="neuron.css">
+</head>
+<body class="neuron-view">
+  <h1>Reading list</h1>
+  <p>Workspace: <strong id="workspace">…</strong></p>
+  <section hx-get="api/v1/notes?tag=reading" hx-trigger="load">Loading…</section>
+  <script>
+    neuron.context().then((context) => {
+      document.getElementById('workspace').textContent = context.workspace.name;
+    });
+  </script>
+</body>
+</html>
+```
+
+Neuron serves it exactly as written and adds three things, nothing else:
+
+- `<script src="neuron.js"></script>` right after `<head>`, unless the document
+  already loads `neuron.js`;
+- `<script src="htmx.js" defer></script>` right after it, unless the document
+  already loads `htmx.js`;
+- `data-theme="light"` or `data-theme="dark"` on `<html>`, unless it already
+  has a `data-theme`. Use it to follow the app's theme in your own CSS, for
+  example `[data-theme="dark"] body { background: #111; }`.
+
+If the document has `<html>` but no `<head>`, Neuron adds `<head>` for the two
+scripts. Nothing is removed. A `<meta http-equiv="Content-Security-Policy">` in
+your file can only make the view stricter: Neuron's own policy always applies.
+
+`neuron.css` is Neuron's stylesheet. It is not added for you: link it, as
+above, and put `class="neuron-view"` on `<body>` to get its typography, cards,
+buttons, tables and form controls, in the app's light or dark theme. Leave it
+out to style the page entirely yourself.
+
+## The short form: a fragment
+
+A file that does not start with `<!doctype` or `<html>` (comments and
+whitespace aside) is a fragment. Neuron wraps it in a document for you, with
+`neuron.css`, `neuron.js`, htmx, the view's name as its title, and
+`.neuron/styles/<view name>.css` if that file exists:
+
+```html
+<h1>Reading list</h1>
+<section hx-get="api/v1/notes?tag=reading" hx-trigger="load">Loading…</section>
+```
+
+## The `neuron` helper
+
+`neuron.js` defines `window.neuron`. Every function returns a Promise of the
+parsed JSON. On failure it rejects with an `Error` whose `message` is the
+server's explanation (for example that the view needs permission to read a
+file), whose `status` is the HTTP status and whose `code` is the error code
+(`conflict`, `missing_capability`, `path_not_allowed`, …). The helper grants
+nothing: each call is checked against the view's permissions like any other
+request.
+
+| Call | Route | Returns |
+| --- | --- | --- |
+| `neuron.context()` | `GET /api/v1/context` | View name, workspace name, theme, granted capabilities |
+| `neuron.theme` | | `'light'` or `'dark'` once `context()` has resolved, `null` before |
+| `neuron.variables()` | `GET /api/v1/variables` | Every variable |
+| `neuron.variable(key)` | `GET /api/v1/variables/:key` | One variable |
+| `neuron.setVariable(key, value)` | `PUT /api/v1/variables/:key` | `{ key, value }` |
+| `neuron.files({ dir, glob, limit })` | `GET /api/v1/files` | `{ files }` |
+| `neuron.read(path)` | `GET /api/v1/files/content` | `{ path, content, hash }` |
+| `neuron.write(path, content, baseHash)` | `PUT /api/v1/files/content` | `{ path, hash }`; refused with `conflict` if the file changed since `baseHash` |
+| `neuron.create(path, content)` | `POST /api/v1/files` | `{ path, hash }` |
+| `neuron.remove(path)` | `DELETE /api/v1/files` | `{ path, deleted }` |
+| `neuron.search(query)` | `GET /api/v1/search` | `{ results }` |
+| `neuron.notes({ tag, folder, limit })` | `GET /api/v1/notes` | `{ notes }` |
+| `neuron.tags()` | `GET /api/v1/tags` | `{ tags }` |
+| `neuron.db(path, { table })` | `GET /api/v1/db` | `{ table, tables, columns, rows }` |
+
+The theme does not change under a running view: switching the app's theme
+reloads it.
+
+## htmx
+
+htmx attributes (`hx-get`, `hx-put`, `hx-trigger`, `hx-target`, `hx-swap`, …)
+work in both kinds of view. Write the route relative to the view
+(`hx-get="api/v1/tags"`) or from the root (`hx-get="/api/v1/tags"`); both reach
+the same API. Routes answer htmx requests with HTML ready to swap in, and
+everything else with JSON:
+
+| Route | For htmx | Otherwise |
+| --- | --- | --- |
+| `GET /api/v1/search?query=…` | Result list | JSON |
+| `GET /api/v1/notes?tag=…&folder=…` | Note table | JSON |
+| `GET /api/v1/tags` | Tag badges | JSON |
+| `GET /api/v1/files?dir=…&glob=…` | File list | JSON |
+| `GET /api/v1/db?path=…&table=…` | Rendered table | JSON |
+| `PUT /api/v1/variables/:key` | A short "Saved" confirmation | JSON |
+| `GET /api/v1/fragments/:name` | A fragment from `.neuron/fragments` | The same HTML |
+| `GET /api/v1/context`, `GET /api/v1/variables[/:key]` | JSON only | JSON |
+| `GET/PUT /api/v1/files/content`, `POST/DELETE /api/v1/files` | JSON only | JSON |
+
+Errors come back the same way: an alert fragment for htmx, JSON with an
+`error` object otherwise.
 
 ## The `.neuron` folder
 
@@ -23,9 +133,11 @@ The first view you open scaffolds `.neuron/` at the workspace root:
   Use them in a view or fragment as `{{ variables.name }}` — values are always
   HTML-escaped.
 - `fragments/` — reusable HTML partials served at `/api/v1/fragments/<name>`.
-- `styles/` — optional per-view CSS. `My view.html` automatically loads
-  `.neuron/styles/My view.css` if it exists (local rules only; `@import` and
-  remote URLs are blocked).
+- `styles/` — optional per-view CSS. A fragment view `My view.html`
+  automatically loads `.neuron/styles/My view.css` if it exists; a full
+  document links its own, for example `.neuron/styles/report.css` with
+  `<link rel="stylesheet" href="styles/report.css">`.
+  Local rules only: `@import` and remote URLs are blocked.
 - `templates/` — starter views to copy from (dashboard, note browser, file list).
 
 ## Permissions
@@ -38,23 +150,9 @@ before the first run and again whenever the manifest changes. Inline scripts
 may run, but views cannot reach the network, Node, or files outside their
 approved paths.
 
-## Useful endpoints
-
-| Route | Purpose |
-| --- | --- |
-| `GET /api/v1/context` | View name, workspace, theme, granted capabilities |
-| `GET /api/v1/search?query=…` | Search notes (returns an HTML fragment for htmx) |
-| `GET /api/v1/notes?tag=…&folder=…` | Note metadata table |
-| `GET /api/v1/tags` | Tag badges |
-| `GET /api/v1/files?dir=…&glob=…` | File listing |
-| `GET/PUT /api/v1/files/content` | Read/update a file (conflict-checked) |
-| `POST/DELETE /api/v1/files` | Create/delete a file (needs permission) |
-| `GET/PUT /api/v1/variables/:key` | Read/update a variable |
-| `GET /api/v1/fragments/:name` | Render a fragment from `.neuron/fragments` |
-
 ## Migrating old `.vw` block views
 
 Earlier Neuron versions used `.vw` dashboard files. Those files are no longer
 rendered but remain untouched on disk. Rebuild them as `.html`: layout tags
 become plain HTML with `neuron-*` classes, and data blocks (file lists,
-search, metrics) become `hx-get` calls to the API routes above.
+search, metrics) become `hx-get` calls or `neuron` calls to the API routes above.

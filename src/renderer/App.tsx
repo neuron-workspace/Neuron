@@ -98,26 +98,34 @@ type View = 'notes' | 'gallery';
 // depending on whether the workspace happened to have a layout.json.
 type EditorMode = EditMode;
 
-// Default content for new .html views. Plain HTML + htmx attributes;
-// Neuron serves it from the local view server with the neuron-view stylesheet.
-const HTMX_VIEW_TEMPLATE = `<h1>New HTMX view</h1>
-<p>This is ordinary HTML with <a href="https://htmx.org">htmx</a> attributes.
-It talks to Neuron's local API — see <code>GET /api/v1/context</code>.</p>
+// Default content for new .html views: a complete HTML document. Neuron serves
+// it as written and adds only neuron.js, htmx.js and data-theme on <html>.
+const HTMX_VIEW_TEMPLATE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New view</title>
+  <!-- Neuron's stylesheet. It styles a body with class="neuron-view" and
+       follows the app's light or dark theme. Remove it to style from scratch. -->
+  <link rel="stylesheet" href="neuron.css">
+</head>
+<body class="neuron-view">
+  <h1>New view</h1>
+  <p>Workspace: <strong id="workspace">…</strong></p>
 
-<section class="neuron-grid cols-3">
-  <div class="neuron-card" hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">
-    Loading…
-  </div>
-</section>
+  <!-- htmx: fetch a server-rendered fragment when the page loads. This one
+       needs "notes.read" and "tags.read" in the view's manifest. -->
+  <section hx-get="api/v1/fragments/workspace-summary" hx-trigger="load">Loading…</section>
 
-<section class="neuron-card">
-  <form hx-get="/api/v1/search" hx-target="#search-results"
-        hx-trigger="submit, input changed delay:300ms from:#query">
-    <label for="query">Search notes</label>
-    <input id="query" class="neuron-input" name="query" type="search" autocomplete="off" />
-  </form>
-  <div id="search-results"></div>
-</section>
+  <script>
+    // neuron: the same API as JSON. context() needs no permissions.
+    neuron.context()
+      .then((context) => { document.getElementById('workspace').textContent = context.workspace.name; })
+      .catch((error) => { document.getElementById('workspace').textContent = error.message; });
+  </script>
+</body>
+</html>
 `;
 
 const NEURON_CONFIG_TEMPLATE = `{
