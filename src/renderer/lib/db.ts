@@ -3,6 +3,9 @@
 
 export const MAX_DB_BYTES = 2 * 1024 * 1024;
 
+/** Colors a select option cycles through, in the database and in CSV tables. */
+export const OPTION_COLORS = ['#8b8b8b', '#a27763', '#e28f44', '#d9b23c', '#5aa06c', '#528fd1', '#9a6dd7', '#d15796', '#dd5c5c'];
+
 export type PropType = 'text' | 'number' | 'checkbox' | 'date' | 'url' | 'select' | 'multiselect';
 
 export interface DbOption {

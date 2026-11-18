@@ -1,4 +1,5 @@
-import { Blocks, Chrome, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, TerminalSquare } from 'lucide-react';
+import { useRef } from 'react';
+import { Blocks, Chrome, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, Table2, TerminalSquare } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
@@ -47,7 +48,7 @@ interface CommandPaletteProps {
   onOpenSettings: () => void;
   onCreate: () => void;
   onCreateSurface: () => void;
-  onCreateKind: (kind: 'database' | 'canvas') => void;
+  onCreateKind: (kind: 'database' | 'canvas' | 'table') => void;
   onOpenWebsite: () => void;
   onOpenGallery: () => void;
   onToggleShell: () => void;
@@ -63,17 +64,23 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
   const { commands, runtimeFor } = usePlugins();
   const terminal = useTerminalToggle(layout, onLayoutChange, onOpenMarketplace);
   const close = () => onOpenChange(false);
+  // A new file takes focus itself (a new table opens with its first cell
+  // focused). Focus returned to the palette's trigger after that would take
+  // the first keystrokes typed into it.
+  const keepFocus = useRef(false);
+  const createKind = (kind: 'database' | 'canvas' | 'table') => { keepFocus.current = true; onCreateKind(kind); close(); };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={onOpenChange} onCloseAutoFocus={(event) => { if (keepFocus.current) { keepFocus.current = false; event.preventDefault(); } }}>
       <CommandInput placeholder="Search notes or run a command…" />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
 
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section<Shortcut chord={bindings['new-note']} /></CommandItem>
-          <CommandItem onSelect={() => { onCreateKind('database'); close(); }}><Database /> New database</CommandItem>
-          <CommandItem onSelect={() => { onCreateKind('canvas'); close(); }}><Frame /> New canvas</CommandItem>
+          <CommandItem onSelect={() => createKind('database')}><Database /> New database</CommandItem>
+          <CommandItem onSelect={() => createKind('canvas')}><Frame /> New canvas</CommandItem>
+          <CommandItem onSelect={() => createKind('table')}><Table2 /> New table</CommandItem>
           <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder<Shortcut chord={bindings['new-view']} /></CommandItem>
           <CommandItem onSelect={() => { onToggleShell(); close(); }}><PanelsTopLeft /> {shellActive ? 'Hide workspace layout' : 'Use workspace layout (.neuron/layout.json)'}</CommandItem>
           <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}<Shortcut chord={bindings['toggle-graph']} /></CommandItem>

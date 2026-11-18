@@ -20,6 +20,7 @@ check('a mapped renderer file selects its area', () => assert.deepEqual(select('
 check('an unmapped renderer file runs all specs', () => assert.equal(select('src/renderer/App.tsx'), 'all'));
 check('docs only selects nothing', () => assert.deepEqual(select('docs/distribution.md', 'README.md'), []));
 check('tools only selects nothing', () => assert.deepEqual(select('tools/publish-gate.test.mjs'), []));
+check('the shared table pieces select both the database and the CSV specs', () => assert.deepEqual(select('src/renderer/components/db/table-kit.tsx'), expected('csv-tables', 'database', 'database-views', 'db-virtualization')));
 check('two areas are unioned', () => assert.deepEqual(select('src/renderer/lib/db.ts', 'src/renderer/lib/graph-layout.ts'), expected('database', 'database-views', 'db-virtualization', 'graph')));
 check('package and shared config changes run all specs', () => {
   for (const p of ['package.json', 'package-lock.json', 'tsconfig.main.json', 'vite.config.ts', 'playwright.config.ts']) assert.equal(select(p), 'all');

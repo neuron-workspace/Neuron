@@ -11,7 +11,8 @@ import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
-import { NEW_FILE_KINDS, startingContent } from './lib/new-file';
+import { NEW_FILE_KINDS, startingCompanions, startingContent } from './lib/new-file';
+import { isCsvPath, tableMetaPath } from './lib/csv-table';
 import { closeTab as closeTabIn, EMPTY_TABS, keepTab, openTab, removeMissing, type TabState } from './lib/tabs';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
@@ -29,6 +30,7 @@ import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
+import './surfaces/CsvSurface'; // registers the .csv table surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
 import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
@@ -400,10 +402,11 @@ export default function App() {
       // not a graph node, it has no wiki-links, its words are not yours, and it
       // should not turn up in a search for something you wrote. `notes` keeps
       // it so it can be opened; `notesData` -- what the graph, tags, search and
-      // link index are all built from -- does not.
+      // link index are all built from -- does not. Nor does a CSV: it is data,
+      // not a note, and can be far larger than anything worth holding here.
       const data = await Promise.all(
         fileList
-          .filter((path) => !path.startsWith('.neuron/'))
+          .filter((path) => !path.startsWith('.neuron/') && !isCsvPath(path))
           .map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })),
       );
       setNotesData(data);
@@ -527,7 +530,7 @@ export default function App() {
         void window.electronAPI.readNote(path).then(content => {
           if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
           setNotes(current => current.includes(path) ? current : [...current, path].sort());
-          if (!path.startsWith('.neuron/')) setNotesData(current => {
+          if (!path.startsWith('.neuron/') && !isCsvPath(path)) setNotesData(current => {
             const existing = current.find(n => n.path === path);
             if (existing?.content === content) return current;
             return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
@@ -659,11 +662,16 @@ export default function App() {
     });
   }, []);
 
-  const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
+  const createNote = useCallback(async (relativePath: string, content?: string, companions: { path: string; content: string }[] = []): Promise<boolean> => {
     if (!window.electronAPI) return false;
     try {
       const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '');
       const body = content ?? '# ' + title + '\n\n';
+      // First, so the file is what its companions describe from the moment it opens.
+      for (const companion of companions) {
+        const written = await window.electronAPI.writeNote(companion.path, companion.content);
+        if (!written.success) { setNotice('Could not create “' + relativePath + '”. ' + (written.error ?? '')); return false; }
+      }
       const result = await window.electronAPI.writeNote(relativePath, body);
       if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
       await loadNotes();
@@ -696,6 +704,9 @@ export default function App() {
     if (!window.electronAPI) return false;
     const result = await window.electronAPI.deleteNote(note);
     if (!result.success) { setNotice(`Could not delete “${note}”. ${result.error ?? ''}`.trim()); return false; }
+    // Left behind, the metadata would make a later CSV of the same name Neuron's
+    // to write without ever asking.
+    if (isCsvPath(note)) await window.electronAPI.deleteNote(tableMetaPath(note));
     setTabState((current) => removeMissing(current, (path) => path !== note));
     await loadNotes();
     return true;
@@ -731,12 +742,13 @@ export default function App() {
 
   // A database or canvas starts with content its surface can open, in the
   // workspace root like New note, and is kept as a tab by createNote.
-  const requestCreateKind = useCallback(async (kind: 'database' | 'canvas') => {
+  const requestCreateKind = useCallback(async (kind: 'database' | 'canvas' | 'table') => {
     if (creatingUntitled.current) return;
     creatingUntitled.current = true;
     try {
       const paths = await window.electronAPI.listNotes();
-      await createNote(nextUntitled([...paths, ...createdFolders], '', 'Untitled', NEW_FILE_KINDS[kind].ext), startingContent(kind));
+      const path = nextUntitled([...paths, ...createdFolders], '', 'Untitled', NEW_FILE_KINDS[kind].ext);
+      await createNote(path, startingContent(kind), startingCompanions(kind, path));
     } catch { setNotice(`Could not create a ${kind}.`); }
     finally { creatingUntitled.current = false; }
   }, [createNote, createdFolders]);
@@ -903,6 +915,12 @@ export default function App() {
     [selectedTag, notesData, notes],
   );
 
+  // CSV tables are found by name in the sidebar search; their contents are not read for it.
+  const searchableFiles = useMemo(
+    () => [...notesData, ...notes.filter(isCsvPath).map((path) => ({ path, content: '' }))],
+    [notesData, notes],
+  );
+
   const bridge = useMemo(() => ({
     activeNote: selectedNote,
     noteContent,
@@ -1055,7 +1073,9 @@ export default function App() {
           <BrowserView key={selectedNote} url={selectedNote} />
         ) : Surface ? (
           surfaceEditing
-            ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
+            // A CSV is read-only as source: the editor would turn CRLF into LF on
+            // the first keystroke, and a CSV Neuron does not manage must not change.
+            ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} readOnly={isCsvPath(selectedNote)} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
@@ -1194,7 +1214,7 @@ export default function App() {
                   sidebarSide={layout.sidebarSide}
                   onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
                   notes={filteredNotes}
-                  notesData={notesData}
+                  notesData={searchableFiles}
                   selectedNote={selectedNote}
                   onSelectNote={handleSelectNote}
                   onKeepNote={keepNote}

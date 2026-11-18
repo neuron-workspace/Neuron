@@ -45,7 +45,7 @@ export interface ExplorerState {
   openFile: (path: string) => void;
   folders: string[];
   notesData: { path: string; content: string }[];
-  createNote: (path: string, content?: string) => Promise<boolean>;
+  createNote: (path: string, content?: string, companions?: { path: string; content: string }[]) => Promise<boolean>;
   createFolder: (path: string) => Promise<boolean>;
   openToSide?: (path: string) => void;
   editorModes: Record<string, 'reading' | 'live' | 'split'>;

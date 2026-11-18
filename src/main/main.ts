@@ -115,9 +115,9 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, Mermaid diagrams, folder mini-apps (neuron.app + neuron.app.json), the internal shell
-// config, and .neuron configuration/assets.
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid)$)/;
+// canvases, Mermaid diagrams, CSV tables, folder mini-apps (neuron.app + neuron.app.json), the internal shell
+// config, and .neuron configuration/assets (CSV table metadata is .neuron/tables/**.json).
+const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid|csv)$)/;
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent

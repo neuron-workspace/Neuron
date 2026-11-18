@@ -27,6 +27,7 @@ The workspace watcher recognises these user-facing document types:
 | `.mdx` | Markdown note with supported components | Markdown/MDX text, optionally with YAML frontmatter |
 | `.canvas` | Spatial board | JSON Canvas document |
 | `.db` | Typed database | JSON schema, view state, and rows |
+| `.csv` | Table | Plain CSV; Neuron writes it only when it manages it (see below) |
 | `.html` | Sandboxed view | HTML with optional htmx attributes, inline CSS, and JavaScript |
 | `index.html` | Folder mini-app entry point | HTML view inside a marked app folder |
 | `neuron.app.json` | Folder mini-app marker and manifest | Capabilities and allowed paths for `index.html` |
@@ -250,6 +251,31 @@ with the rows. External file changes refresh the surface.
 Invalid JSON is not repaired automatically, and documents over 2 MB are
 refused. See [File surfaces](custom-views.md) for the format and safe-link
 rules.
+
+## Tables (CSV)
+
+A `.csv` file opens as a table, with the same search, sort and filter as a
+database table. The file stays a normal CSV: Neuron never changes its format or
+moves it, and spreadsheets and other programs keep reading it.
+
+A CSV Neuron did not create is shown **read-only**, and opening, sorting or
+closing it never writes it. When you try to edit it, Neuron asks whether to
+convert it into a Neuron table. Say no and nothing changes. Say yes and Neuron
+**manages** the file from then on: it may write the CSV, and it keeps the
+column types (text, number, checkbox, date, URL, select) and the sort and
+filter in `.neuron/tables/<path of the csv>.json`, for example
+`.neuron/tables/data/people.csv.json`. Converting writes only that file; the
+CSV is first written when you make an edit. A table made with **New → Table**
+is managed from the start.
+
+Edits keep the file's own delimiter (comma, semicolon or tab), line endings,
+BOM and quoting. A file whose quoting or line endings are mixed is made
+consistent the first time you edit it, and the conversion question says so.
+Values are always stored as text; a column's type only changes how its cells
+are shown and edited. Renaming or moving the CSV outside Neuron leaves its
+metadata behind and the file is read-only again. Files over 5 MB or 50,000
+rows, and files that are not UTF-8 text, open read-only and cannot be
+converted. Source mode shows a CSV's text but does not edit it.
 
 ## Build a dashboard or folder mini-app
 

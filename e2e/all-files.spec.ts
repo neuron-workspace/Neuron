@@ -69,8 +69,8 @@ test('every file and folder appears in the sidebar and the workspace home', asyn
     .toEqual([join(workspace, 'a.txt'), join(workspace, 'docs', 'report.pdf')]);
 
   // Files added outside the app join the listing.
-  writeFileSync(join(workspace, 'docs', 'later.csv'), 'a,b\n');
-  await expect(tree.locator('[data-other-file="docs/later.csv"]')).toBeVisible({ timeout: 15_000 });
+  writeFileSync(join(workspace, 'docs', 'later.txt'), 'a,b\n');
+  await expect(tree.locator('[data-other-file="docs/later.txt"]')).toBeVisible({ timeout: 15_000 });
   await expect(list.getByRole('option', { name: 'docs', exact: true }).locator('.explorer-item-detail')).toHaveText('2 other files');
 
   // The watcher never reports a new empty folder; coming back to the window does.

@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { AppWindow, ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon } from 'lucide-react';
+import { AppWindow, ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon, Table2 } from 'lucide-react';
 import { breadcrumbs, describeCounts, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
 import { nextUntitled } from '../lib/untitled';
-import { NEW_FILE_KINDS, startingContent, type NewFileKind } from '../lib/new-file';
+import { NEW_FILE_KINDS, startingCompanions, startingContent, type NewFileKind } from '../lib/new-file';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { noteTags } from '../lib/note-tags';
 import { Segmented } from '../components/ui/segmented';
@@ -34,7 +34,7 @@ interface WorkspaceExplorerProps {
   onNavigate: (folder: string) => void;
   onOpenFile: (path: string) => void;
   onOpenToSide?: (path: string) => void;
-  onCreateNote: (path: string, content?: string) => Promise<boolean>;
+  onCreateNote: (path: string, content?: string, companions?: { path: string; content: string }[]) => Promise<boolean>;
   onCreateFolder: (path: string) => Promise<boolean>;
   recents: RecentEntry[];
   onClearRecents: () => void;
@@ -48,6 +48,7 @@ const fileType = (entry: Item, paths: string[]) => {
   if (isNote(entry.path)) return 'Note';
   if (entry.extension === 'db') return 'Database';
   if (entry.extension === 'canvas') return 'Canvas';
+  if (entry.extension === 'csv') return 'Table';
   if (entry.extension === 'html') return paths.includes((parentFolder(entry.path) ? parentFolder(entry.path) + '/' : '') + 'neuron.app.json') ? 'App' : 'Web view';
   return entry.extension ? entry.extension.toUpperCase() + ' file' : 'File';
 };
@@ -55,7 +56,7 @@ const fileType = (entry: Item, paths: string[]) => {
 function ItemIcon({ item, type }: { item: Item; type?: string }) {
   if (item.kind === 'folder') return <Folder className="explorer-folder-icon" fill="currentColor" strokeWidth={1.25} />;
   if (item.other) return <OtherFileIcon path={item.path} strokeWidth={1.5} />;
-  const Icon = type === 'App' ? AppWindow : ({ db: Database, canvas: Frame, html: FileCode2, mmd: GitBranch,
+  const Icon = type === 'App' ? AppWindow : ({ db: Database, canvas: Frame, csv: Table2, html: FileCode2, mmd: GitBranch,
     mermaid: GitBranch, png: ImageIcon, jpg: ImageIcon, jpeg: ImageIcon, gif: ImageIcon, svg: ImageIcon, webp: ImageIcon }[item.extension] ?? FileText);
   return <Icon strokeWidth={1.5} />;
 }
@@ -198,7 +199,9 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
     setBusy(true);
     const path = (folder ? folder + '/' : '') + filename;
     try {
-      const ok = draft.kind === 'file' ? await onCreateNote(path, startingContent(draft.fileKind) ?? '# ' + name + '\n\n') : await onCreateFolder(path);
+      const ok = draft.kind === 'file'
+        ? await onCreateNote(path, startingContent(draft.fileKind) ?? '# ' + name + '\n\n', startingCompanions(draft.fileKind, path))
+        : await onCreateFolder(path);
       if (ok) { setDraft(null); setError(''); if (draft.kind === 'folder') { focusCreatedFolder.current = path; setSelection({ folder, path }); } }
       else setError('Could not create this item. Try again.');
     } finally { committing.current = false; setBusy(false); }
@@ -211,7 +214,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
           <button type="button" aria-label="New file type…" title="New file type…" className="explorer-action explorer-split-chevron interactive" disabled={busy}><ChevronDown aria-hidden="true" /></button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {(['note', 'database', 'canvas'] as const).map(kind => <DropdownMenuItem key={kind} onSelect={() => startCreate('file', kind)}>{NEW_FILE_KINDS[kind].label}</DropdownMenuItem>)}
+          {(['note', 'database', 'canvas', 'table'] as const).map(kind => <DropdownMenuItem key={kind} onSelect={() => startCreate('file', kind)}>{NEW_FILE_KINDS[kind].label}</DropdownMenuItem>)}
         </DropdownMenuContent>
       </DropdownMenu>
     </span>

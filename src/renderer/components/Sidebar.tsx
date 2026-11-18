@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppWindow, GripVertical, ChevronDown, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
+import { AppWindow, GripVertical, ChevronDown, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Table2, Tag, Trash2, X } from 'lucide-react';
 import ActivityRail, { type SettingsTarget, type SidebarMode } from './ActivityRail';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
@@ -30,7 +30,7 @@ interface SidebarProps {
   onDeleteNote: (note: string) => Promise<boolean>;
   onRequestCreate: (section?: string) => void;
   onRequestCreateFolder: () => void;
-  onRequestCreateKind: (kind: 'database' | 'canvas') => void;
+  onRequestCreateKind: (kind: 'database' | 'canvas' | 'table') => void;
   onRefresh: () => Promise<void>;
   view: View;
   mode: SidebarMode;
@@ -123,6 +123,11 @@ export default function Sidebar(props: SidebarProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deletingNote, setDeletingNote] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // A new file takes focus itself (a new table opens with its first cell
+  // focused). The menu handing focus back to its button once it has finished
+  // closing would take the first keystrokes typed into it.
+  const keepFocus = useRef(false);
+  const createKind = (kind: 'database' | 'canvas' | 'table') => { keepFocus.current = true; props.onRequestCreateKind(kind); };
 
   // The search box only filters in search mode; the explorer always shows all.
   const query = mode === 'search' ? search.trim() : '';
@@ -207,7 +212,9 @@ export default function Sidebar(props: SidebarProps) {
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
         <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
-          <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
+          {/\.csv$/i.test(file.name)
+            ? <Table2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
+            : <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />}
           <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
         {isConfirming ? (
@@ -289,10 +296,11 @@ export default function Sidebar(props: SidebarProps) {
                       <ChevronDown className="h-3 w-3" aria-hidden="true" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
+                  <DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (keepFocus.current) { keepFocus.current = false; event.preventDefault(); } }}>
                     <DropdownMenuItem onSelect={() => onRequestCreate()}>Note</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => props.onRequestCreateKind('database')}>Database</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => props.onRequestCreateKind('canvas')}>Canvas</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => createKind('database')}>Database</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => createKind('canvas')}>Canvas</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => createKind('table')}>Table</DropdownMenuItem>
                     <DropdownMenuItem onSelect={onRequestCreateFolder}>Folder</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

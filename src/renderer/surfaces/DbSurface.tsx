@@ -1,13 +1,13 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, ExternalLink, LayoutGrid, Plus, Rows3, Settings2, SlidersHorizontal, Table2, Trash2, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Columns3, Database, LayoutGrid, Plus, Rows3, Settings2, SlidersHorizontal, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { BoardColumnHeader, CardLimitNote, Chip, DbCard, cardTitle, columnLabel } from '@/components/db/DbCards';
-import { addDbTable, boardColumns, displayValue, drawableRelations, MAX_CARDS, moveRow, parseDb, resolveView, serializeDb, updateDbTable, visibleRows as savedViewRows, type BoardColumn, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type DbViewMode, type PropType } from '@/lib/db';
-import { rowWindow } from '@/lib/row-window';
+import { addDbTable, boardColumns, displayValue, drawableRelations, MAX_CARDS, moveRow, OPTION_COLORS as PALETTE, parseDb, resolveView, serializeDb, updateDbTable, visibleRows as savedViewRows, type BoardColumn, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type DbViewMode, type PropType } from '@/lib/db';
+import { HEADER_BUTTON, OptionListEditor, SaveNotice, SelectCell, TOOL_FIELD, TOOL_FIELD_BASE, UrlCell, useFileWriter, useRowVirtualizer } from '@/components/db/table-kit';
 import { Segmented } from '@/components/ui/segmented';
 import { registerSurface, type SurfaceProps } from './index';
 
@@ -29,8 +29,6 @@ const PROP_TYPES: { value: PropType; label: string }[] = [
   { value: 'select', label: 'Select' },
   { value: 'multiselect', label: 'Multi-select' },
 ];
-
-const PALETTE = ['#8b8b8b', '#a27763', '#e28f44', '#d9b23c', '#5aa06c', '#528fd1', '#9a6dd7', '#d15796', '#dd5c5c'];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const isSelectType = (t: string) => t === 'select' || t === 'multiselect';
@@ -66,11 +64,6 @@ function starterDoc(tableName: string): DbFile {
 }
 
 const ROW_MIME = 'text/neuron-row';
-// Header controls are plain buttons so the app-wide focus ring applies.
-const HEADER_BUTTON = 'interactive inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[var(--divider)] px-2.5 text-[12px] text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]';
-// `.field` is a full-width 34px form control; the toolbar needs compact ones sized to content.
-const TOOL_FIELD_BASE = 'field !min-h-0 !h-8 shrink-0 text-[12px]';
-const TOOL_FIELD = `${TOOL_FIELD_BASE} !w-auto px-2`;
 
 function SchemaOverview({ db, onOpen }: { db: DbFile; onOpen: (tableId: string) => void }) {
   const ids = Object.keys(db.tables);
@@ -144,12 +137,13 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [editingProp, setEditingProp] = useState<string | null>(null);
-  const lastWritten = useRef<string | null>(null);
-  const pendingWrite = useRef<string | null>(null);
-  const writeSequence = useRef(0);
-  const unsaved = useRef(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const activePath = useRef(path);
+  // The app doesn't reload open-note content on disk changes, so the writer
+  // watches too: external edits (git pull, sync, another editor) land without a reload.
+  const writer = useFileWriter(path, (text) => {
+    const parsed = parseDb(text, title);
+    adopt(parsed.db, parsed.error);
+  });
+  const { saveError } = writer;
   const dbRef = useRef<DbFile | null>(null);
   const selectedTableRef = useRef<string | null>(null);
   // Board and gallery: the row open in the editor dialog, drag state, and the
@@ -189,63 +183,19 @@ export function DbSurface({ path, content }: SurfaceProps) {
 
   // Adopt file content: initial open, Source-mode edits, anything not our own write.
   useEffect(() => {
-    if (activePath.current !== path) {
-      activePath.current = path;
-      lastWritten.current = null;
-      pendingWrite.current = null;
-      writeSequence.current++;
-      unsaved.current = false;
-      setSaveError(null);
-      selectedTableRef.current = null;
-    }
-    if (unsaved.current || content === pendingWrite.current || content === lastWritten.current) return;
+    if (writer.follow(path)) selectedTableRef.current = null;
+    if (writer.ignores(content)) return;
     if (!content.trim()) { adopt(null, null); return; }
     const parsed = parseDb(content, title);
     adopt(parsed.db, parsed.error);
   }, [content, path, title]);
-
-  // The app doesn't reload open-note content on disk changes, so watch here:
-  // external edits (git pull, sync, another editor) land without a reload.
-  useEffect(() => {
-    return window.electronAPI.onNotesChanged((event, changed) => {
-      if (changed !== path || event === 'unlink') return;
-      const sequence = writeSequence.current;
-      void window.electronAPI.readNote(path).then((text) => {
-        if (activePath.current !== path || sequence !== writeSequence.current || unsaved.current
-          || text.startsWith('Error:') || text === pendingWrite.current || text === lastWritten.current) return;
-        const parsed = parseDb(text, title);
-        adopt(parsed.db, parsed.error);
-      });
-    });
-  }, [path, title]);
 
   // stage: update UI while typing; write: serialize the whole doc to disk.
   const stageDb = (next: DbFile) => { dbRef.current = next; setDbState(next); };
   const writeDb = async (next: DbFile) => {
     stageDb(next);
     stagedOnly.current = false;
-    const text = serializeDb(next);
-    const sequence = ++writeSequence.current;
-    unsaved.current = true;
-    // Watcher IPC can beat the write reply; keep its echo separate from confirmed saves.
-    pendingWrite.current = text;
-    try {
-      const result = await window.electronAPI.writeNote(path, text);
-      if (sequence !== writeSequence.current) return;
-      pendingWrite.current = null;
-      if (result.success) {
-        lastWritten.current = text;
-        // Only a write in flight or a failed one holds off reloads from disk.
-        unsaved.current = false;
-        setSaveError(null);
-      } else {
-        setSaveError(result.error ?? 'Unknown error');
-      }
-    } catch (error) {
-      if (sequence !== writeSequence.current) return;
-      pendingWrite.current = null;
-      setSaveError(error instanceof Error ? error.message : String(error));
-    }
+    await writer.write(serializeDb(next));
   };
   const replaceTable = (next: DbTable) => updateDbTable(dbRef.current!, selectedTableRef.current!, next);
   const stage = (next: DbTable) => { stageDb(replaceTable(next)); stagedOnly.current = true; };
@@ -354,11 +304,9 @@ export function DbSurface({ path, content }: SurfaceProps) {
   }, [doc, search]);
   const view = useMemo(() => (doc ? resolveView(doc) : null), [doc]);
 
-  const tableScroll = useRef<HTMLDivElement>(null);
-  const measuredHeight = useRef<number | null>(null);
-  const [viewport, setViewport] = useState({ scrollTop: 0, viewportHeight: 0, rowHeight: 36 });
-  const [focusedRow, setFocusedRow] = useState<string | null>(null);
   const virtual = visibleRows.length >= 200 && view?.mode === 'table';
+  const { scrollRef: tableScroll, viewport, renderedIndices, setFocusedRow } = useRowVirtualizer(
+    visibleRows, (row) => row.id, virtual, [search, doc?.view.filterProp, doc?.view.filterValue, selectedTable, path]);
 
   // Focus a card after the render that moved it, and after Radix has finished
   // returning focus from a closing menu or dialog (it does so on a zero timeout).
@@ -369,51 +317,6 @@ export function DbSurface({ path, content }: SurfaceProps) {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [focusRequest]);
-
-  useLayoutEffect(() => {
-    const container = tableScroll.current;
-    if (!container || !virtual) return;
-    let frame = 0;
-    const measure = () => {
-      frame = 0;
-      const firstRow = container.querySelector<HTMLTableRowElement>('tbody tr[data-row-id]');
-      if (measuredHeight.current === null && firstRow) {
-        measuredHeight.current = firstRow.getBoundingClientRect().height || 36;
-      }
-      const headerHeight = container.querySelector('thead')?.getBoundingClientRect().height ?? 0;
-      setViewport({
-        scrollTop: Math.max(0, container.scrollTop - headerHeight),
-        viewportHeight: container.clientHeight,
-        rowHeight: measuredHeight.current ?? 36,
-      });
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    measure();
-    container.addEventListener('scroll', schedule, { passive: true });
-    const observer = new ResizeObserver(schedule);
-    observer.observe(container);
-    return () => {
-      container.removeEventListener('scroll', schedule);
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [virtual, visibleRows]);
-
-  useLayoutEffect(() => {
-    if (tableScroll.current) tableScroll.current.scrollTop = 0;
-    setViewport((current) => ({ ...current, scrollTop: 0 }));
-  }, [search, doc?.view.filterProp, doc?.view.filterValue, selectedTable, path]);
-
-  const windowRows = rowWindow({ ...viewport, count: visibleRows.length, overscan: 10 });
-  const focusedIndex = focusedRow === null ? -1 : visibleRows.findIndex((row) => row.id === focusedRow);
-  // Keep the editor and its Tab neighbours mounted without filling a distant gap.
-  // The last focused row stays pinned after focus leaves the table: at most three
-  // extra rows, and Tab into the next row never finds it unmounted.
-  const pinnedRows = focusedIndex < 0 ? [] : [focusedIndex - 1, focusedIndex, focusedIndex + 1]
-    .filter((index) => index >= 0 && index < visibleRows.length && (index < windowRows.start || index >= windowRows.end));
-  const renderedIndices = virtual
-    ? [...pinnedRows, ...Array.from({ length: windowRows.end - windowRows.start }, (_, index) => windowRows.start + index)].sort((a, b) => a - b)
-    : visibleRows.map((_, index) => index);
 
   // --- Cell renderers ---------------------------------------------------------
   // The option editor sits above the table, behind the row dialog, so close the dialog first.
@@ -427,24 +330,14 @@ export function DbSurface({ path, content }: SurfaceProps) {
       return <input type="date" className="vw-cell" value={typeof v === 'string' ? v : ''} onChange={(e) => setCell(row.id, propId, e.target.value)} aria-label={prop.name} />;
     }
     if (prop.type === 'select') {
-      const selected = prop.options?.find((o) => o.id === v);
       return (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button type="button" className="flex w-full items-center gap-1 rounded px-1 py-1 text-left hover:bg-[var(--surface-hover)]">
-              {selected ? <Chip option={selected} /> : <span className="text-xs text-[var(--ink-muted)]">—</span>}
-              <ChevronDown className="ml-auto h-3 w-3 shrink-0 text-[var(--ink-muted)]" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {(prop.options ?? []).map((o) => (
-              <DropdownMenuItem key={o.id} onClick={() => setCell(row.id, propId, o.id)}><Chip option={o} /></DropdownMenuItem>
-            ))}
-            <DropdownMenuItem onClick={() => setCell(row.id, propId, '')}>None</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => editOptions(propId)}><Settings2 className="h-3.5 w-3.5" /> Edit options…</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <SelectCell
+          options={prop.options ?? []}
+          selected={prop.options?.find((o) => o.id === v)}
+          onPick={(o) => setCell(row.id, propId, o.id)}
+          onClear={() => setCell(row.id, propId, '')}
+          onEditOptions={() => editOptions(propId)}
+        />
       );
     }
     if (prop.type === 'multiselect') {
@@ -475,15 +368,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
       );
     }
     if (prop.type === 'url') {
-      const url = typeof v === 'string' ? v : '';
-      return (
-        <div className="flex items-center gap-1">
-          <input className="vw-cell" value={url} placeholder="https://" onChange={(e) => setCell(row.id, propId, e.target.value, false)} onBlur={flush} aria-label={prop.name} />
-          {/^https?:\/\//.test(url) && (
-            <a href={url} target="_blank" rel="noreferrer" className="vw-icon-btn shrink-0" title={url} aria-label={`Open ${url}`}><ExternalLink className="h-3 w-3" /></a>
-          )}
-        </div>
-      );
+      return <UrlCell value={typeof v === 'string' ? v : ''} label={prop.name} onChange={(value) => setCell(row.id, propId, value, false)} onBlur={flush} />;
     }
     return (
       <input
@@ -498,14 +383,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
   }
 
   // --- Empty / invalid states -------------------------------------------------
-  const saveNotice = saveError && (
-    <div role="alert" className="flex items-center gap-3 border-b border-[var(--divider)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--danger)]">
-      {/* Retry first: the message carries a full path, and a long one pushed the
-          button under the floating graph. */}
-      <button type="button" className="interactive shrink-0 rounded px-2 py-1 font-medium hover:bg-[var(--surface-hover)]" onClick={() => { if (dbRef.current) void writeDb(dbRef.current); }}>Retry</button>
-      <span className="min-w-0 truncate" title={saveError}>Couldn't save {path.split(/[\\/]/).pop()}: {saveError}</span>
-    </div>
-  );
+  const saveNotice = <SaveNotice error={saveError} path={path} onRetry={() => { if (dbRef.current) void writeDb(dbRef.current); }} />;
 
   if (error) {
     return (
@@ -947,25 +825,15 @@ export function DbSurface({ path, content }: SurfaceProps) {
               <button type="button" className="vw-icon-btn ml-auto" onClick={() => setEditingProp(null)} title="Close" aria-label="Close property editor"><X className="h-3.5 w-3.5" /></button>
             </div>
             {isSelectType(properties[editing].type) && (
-              <div className="space-y-1">
-                {(properties[editing].options ?? []).map((o) => (
-                  <div key={o.id} className="flex items-center gap-1.5">
-                    <button type="button" className="h-4 w-4 shrink-0 rounded-full" style={{ background: o.color }} onClick={() => cycleColor(editing, o.id)} title="Change color" aria-label={`Change color of ${o.name}`} />
-                    <input
-                      className="field h-7 w-40 px-2 text-xs"
-                      value={o.name}
-                      onChange={(e) => setOptions(editing, (properties[editing].options ?? []).map((x) => (x.id === o.id ? { ...x, name: e.target.value } : x)), false)}
-                      onBlur={flush}
-                      aria-label="Option name"
-                    />
-                    <button type="button" className="vw-icon-btn" onClick={() => moveOption(editing, o.id, -1)} title="Move up" aria-label={`Move ${o.name} up`}><ArrowUp className="h-3 w-3" /></button>
-                    <button type="button" className="vw-icon-btn" onClick={() => moveOption(editing, o.id, 1)} title="Move down" aria-label={`Move ${o.name} down`}><ArrowDown className="h-3 w-3" /></button>
-                    <button type="button" className="vw-icon-btn hover:text-[var(--danger)]" onClick={() => deleteOption(editing, o.id)} title="Delete option" aria-label={`Delete ${o.name}`}><Trash2 className="h-3 w-3" /></button>
-                    <Chip option={o} />
-                  </div>
-                ))}
-                <button type="button" className="vw-newrow" onClick={() => addOption(editing)}><Plus className="h-3.5 w-3.5" /> Add option</button>
-              </div>
+              <OptionListEditor
+                options={properties[editing].options ?? []}
+                onRename={(optionId, name) => setOptions(editing, (properties[editing].options ?? []).map((x) => (x.id === optionId ? { ...x, name } : x)), false)}
+                onCommit={flush}
+                onCycleColor={(optionId) => cycleColor(editing, optionId)}
+                onMove={(optionId, delta) => moveOption(editing, optionId, delta)}
+                onDelete={(optionId) => deleteOption(editing, optionId)}
+                onAdd={() => addOption(editing)}
+              />
             )}
           </div>
         )}
