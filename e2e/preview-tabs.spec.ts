@@ -78,7 +78,10 @@ test('double-clicking the tab or "Keep open" in its menu keeps it', async ({ pag
 
   await tab(page, 'beta').click({ button: 'right' });
   await expect(page.getByRole('menuitem', { name: 'Keep open' })).toBeDisabled();
-  await page.keyboard.press('Escape');
+  // Escape does not close menus under xvfb on Linux; a pointer-down outside the
+  // menu does on every platform.
+  await page.mouse.click(1, 1);
+  await expect(page.getByRole('menu')).toHaveCount(0);
 
   await row(page, 'gamma').click();
   await expectTabs(page, ['alpha', 'beta', 'gamma'], 'gamma');
