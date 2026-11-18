@@ -68,7 +68,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
   const toItems = React.useCallback((listing: ReturnType<typeof listFolder>): Item[] => [
     ...listing.folders.map(entry => ({ ...entry, kind: 'folder' as const, extension: '' })),
     ...listing.files.map(entry => ({ ...entry, kind: 'file' as const, other: others.has(entry.path) }))], [others]);
-  const [view, setView] = React.useState<'list' | 'grid'>('list');
+  const [view, setView] = React.useState<'list' | 'grid'>('grid');
   const viewChanged = React.useRef(false);
   const [selection, setSelection] = React.useState<{ folder: string; path: string } | null>(null);
   const [draft, setDraft] = React.useState<{ kind: Item['kind']; fileKind: NewFileKind; name: string } | null>(null);
@@ -236,7 +236,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
           </React.Fragment>)}
         </nav>
         <div className="explorer-tools">{createButtons}<Segmented label="Explorer view" value={view}
-          options={[{ value: 'list', label: 'List' }, { value: 'grid', label: 'Grid' }]}
+          options={[{ value: 'grid', label: 'Grid' }, { value: 'list', label: 'List' }]}
           onChange={next => { viewChanged.current = true; setView(next); void window.electronAPI.settings.set('explorerView', next); }} /></div>
       </header>
       {(skipped > 0 || truncated) && <p className="explorer-notice" role="status">

@@ -8,7 +8,8 @@ test('with nothing open, the editor area is the explorer', async ({ page }) => {
   await expect(page.locator(explorer)).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible();
   await expect(page.getByRole('listbox', { name: 'Workspace contents' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'List', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Grid', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'List', exact: true })).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('single click previews a file; double click opens it', async ({ page, workspace }) => {

@@ -35,6 +35,7 @@ test('every file and folder appears in the sidebar and the workspace home', asyn
   const list = page.getByRole('listbox', { name: 'Workspace contents' });
   for (const name of ['pics', 'empty', 'docs', 'a.txt']) await expect(list.getByRole('option', { name, exact: true })).toBeVisible();
   await expect(page.locator('.explorer-empty')).toHaveCount(0);
+  await page.getByRole('button', { name: 'List', exact: true }).click();
   await expect(list.getByRole('option', { name: 'pics', exact: true }).locator('.explorer-item-detail')).toHaveText('1 other file');
   await expect(list.getByRole('option', { name: 'empty', exact: true }).locator('.explorer-item-detail')).toHaveText('Empty');
   const preview = page.getByRole('complementary', { name: 'Preview', exact: true });
