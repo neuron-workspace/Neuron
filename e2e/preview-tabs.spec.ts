@@ -91,3 +91,27 @@ test('double-clicking the tab or "Keep open" in its menu keeps it', async ({ pag
   await row(page, 'gamma').click();
   await expectTabs(page, ['alpha', 'beta', 'gamma'], 'gamma');
 });
+
+test('each editor group has a preview of its own', async ({ page }) => {
+  const group = (index: number) => page.locator(`[data-editor-group="${index}"]`);
+  const groupTabs = (index: number) => group(index).getByRole('navigation', { name: 'Open notes' }).locator('button:not([aria-label])');
+  const groupPreview = (index: number) => group(index).locator('[data-preview="true"]');
+  await row(page, 'alpha').dblclick();
+  await tab(page, 'alpha').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Split right', exact: true }).click();
+  await expect(page.locator('[data-editor-group]')).toHaveCount(2);
+
+  // The new group has focus: single clicks preview there, one tab replacing the next.
+  await row(page, 'beta').click();
+  await row(page, 'gamma').click();
+  await expect(groupTabs(1)).toHaveText(['alpha', 'gamma']);
+  await expect(groupPreview(1)).toContainText('gamma');
+  await expect(groupPreview(0)).toHaveCount(0);
+
+  // A single click in the other group does not replace this group's preview.
+  await group(0).getByRole('button', { name: 'alpha', exact: true }).click();
+  await row(page, 'beta').click();
+  await expect(groupTabs(0)).toHaveText(['alpha', 'beta']);
+  await expect(groupPreview(0)).toContainText('beta');
+  await expect(groupPreview(1)).toContainText('gamma');
+});

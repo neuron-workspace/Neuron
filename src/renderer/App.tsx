@@ -1,10 +1,6 @@
 import { cn } from './lib/utils';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
-import Editor from './components/Editor';
-import MDXPreview from './components/MDXPreview';
-import FullWidthToggle from './components/FullWidthToggle';
 import { CalloutIcon } from './components/mdx-components';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
@@ -14,16 +10,18 @@ import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
 import { NEW_FILE_KINDS, startingCompanions, startingContent } from './lib/new-file';
 import { isCsvPath, tableMetaPath } from './lib/csv-table';
-import { closeTab as closeTabIn, EMPTY_TABS, keepTab, openTab, removeMissing, type TabState } from './lib/tabs';
+import {
+  canSplit, closeGroup, closeInGroup, dropPreviews, EMPTY_GROUPS, focusGroup, keepEverywhere, keepTab, mapGroup, moveTab, openInGroup,
+  removeMissingAll, restoreGroups, serializeGroups, splitGroup, type GroupsState, type SplitDirection,
+} from './lib/tabs';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
-import NoteTabs from './components/NoteTabs';
+import EditorGroups, { EditorGroupHeader, type GroupContext, type SaveState } from './components/EditorGroup';
 import SettingsWindow from './views/SettingsWindow';
 import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
 import type { SettingsSection } from '../main/workspace-windows';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { PluginProvider, usePlugins } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
 import { getKindSurface, getSurface } from './surfaces';
@@ -37,16 +35,11 @@ import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
 import './surfaces/CsvSurface'; // registers the .csv table surface
-import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
-import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
-import { Segmented } from './components/ui/segmented';
-import BrowserView from './components/BrowserView';
+import { type EditMode } from './surfaces/panels';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, workspacePanelsPatch, type SavedLayout, type WorkbenchLayout } from './lib/layout';
 import { hasLayoutTree, parseWorkspacePanels, sameJson } from './surfaces/layout';
 import LayoutSwitcher from './components/LayoutSwitcher';
-import SideNote from './components/SideNote';
-import { Panel as SplitPanel, PanelGroup as SplitGroup, PanelResizeHandle as SplitHandle } from 'react-resizable-panels';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
 import { ExplorerProvider } from './lib/explorer-state';
 import {
@@ -87,6 +80,8 @@ const isUrl = (s: string | null): s is string => !!s && /^https?:\/\//.test(s);
 // The workspace's own config lives in a .neuron folder at the workspace root.
 const SHELL_CONFIG = '.neuron/layout.json';
 const notInConfig = (path: string) => path !== '.neuron' && !path.startsWith('.neuron/');
+// The editor groups of a workspace, in the settings bridge: `editorGroups:<workspace path>`.
+const GROUPS_KEY = 'editorGroups:';
 const NO_FILES: string[] = [];
 /** The kind a listed file opens as: by name, or text when main found an unknown name to start as text. */
 const kindIn = (path: string, text: ReadonlySet<string>): FileKind => {
@@ -100,7 +95,6 @@ import type { RepositoryInfo, WorkspaceEntries } from './electron.d';
 import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appearance } from './lib/theme';
 
 interface NoteData { path: string; content: string }
-type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 // Settings, Plugins and Workspaces are sections of the Settings window, so the
 // main area always shows something the sidebar's Files, Tags and Graph act on.
 type View = 'notes' | 'gallery';
@@ -159,31 +153,42 @@ export default function App() {
   const [repoReady, setRepoReady] = useState(false);
 
   const [notes, setNotes] = useState<string[]>([]);
-  // The open tabs, which one is the preview, and which one is showing: one
-  // state, because each change to the strip moves more than one of them.
-  const [tabState, setTabState] = useState<TabState>(EMPTY_TABS);
-  const { tabs: openTabs, preview: previewTab, selected: selectedNote } = tabState;
-  const [noteContent, setNoteContent] = useState('');
+  // The editor groups: each one's open tabs, preview and showing file, their
+  // direction, and which group has focus. One state, because each change to a
+  // strip moves more than one of them. The focused group's file is the one the
+  // rest of the app calls "the open note".
+  const [editor, setEditor] = useState<GroupsState>(EMPTY_GROUPS);
+  const selectedNote = editor.groups[editor.focused]?.selected ?? null;
+  // The content of every file a group shows, keyed by path: one copy however
+  // many groups show it, and one save state.
+  const [docs, setDocs] = useState<Record<string, string>>({});
+  const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
+  // The groups' sizes as last laid out. Not state: resizing reports every frame.
+  const groupSizes = useRef<number[] | null>(null);
+  const noteContent = selectedNote ? docs[selectedNote] ?? '' : '';
   const [notesData, setNotesData] = useState<NoteData[]>([]);
   const [entries, setEntries] = useState<WorkspaceEntries | null>(null);
   const [view, setView] = useState<View>('notes');
   const [editorModes, setEditorModes] = useState<Record<string, EditorMode>>({});
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [tags, setTags] = useState<string[]>([]);
-  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const saveState: SaveState = selectedNote && !isUrl(selectedNote) ? saveStates[selectedNote] ?? 'idle' : 'idle';
   const [notice, setNotice] = useState<string | null>(null);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceReady, setAppearanceReady] = useState(false);
 
   // The workspace explorer.
   //
-  // `atHome` is deliberately its own flag rather than being inferred from
+  // Home is deliberately its own state rather than being inferred from
   // `selectedNote === null`. Having no file open implies the explorer, but the
   // reverse is not true: opening a new tab must show it WITHOUT
   // closing anyone's tabs, so home has to be a place you can navigate to while
   // a note is still open. Conflating the two is how the explorer either refuses
-  // to appear or refuses to go away.
-  const [atHome, setAtHome] = useState(false);
+  // to appear or refuses to go away. It is the group showing home, if any.
+  const [homeGroup, setHomeGroup] = useState<number | null>(null);
+  const atHome = homeGroup === editor.focused;
+  const editorStateRef = useRef(editor);
+  editorStateRef.current = editor;
   const [explorerFolder, setExplorerFolder] = useState('');
   // listNotes returns files only; retain newly created empty directories per workspace.
   const [createdFolders, setCreatedFolders] = useState<string[]>([]);
@@ -345,11 +350,11 @@ export default function App() {
   const layoutShell = shellConfig && hasLayoutTree(shellConfig) ? shellConfig : null;
   const [propsSettings, setPropsSettings] = useState<PropertiesSettings>(DEFAULT_PROPERTIES_SETTINGS);
 
-  const saveVersion = useRef(0);
-  // What the watcher needs to update the open note without fighting the user:
-  // which note is open, and whether one of our own writes is still in flight.
-  const openNoteRef = useRef<{ path: string | null; saving: boolean }>({ path: null, saving: false });
-  const editorRef = useRef<any>(null);
+  // Per file: the latest write's number, so only the last one reports, and
+  // which files have one of our own writes in flight, which the watcher must
+  // not answer by putting the disk copy back over the user's typing.
+  const saveVersions = useRef(new Map<string, number>());
+  const savingDocs = useRef(new Set<string>());
   const browserCounter = useRef(0);
 
   // --- Appearance -----------------------------------------------------------
@@ -428,7 +433,7 @@ export default function App() {
       // An image or text file open in a tab is not a note but is still there.
       const listed = listing ? new Set(listing.files) : null;
       const text = new Set(listing?.text ?? []);
-      setTabState((current) => removeMissing(current, (path) => fileList.includes(path)
+      setEditor((current) => removeMissingAll(current, (path) => fileList.includes(path)
         || (listed ? listed.has(path) && opensAsFile(path, text) : opensAsFile(path, text))));
       // Configuration is reachable in the explorer but is not knowledge: it is
       // not a graph node, it has no wiki-links, its words are not yours, and it
@@ -449,7 +454,7 @@ export default function App() {
   }, [loadEntries]);
 
   useEffect(() => {
-    if (!repository) { setNotes([]); setNotesData([]); setEntries(null); setTags([]); setTabState((current) => ({ ...current, selected: null })); return; }
+    if (!repository) { setNotes([]); setNotesData([]); setEntries(null); setTags([]); setEditor((current) => ({ ...current, groups: current.groups.map((group) => ({ ...group, selected: null })) })); return; }
     setEntries(null);
     loadNotes();
   }, [repository, loadNotes]);
@@ -476,8 +481,10 @@ export default function App() {
   // A preview belongs to the workspace it was opened in. Keyed on the path,
   // because the same workspace re-reported is a new object.
   const repositoryPath = repository?.path ?? null;
+  const repositoryPathRef = useRef(repositoryPath);
+  repositoryPathRef.current = repositoryPath;
   useEffect(() => {
-    setTabState((current) => current.preview === null ? current : removeMissing(current, (path) => path !== current.preview));
+    setEditor(dropPreviews);
   }, [repositoryPath]);
 
   useEffect(() => {
@@ -558,7 +565,7 @@ export default function App() {
         setNotes(current => current.filter(n => !removed(n)));
         setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
-        setTabState(current => removeMissing(current, n => !removed(n)));
+        setEditor(current => removeMissingAll(current, n => !removed(n)));
       } else {
         void window.electronAPI.readNote(path).then(content => {
           if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
@@ -568,14 +575,14 @@ export default function App() {
             if (existing?.content === content) return current;
             return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
           });
-          // The open note follows its file. It used to keep showing what it was
-          // opened with, so an edit from a sync client, git or another editor
-          // stayed invisible -- and the next keystroke here wrote over it. Our
-          // own saves come back through the watcher too, so wait while one is in
-          // flight: adopting the disk copy then could undo the user's last few
-          // characters. When that write lands, the disk is what they typed.
-          const open = openNoteRef.current;
-          if (path === open.path && !open.saving) setNoteContent(current => current === content ? current : content);
+          // An open file follows its file, in every group showing it. It used to
+          // keep showing what it was opened with, so an edit from a sync client,
+          // git or another editor stayed invisible -- and the next keystroke here
+          // wrote over it. Our own saves come back through the watcher too, so
+          // wait while one is in flight: adopting the disk copy then could undo
+          // the user's last few characters. When that write lands, the disk is
+          // what they typed.
+          setDocs(current => !(path in current) || current[path] === content || savingDocs.current.has(path) ? current : { ...current, [path]: content });
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
@@ -599,45 +606,60 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(shellConfigTimer); unsubscribe(); };
   }, [repository, adoptShellConfig, offerShellConfig]);
 
+  // Read each file a group shows, once however many show it, and forget the
+  // ones no group shows any more. Keyed on the list, not the groups, so moving
+  // tabs about reads nothing.
+  const shownKey = [...new Set(editor.groups.map((group) => group.selected).filter((path): path is string => !!path && !isUrl(path)))].sort().join('\n');
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
   useEffect(() => {
+    const shown = shownKey ? shownKey.split('\n') : [];
+    const keep = <T,>(current: Record<string, T>) => {
+      const kept = Object.fromEntries(Object.entries(current).filter(([path]) => shown.includes(path)));
+      return Object.keys(kept).length === Object.keys(current).length ? current : kept;
+    };
+    setDocs(keep);
+    setSaveStates(keep);
     let cancelled = false;
-    openNoteRef.current = { path: selectedNote && !isUrl(selectedNote) ? selectedNote : null, saving: false };
-    (async () => {
-      if (!selectedNote || isUrl(selectedNote) || !window.electronAPI) { setNoteContent(''); setSaveState('idle'); return; }
+    for (const path of shown) {
+      if (path in docsRef.current) continue;
+      const adopt = (content: string) => {
+        setDocs((current) => (path in current ? current : { ...current, [path]: content }));
+        setSaveStates((current) => ({ ...current, [path]: 'saved' }));
+      };
       // Media streams from neuron-file://; its bytes never come through here.
-      if (isMediaPath(selectedNote)) { setNoteContent(''); setSaveState('saved'); return; }
-      try {
-        const content = await window.electronAPI.readNote(selectedNote);
-        if (!cancelled) { setNoteContent(content); setSaveState('saved'); }
-      } catch {
-        if (!cancelled) setNotice(`Could not open “${selectedNote}”.`);
-      }
-    })();
+      if (isMediaPath(path)) { adopt(''); continue; }
+      if (!window.electronAPI) continue;
+      window.electronAPI.readNote(path).then((content) => { if (!cancelled) adopt(content); })
+        .catch(() => { if (!cancelled) setNotice(`Could not open “${path}”.`); });
+    }
     return () => { cancelled = true; };
-  }, [selectedNote]);
+  }, [shownKey]);
 
   // A preview by default: most routes here are a look at a file, and only a
   // double click, creating something or editing it says to keep the tab.
-  const handleSelectNote = useCallback((note: string, options?: { keep?: boolean }) => {
+  // It opens in the focused group unless a group is named.
+  const handleSelectNote = useCallback((note: string, options?: { keep?: boolean; group?: number }) => {
     // Programs and scripts never open, whichever route asked (a wiki-link, say).
     if (!isUrl(note) && fileKind(note) === 'blocked') { setNotice(`Neuron does not open programs or scripts. “${note}” stays in its folder.`); return; }
-    setTabState((current) => openTab(current, note, options?.keep === true));
+    setEditor((current) => openInGroup(current, note, options?.keep === true, options?.group ?? current.focused));
     setView('notes');
     // Opening a file leaves home, whichever route got here -- sidebar, explorer,
     // command palette or a wiki-link. One place to clear it, because a second
     // route that forgot would leave the explorer covering the note it opened.
-    setAtHome(false);
+    setHomeGroup(null);
     if (!isUrl(note)) setExplorerRecents((current) => addRecent(current, { path: note, kind: 'file' }));
     setNotice(null);
   }, []);
   const keepNote = useCallback((note: string) => handleSelectNote(note, { keep: true }), [handleSelectNote]);
-  const keepOpenTab = useCallback((note: string) => setTabState((current) => keepTab(current, note)), []);
 
-  /** Show the workspace explorer without disturbing what is already open. */
-  const goHome = useCallback((folder = '') => {
+  /** Show the workspace explorer in a group (the focused one) without disturbing what is already open. */
+  const goHome = useCallback((folder = '', group?: number) => {
     setView('notes');
     setExplorerFolder(folder);
-    setAtHome(true);
+    const index = group ?? editorStateRef.current.focused;
+    setEditor((current) => focusGroup(current, index));
+    setHomeGroup(index);
     setNotice(null);
   }, []);
 
@@ -731,7 +753,6 @@ export default function App() {
       await loadNotes();
       handleSelectNote(relativePath, { keep: true });
       setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
-      setSaveState('saved');
       return true;
     } catch {
       setNotice('Could not create “' + relativePath + '”.');
@@ -761,28 +782,32 @@ export default function App() {
     // Left behind, the metadata would make a later CSV of the same name Neuron's
     // to write without ever asking.
     if (isCsvPath(note)) await window.electronAPI.deleteNote(tableMetaPath(note));
-    setTabState((current) => removeMissing(current, (path) => path !== note));
+    setEditor((current) => removeMissingAll(current, (path) => path !== note));
     await loadNotes();
     return true;
   }, [loadNotes]);
 
-  const handleContentChange = useCallback(async (value: string) => {
+  // The one save path for every file a group shows, however many show it: the
+  // new text reaches every group at once, and only the latest write reports.
+  const writeDoc = useCallback(async (path: string, value: string) => {
     // Kept in the same update as the change itself, so a preview never holds
     // an unsaved edit and the next single click cannot replace a tab mid-save.
-    if (selectedNote) keepOpenTab(selectedNote);
-    setNoteContent(value);
-    if (!selectedNote || !window.electronAPI) return;
-    const version = ++saveVersion.current;
-    setSaveState('saving');
-    openNoteRef.current.saving = true;
-    setNotesData((previous) => previous.map((note) => (note.path === selectedNote ? { ...note, content: value } : note)));
-    const result = await window.electronAPI.writeNote(selectedNote, value);
-    if (version !== saveVersion.current) return;
-    openNoteRef.current.saving = false;
-    setSaveState(result.success ? 'saved' : 'error');
-    if (result.success && selectedNote === SHELL_CONFIG) offerShellConfig(value);
-    if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
-  }, [selectedNote, offerShellConfig, keepOpenTab]);
+    setEditor((current) => keepEverywhere(current, path));
+    setDocs((current) => (current[path] === value ? current : { ...current, [path]: value }));
+    if (!window.electronAPI) return;
+    const version = (saveVersions.current.get(path) ?? 0) + 1;
+    saveVersions.current.set(path, version);
+    setSaveStates((current) => ({ ...current, [path]: 'saving' }));
+    savingDocs.current.add(path);
+    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
+    const result = await window.electronAPI.writeNote(path, value);
+    if (version !== saveVersions.current.get(path)) return;
+    savingDocs.current.delete(path);
+    setSaveStates((current) => (path in current ? { ...current, [path]: result.success ? 'saved' : 'error' } : current));
+    if (result.success && path === SHELL_CONFIG) offerShellConfig(value);
+    if (!result.success) setNotice(`Changes to “${path}” could not be saved.`);
+  }, [offerShellConfig]);
+  const handleContentChange = useCallback((value: string) => { if (selectedNote) void writeDoc(selectedNote, value); }, [selectedNote, writeDoc]);
 
   const requestCreate = useCallback(async () => {
     if (creatingUntitled.current) return;
@@ -856,23 +881,100 @@ export default function App() {
     handleSelectNote(url, { keep: true });
   }, [handleSelectNote]);
 
-  // A second note beside the editor. Only its path is state here: its content
-  // is the main pane's when both show the same note, otherwise the workspace
-  // copy with any unsaved typing laid over it, so each file has one writer.
-  const [sideNote, setSideNote] = useState<string | null>(null);
-  const [sideDraft, setSideDraft] = useState<{ path: string; content: string } | null>(null);
-  const [sideSave, setSideSave] = useState<SaveState>('saved');
-  const sideVersion = useRef(0);
-  useEffect(() => {
-    void window.electronAPI?.settings.get<unknown>('editorSplit').then((stored) => {
-      if (typeof stored === 'string' && /\.(md|mdx)$/.test(stored)) setSideNote(stored);
+  // "Open to the side" is a split to the right with that file. When the editor
+  // cannot split to the right any more, the file opens in the next group.
+  const openToSide = useCallback((path: string) => {
+    setEditor((current) => (canSplit(current, 'row')
+      ? splitGroup(current, current.focused, path, 'row')
+      : openInGroup(current, path, true, current.focused < current.groups.length - 1 ? current.focused + 1 : current.focused - 1)));
+    setHomeGroup(null);
+    setView('notes');
+  }, []);
+
+  // --- Editor groups --------------------------------------------------------
+  /** A new group from a tab of group `group` (the focused one's file by default): a copy, or a move when dragged. */
+  const splitEditor = useCallback((direction: SplitDirection, group?: number, path?: string, move = false) => {
+    setEditor((current) => {
+      const from = group ?? current.focused;
+      const file = path ?? current.groups[from]?.selected;
+      return file ? splitGroup(current, from, file, direction, move) : current;
     });
+    setHomeGroup(null);
+    setView('notes');
   }, []);
-  const openToSide = useCallback((path: string | null) => {
-    if (path !== null && !/\.(md|mdx)$/.test(path)) return;
-    setSideNote(path); setSideDraft(null); setSideSave('saved');
-    void window.electronAPI?.settings.set('editorSplit', path);
+  // A group that closes leaves home behind it; the last group emptied shows home.
+  const afterClose = (current: GroupsState, next: GroupsState) => {
+    if (next.groups.length === 1 && !next.groups[0].tabs.length) { setExplorerFolder(''); setHomeGroup(0); }
+    else if (next.groups.length !== current.groups.length) setHomeGroup(null);
+    return next;
+  };
+  const closeTab = useCallback((group: number, note: string) => {
+    setEditor((current) => afterClose(current, closeInGroup(current, group, note)));
   }, []);
+  const closeEditorGroup = useCallback(() => {
+    setEditor((current) => afterClose(current, closeGroup(current, current.focused)));
+  }, []);
+  const focusEditorGroup = useCallback((group: number) => setEditor((current) => focusGroup(current, group)), []);
+  const focusNextGroup = useCallback(() => setEditor((current) => focusGroup(current, (current.focused + 1) % current.groups.length)), []);
+  const moveEditorTab = useCallback((from: number, to: number, path: string, before: string | null) => {
+    setEditor((current) => afterClose(current, moveTab(current, from, to, path, before)));
+    setView('notes');
+  }, []);
+
+  // Which surface a file opens in: by extension, or, for a file outside the
+  // note listing, by kind (an image, a video, a text file).
+  const surfaceFor = useCallback((path: string) => {
+    const byKind = !noteSet.has(path) ? getKindSurface(kindIn(path, textFiles)) : undefined;
+    return { Surface: getSurface(path) ?? byKind, byKind: !!byKind };
+  }, [noteSet, textFiles]);
+
+  // The arrangement is remembered per workspace and per machine, beside the
+  // explorer's recents. It is read back once the listing is in, so files gone
+  // meanwhile are left out, and only into an editor still empty: anything the
+  // user opened before it arrived wins.
+  const groupsLoadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!repository || !entries || !window.electronAPI || groupsLoadedFor.current === repository.path) return;
+    const workspace = repository.path;
+    const listed = new Set(entries.files);
+    const exists = (path: string) => noteSet.has(path) || (listed.has(path) && opensAsFile(path, textFiles));
+    let cancelled = false;
+    void Promise.all([
+      window.electronAPI.settings.get<unknown>(GROUPS_KEY + workspace),
+      window.electronAPI.settings.get<unknown>('editorSplit'),
+    ]).then(([stored, legacy]) => {
+      if (cancelled) return;
+      groupsLoadedFor.current = workspace;
+      const restored = restoreGroups(stored, exists);
+      const current = editorStateRef.current;
+      const empty = current.groups.length === 1 && !current.groups[0].tabs.length;
+      let next = restored && empty ? restored.state : current;
+      if (restored && empty) groupSizes.current = restored.sizes;
+      // The side pane this replaced kept one note beside the editor in a
+      // setting of its own. Once: that note becomes a group to the right.
+      if (legacy != null) {
+        void window.electronAPI.settings.set('editorSplit', null);
+        if (typeof legacy === 'string' && exists(legacy) && canSplit(next, 'row') && !next.groups.some((group) => group.selected === legacy)) {
+          next = { ...splitGroup(next, next.focused, legacy, 'row'), focused: next.focused };
+        }
+      }
+      if (next !== current) setEditor(next);
+    }).catch(() => { if (!cancelled) groupsLoadedFor.current = workspace; });
+    return () => { cancelled = true; };
+  }, [repository, entries, noteSet, textFiles]);
+
+  // Stored a moment after the last change, for the workspace it belongs to.
+  const saveGroupsTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveGroups = useCallback(() => {
+    const workspace = groupsLoadedFor.current;
+    if (!workspace || workspace !== repositoryPathRef.current) return;
+    const stored = serializeGroups(editorStateRef.current, groupSizes.current ?? undefined);
+    clearTimeout(saveGroupsTimer.current);
+    saveGroupsTimer.current = setTimeout(() => { void window.electronAPI?.settings.set(GROUPS_KEY + workspace, stored); }, 150);
+  }, []);
+  useEffect(saveGroups, [editor, saveGroups]);
+  const onGroupSizes = useCallback((sizes: number[]) => { groupSizes.current = sizes; saveGroups(); }, [saveGroups]);
+
   const explorerState = useMemo(() => ({
     atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerFiles,
     otherFiles: explorerOther, fileInfo: entries?.info ?? {}, skipped: entries?.skipped ?? 0, truncated: entries?.truncated ?? false,
@@ -881,85 +983,6 @@ export default function App() {
     editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
   }), [atHome, repository, explorerFiles, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
     handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents]);
-
-  // A deleted or renamed file, or another workspace, simply has no side pane.
-  const sidePath = sideNote && notes.includes(sideNote) ? sideNote : null;
-  const sideContent = !sidePath ? '' : sidePath === selectedNote ? noteContent
-    : sideDraft?.path === sidePath ? sideDraft.content : notesData.find((note) => note.path === sidePath)?.content ?? '';
-  const changeSideNote = async (value: string) => {
-    if (!sidePath || !window.electronAPI) return;
-    if (sidePath === selectedNote) { void handleContentChange(value); return; }
-    const path = sidePath;
-    const version = ++sideVersion.current;
-    setSideDraft({ path, content: value });
-    setSideSave('saving');
-    const result = await window.electronAPI.writeNote(path, value);
-    if (version !== sideVersion.current) return;
-    setSideSave(result.success ? 'saved' : 'error');
-    if (!result.success) { setNotice(`Changes to ?${path}? could not be saved.`); return; }
-    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
-    setSideDraft((draft) => (draft?.path === path && draft.content === value ? null : draft));
-  };
-
-  const closeTab = useCallback((note: string) => {
-    setTabState((current) => {
-      const next = closeTabIn(current, note);
-      if (!next.tabs.length) { setExplorerFolder(''); setAtHome(true); }
-      return next;
-    });
-  }, []);
-
-  /**
-   * Tick or untick a task from the rendered view.
-   *
-   * The Markdown is the source of truth, so this rewrites the one line rather
-   * than holding the tick in renderer state: reading mode has no editor behind
-   * it, and a tick that lived only on screen would vanish on reload.
-   */
-  const handleToggleTask = useCallback((lineIndex: number, checked: boolean) => {
-    const lines = noteContent.split('\n');
-    const line = lines[lineIndex];
-    if (line === undefined) return;
-
-    const next = checked
-      ? line.replace(/\[( | )\]/, '[x]')
-      : line.replace(/\[[xX]\]/, '[ ]');
-    if (next === line) return;
-
-    lines[lineIndex] = next;
-    handleContentChange(lines.join('\n'));
-  }, [noteContent, handleContentChange]);
-
-  const handleLineClick = useCallback((lineIndex: number) => {
-    const targetLine = lineIndex + 1;
-    let mode = selectedNote ? editorModes[selectedNote] || 'reading' : 'reading';
-    // In reading view, a single click shouldn't switch modes — double-click enters live.
-    if (mode === 'reading') return;
-    setTimeout(() => {
-      const view = editorRef.current?.view;
-      if (view) {
-        try {
-          const doc = view.state.doc;
-          const safeLine = Math.max(1, Math.min(targetLine, doc.lines));
-          const line = doc.line(safeLine);
-          view.dispatch({
-            selection: { anchor: line.from, head: line.from },
-            scrollIntoView: true,
-          });
-          view.focus();
-        } catch (e) {
-          console.error('Failed to jump to line:', e);
-        }
-      }
-    }, 50);
-  }, [selectedNote, editorModes]);
-
-  // Markdown opens in reading view; other text files (JSON config, CSS, manifests) open as raw source.
-  const defaultEditorMode: EditorMode = selectedNote && /\.(md|mdx)$/i.test(selectedNote) ? 'reading' : 'split';
-  const editorMode: EditorMode = (selectedNote && editorModes[selectedNote]) || defaultEditorMode;
-  const setEditorMode = (mode: EditorMode) => {
-    if (selectedNote) setEditorModes((prev) => ({ ...prev, [selectedNote]: mode }));
-  };
 
   // --- Derived --------------------------------------------------------------
   const filteredNotes = useMemo(
@@ -1031,6 +1054,7 @@ export default function App() {
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
         case 'toggle-graph': toggleGraphOverlay(); break;
         case 'toggle-fullscreen': void window.electronAPI.windowControls.toggleFullScreen(); break;
+        case 'split-editor-right': splitEditor('row'); break;
       }
     };
     // Capture before terminals/editors consume the palette chord; Settings can
@@ -1048,145 +1072,71 @@ export default function App() {
     };
   }, [bindings, requestCreate, createSurfaceFile, openWebsite, patchLayout]);
 
-  const saveLabel = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' }[saveState];
-
-  const rawSplit = wide ? (
-    <div className="flex h-full w-full divide-x divider-color">
-      <div className="flex h-full min-w-0 flex-1 flex-col">
-        <div className="pane-header flex items-center border-b px-4 text-[11px] font-medium text-[var(--ink-muted)]">Source</div>
-        <div className="min-h-0 flex-1"><Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></div>
-      </div>
-      <div className="flex h-full min-w-0 flex-1 flex-col">
-        <div className="pane-header flex items-center border-b px-4 text-[11px] font-medium text-[var(--ink-muted)]">Preview</div>
-        <div className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></div>
-      </div>
-    </div>
-  ) : (
-    <Tabs defaultValue="source" className="flex h-full w-full flex-col">
-      <div className="border-b divider-color px-3 py-2"><TabsList><TabsTrigger value="source">Source</TabsTrigger><TabsTrigger value="preview">Preview</TabsTrigger></TabsList></div>
-      <TabsContent value="source" className="min-h-0 flex-1"><Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></TabsContent>
-      <TabsContent value="preview" className="min-h-0 flex-1"><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} notes={notes} onWikiLinkClick={handleSelectNote} /></TabsContent>
-    </Tabs>
-  );
-
+  const colorScheme = PRESETS[appearance.preset]?.colorScheme ?? 'dark';
   const browsing = isUrl(selectedNote);
-  // A file outside the note listing (an image, a video, a JSON file) opens in
-  // the surface for its kind. It has no separate source view: text is already
-  // source, and media has none to edit.
-  const KindSurface = selectedNote && !browsing && !noteSet.has(selectedNote) ? getKindSurface(kindIn(selectedNote, textFiles)) : undefined;
-  const Surface = selectedNote && !browsing ? getSurface(selectedNote) ?? KindSurface : undefined;
-  const surfaceEditing = !!(selectedNote && Surface && !KindSurface && surfaceSourceMode[selectedNote]);
-  const setSurfaceSource = (source: boolean) => { if (selectedNote) setSurfaceSourceMode((prev) => ({ ...prev, [selectedNote]: source })); };
+  const Surface = selectedNote && !browsing ? surfaceFor(selectedNote).Surface : undefined;
 
-  const editorHeader = (
-    <header className="shrink-0">
-      <div className="pane-header editor-tab-header flex items-center">
-      <NoteTabs tabs={openTabs} previewTab={previewTab} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onKeep={keepOpenTab} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
-      </div>
-      {selectedNote && !atHome && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
-        <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
-          {selectedNote.includes('/') && <span>{selectedNote.slice(0, selectedNote.lastIndexOf('/') + 1)}</span>}
-          <span className="text-[var(--ink-secondary)]">{selectedNote.split('/').pop()}</span>
-        </div>
-        {!browsing && !isMediaPath(selectedNote) && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{saveLabel}</span>}
-      {KindSurface ? null : selectedNote && Surface ? (
-          <div className="flex shrink-0 items-center">
-            <Segmented
-              label="Surface mode"
-              value={surfaceEditing ? 'source' : 'preview'}
-              onChange={(next) => setSurfaceSource(next === 'source')}
-              options={[
-                { value: 'preview', label: 'Preview', icon: <Eye className="h-3.5 w-3.5" /> },
-                { value: 'source', label: 'Source', icon: <FileCode2 className="h-3.5 w-3.5" /> },
-              ]}
-            />
-          </div>
-      ) : selectedNote && !browsing ? (
-          <div className="flex shrink-0 items-center gap-3">
-            {/\.(md|mdx)$/i.test(selectedNote) && <FullWidthToggle doc={noteContent} onChange={handleContentChange} removeEmpty={propsSettings.removeEmpty} />}
-            {/* Not in a layout workspace. There the editor is a panel that owns
-                its own view mode, so this switch drove nothing -- two identical
-                controls one above the other, and only the lower one worked. It
-                was invisible while this was a dropdown and the other a row of
-                text; giving them the same shape is what showed it. */}
-            {!layoutShell && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
-            {/* In a layout workspace the editor panel owns the view mode and
-                renders its switch into this slot, so it shares the note header
-                instead of taking a row of its own. */}
-            {layoutShell && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
-          </div>
-      ) : null}
-      </div>}
-    </header>
-  );
+  // What every editor group shares: the files' one copy and one save path, and
+  // the actions each group's tabs and drops call with its index.
+  const groupContext = useMemo<GroupContext>(() => ({
+    notes, tags, notesData, colorScheme, wide, properties: propsSettings,
+    editorModes, onEditorMode: (path, mode) => setEditorModes((prev) => ({ ...prev, [path]: mode })),
+    surfaceSource: surfaceSourceMode, onSurfaceSource: (path, source) => setSurfaceSourceMode((prev) => ({ ...prev, [path]: source })),
+    docs, saveStates, onChange: (path, value) => { void writeDoc(path, value); },
+    surfaceFor, fileSize: (path) => entries?.info[path]?.size, onTagClick: setSelectedTag,
+    home: (
+      // What used to be a blank "Choose a note to begin" panel. Nothing selected
+      // means the explorer at the workspace root; the tabs, if any, are untouched.
+      <WorkspaceExplorer
+        repositoryName={explorerState.repositoryName}
+        paths={explorerState.paths}
+        otherFiles={explorerState.otherFiles}
+        fileInfo={explorerState.fileInfo}
+        skipped={explorerState.skipped}
+        truncated={explorerState.truncated}
+        onReveal={explorerState.reveal}
+        folder={explorerState.folder}
+        onNavigate={explorerState.navigate}
+        onOpenFile={explorerState.openFile}
+        recents={explorerState.recents}
+        onClearRecents={explorerState.clearRecents}
+        folders={explorerState.folders}
+        notesData={explorerState.notesData}
+        onCreateNote={explorerState.createNote}
+        onCreateFolder={explorerState.createFolder}
+        onOpenToSide={explorerState.openToSide}
+      />
+    ),
+    onOpen: (path, group) => handleSelectNote(path, { group }),
+    onKeep: (group, path) => setEditor((current) => mapGroup(current, group, (tabs) => keepTab(tabs, path))),
+    onClose: closeTab,
+    onNewTab: (group) => goHome('', group),
+    onNewBrowser: (group) => { focusEditorGroup(group); openWebsite(); },
+    onFocus: focusEditorGroup,
+    onSplit: (group, path, direction, move) => splitEditor(direction, group, path, move),
+    onMoveTab: moveEditorTab,
+  }), [notes, tags, notesData, colorScheme, wide, propsSettings, editorModes, surfaceSourceMode, docs, saveStates, writeDoc, surfaceFor, entries,
+    explorerState, handleSelectNote, closeTab, goHome, focusEditorGroup, openWebsite, splitEditor, moveEditorTab]);
 
-
-  // Home wins over the open note, which is what lets the New tab action show
-  // the explorer without closing tabs -- they stay in `openTabs`, and clicking
-  // one calls handleSelectNote, which clears `atHome` and brings it back.
-  const notesView = selectedNote && !atHome ? (
-    <div className="flex h-full w-full flex-col">
-      {editorHeader}
-      <div className="min-h-0 flex-1">
-        {browsing ? (
-          <BrowserView key={selectedNote} url={selectedNote} />
-        ) : Surface ? (
-          surfaceEditing
-            // A CSV is read-only as source: the editor would turn CRLF into LF on
-            // the first keystroke, and a CSV Neuron does not manage must not change.
-            ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} readOnly={isCsvPath(selectedNote)} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
-            : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} fileSize={entries?.info[selectedNote]?.size} /></SurfaceBoundary>
-        ) : (
-          <>
-            {editorMode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={handleContentChange} onToggleTask={handleToggleTask} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} onRequestRawMode={() => setEditorMode('split')} removeEmptyFrontmatter={propsSettings.removeEmpty} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} />}
-            {editorMode === 'split' && rawSplit}
-            {editorMode === 'reading' && (
-              <div className="h-full" onDoubleClick={() => setEditorMode('live')}><MDXPreview onToggleTask={handleToggleTask} mdxContent={noteContent} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} onLineClick={handleLineClick} tagSuggestions={tags} onTagClick={setSelectedTag} notes={notes} onWikiLinkClick={handleSelectNote} showProperties={propsSettings.showInReading} defaultPropertiesCollapsed={propsSettings.collapsedByDefault} /></div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  ) : (
-    // What used to be a blank "Choose a note to begin" panel. Nothing selected
-    // means the explorer at the workspace root; the tabs, if any, are untouched.
-    <div className="flex h-full w-full flex-col">
-      {editorHeader}
-      <div className="min-h-0 flex-1">
-        <WorkspaceExplorer
-          repositoryName={explorerState.repositoryName}
-          paths={explorerState.paths}
-          otherFiles={explorerState.otherFiles}
-          fileInfo={explorerState.fileInfo}
-          skipped={explorerState.skipped}
-          truncated={explorerState.truncated}
-          onReveal={explorerState.reveal}
-          folder={explorerState.folder}
-          onNavigate={explorerState.navigate}
-          onOpenFile={explorerState.openFile}
-          recents={explorerState.recents}
-          onClearRecents={explorerState.clearRecents}
-          folders={explorerState.folders}
-          notesData={explorerState.notesData}
-          onCreateNote={explorerState.createNote}
-          onCreateFolder={explorerState.createFolder}
-          onOpenToSide={explorerState.openToSide}
-        />
-      </div>
-    </div>
+  // Home wins over a group's file, which is what lets the New tab action show
+  // the explorer without closing tabs -- they stay in the strip, and clicking
+  // one calls handleSelectNote, which clears home and brings it back.
+  const notesView = (
+    <EditorGroups ctx={groupContext} state={editor} homeGroup={homeGroup} zen={layout.zen} sizes={groupSizes.current} onSizes={onGroupSizes} />
   );
 
   let mainContent: React.ReactNode;
   if (view === 'gallery') {
-    mainContent = <ComponentGallery colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />;
+    mainContent = <ComponentGallery colorScheme={colorScheme} />;
   } else if (layoutShell && !Surface && !browsing) {
-    // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
-    // browser tabs are full-page documents, so let them fall through to notesView.
+    // Shell handles plain notes in its editor slot, for the focused group; surface
+    // files (.html, .db, .canvas) and browser tabs are full-page documents, so let
+    // them fall through to the groups.
     mainContent = (
       <div className="flex h-full w-full flex-col">
         <div className="min-h-0 flex-1">
           <LayoutSurface
-            editorHeader={editorHeader}
+            editorHeader={<EditorGroupHeader ctx={groupContext} state={editor} index={editor.focused} showsHome={atHome} inLayout />}
             path={SHELL_CONFIG}
             content={layoutShell}
             notesData={notesData}
@@ -1194,7 +1144,7 @@ export default function App() {
             selectedNote={selectedNote}
             noteContent={noteContent}
             onChangeNote={handleContentChange}
-            colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'}
+            colorScheme={colorScheme}
             tagSuggestions={tags}
             onTagClick={setSelectedTag}
             removeEmptyFrontmatter={propsSettings.removeEmpty}
@@ -1296,9 +1246,9 @@ export default function App() {
                   selectedTag={selectedTag}
                 />
               }>
-              <SplitGroup direction="horizontal" autoSaveId="neuron.editor.split" className="flex h-full min-h-0 min-w-0">
-              <SplitPanel id="editor-main" order={1} minSize={25} className="min-w-0">
-              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && layoutShell && !Surface && !browsing) && 'shell-card')}>
+              {/* One card, or one per group when the editor is split, like the docks. */}
+              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden',
+                !(view === 'notes' && layoutShell && !Surface && !browsing) && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
                 {notice && (
                   <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="error" />
@@ -1335,20 +1285,6 @@ export default function App() {
                   />
                 )}
               </main>
-              </SplitPanel>
-              {sidePath && view === 'notes' && !layout.zen && (
-                <>
-                  <SplitHandle className="resize-handle resize-handle-v" />
-                  <SplitPanel id="editor-side" order={2} minSize={20} defaultSize={50} className="min-w-0">
-                    <SideNote path={sidePath} content={sideContent} saveState={sidePath === selectedNote ? saveState : sideSave}
-                      colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} notes={notes} tags={tags}
-                      onChange={(value) => { void changeSideNote(value); }} onOpenNote={handleSelectNote}
-                      onSwap={() => { const main = selectedNote; keepNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
-                      onClose={() => openToSide(null)} />
-                  </SplitPanel>
-                </>
-              )}
-              </SplitGroup>
             </Workbench>
             </div>
           )}
@@ -1385,10 +1321,12 @@ export default function App() {
           savedLayouts={savedLayouts}
           onApplySavedLayout={applySavedLayout}
           onSearchNotes={() => { setView('notes'); patchLayout({ sidebar: true, sidebarCollapsed: false }); setSidebarMode('search'); }}
-          sideNoteOpen={!!sidePath}
-          canOpenToSide={!!selectedNote && /\.(md|mdx)$/.test(selectedNote)}
-          onOpenToSide={() => openToSide(selectedNote)}
-          onCloseSide={() => openToSide(null)}
+          editorGroups={editor.groups.length}
+          canSplitRight={!!selectedNote && !atHome && canSplit(editor, 'row')}
+          canSplitDown={!!selectedNote && !atHome && canSplit(editor, 'column')}
+          onSplitEditor={splitEditor}
+          onCloseEditorGroup={closeEditorGroup}
+          onFocusNextGroup={focusNextGroup}
           bindings={bindings}
         />
         {repository && (

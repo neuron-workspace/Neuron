@@ -671,6 +671,10 @@ html[data-theme='light'] .neuron-logo {
 @media (prefers-reduced-motion: reduce) {
   .workbench-drop-zone { transition: none; }
 }
+/* Edge targets on an editor group's content: drop a tab to split the editor. */
+.editor-split-zone { z-index: calc(var(--z-overlay) + 2); }
+.editor-split-zone-right { top: 6px; right: 6px; bottom: 6px; width: calc(50% - 9px); }
+.editor-split-zone-down { left: 6px; right: 6px; bottom: 6px; height: calc(50% - 9px); }
 
 /* The search row is flush with the dialog, which clips overflow, so an outline
    around the bare input is cut off. Focus shows on the row's bottom edge
