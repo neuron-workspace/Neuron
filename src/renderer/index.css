@@ -395,13 +395,23 @@ body.platform-darwin .status-bar {
 /* <Columns>. The gap is an element (the drag handle in Live), 24px wide. */
 .mdx-columns { container-type: inline-size; }
 .mdx-column-gap { flex: 0 0 24px; }
-.mdx-column > :first-child { margin-top: 0; }
+.mdx-column > :first-child,
+.mdx-column > [data-column-move] + * { margin-top: 0; }
+.mdx-column-movable { padding-top: 24px; }
+.mdx-column-move { opacity: 0; cursor: grab; }
+.mdx-column-move:active { cursor: grabbing; }
+.mdx-column:hover > .mdx-column-move,
+.mdx-column:focus-within > .mdx-column-move { opacity: 1; }
+.mdx-column-insertion { position: absolute; inset: 0 auto 0 -12px; width: 2px; background: var(--accent); pointer-events: none; }
+.mdx-column-insertion[data-end] { left: auto; right: 0; }
 @container (max-width: 639px) {
   .mdx-columns-row { flex-direction: column; }
   .mdx-columns-row > .mdx-column { flex: 0 0 auto !important; }
   .mdx-columns-row > .mdx-column-gap { flex-basis: 16px; }
   .mdx-columns-row > .mdx-column-gap > * { display: none; }
   .mdx-columns-row > .mdx-column-gap[role="separator"] { pointer-events: none; }
+  .mdx-column-insertion { inset: -8px 0 auto; width: auto; height: 2px; }
+  .mdx-column-insertion[data-end] { inset: auto 0 0; }
 }
 @media (prefers-reduced-motion: reduce) { .mdx-column-handle { transition: none; } }
 

@@ -5,7 +5,7 @@ import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard, Columns } from './mdx-layout';
-import { resolveWidths, splitColumns, writeColumnWidths } from '../lib/columns';
+import { moveColumn, resolveWidths, splitColumns, writeColumnWidths } from '../lib/columns';
 import { Chart, DataForm, DataStat } from './mdx-data';
 import InsertMenu, { firstDatabase, snippetFor, type InsertKind } from './InsertMenu';
 import DocumentProperties, { FULL_WIDTH_KEY } from './properties/DocumentProperties';
@@ -496,7 +496,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         return (
           <div key={`Columns-${index}`} className="min-w-0 max-w-full">
             {segments.length > 4 && <p className="text-xs text-[var(--ink-muted)]">Columns holds 2 to 4 columns; showing the first 4.</p>}
-            <Columns widths={widths} onResize={resize}>{columns}</Columns>
+            <Columns widths={widths} onResize={resize}
+              onMove={canEdit ? (from, to) => changeSource(moveColumn(sourceRef.current, index + fmLineOffset, from, to)) : undefined}
+            >{columns}</Columns>
           </div>
         );
       }

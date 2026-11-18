@@ -31,4 +31,36 @@ tags:
 
 <Form title="Add a task" source="Planner.db" table="tasks" fields="title, status, priority, due, project" submit="Add task" />
 
+<Columns>
+<Column width="30%">
+## This week
+
+- Pick the next task before starting new work.
+- Review blocked tasks with the team.
+- Update the board as work moves forward.
+</Column>
+<Column width="70%">
 <DbView source="Planner.db" table="tasks" view="board" editable />
+</Column>
+</Columns>
+
+<Columns>
+<Column>
+### Plan
+
+- Choose a focus for the week.
+- Break large tasks into small steps.
+</Column>
+<Column>
+### Review
+
+- Check priorities and due dates.
+- Make blockers visible.
+</Column>
+<Column>
+### Reflect
+
+- Note what shipped.
+- Carry useful lessons into next week.
+</Column>
+</Columns>

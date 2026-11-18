@@ -99,6 +99,67 @@ test('dragging a column divider writes widths that sum to 100', async ({ page, w
   await expect.poll(async () => (await page.locator('[data-column]').nth(0).boundingBox())!.width).toBeGreaterThan(left + 60);
 });
 
+const movingColumns = [
+  '<Column width="40%">\n### First\n<Callout title="Keep this">\n- Nested content\n</Callout>\n</Column>',
+  '<Column>\n### Second\nMiddle content\n</Column>',
+  '<Column width="20%">\n### Third\nLast content\n</Column>',
+];
+const movingPage = (columns: string[]) => ['---', 'fullWidth: true', '---', '<Columns>', ...columns, '</Columns>'];
+const movedPage = () => movingPage([movingColumns[1], movingColumns[2], movingColumns[0]]).join('\n') + '\n';
+
+test('keyboard moves the first column to the end and keeps focus on it', async ({ page, workspace }) => {
+  const name = 'pages-column-keyboard.mdx';
+  await open(page, workspace, name, movingPage(movingColumns));
+  await expect(page.getByRole('button', { name: 'Move column', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const handles = page.getByRole('button', { name: 'Move column', exact: true });
+  await expect(handles).toHaveCount(3);
+  await handles.first().focus();
+  await expect(handles.first()).toHaveCSS('opacity', '1');
+  await page.keyboard.press('ArrowRight');
+  await expect(handles.nth(1)).toBeFocused();
+  await expect(page.locator('.mdx-columns [aria-live="polite"]')).toHaveText('Moved to position 2 of 3');
+  await page.keyboard.press('ArrowRight');
+  await expect(handles.nth(2)).toBeFocused();
+  await expect(page.locator('.mdx-columns [aria-live="polite"]')).toHaveText('Moved to position 3 of 3');
+  await expect.poll(() => read(workspace, name)).toBe(movedPage());
+  await expect(page.locator('[data-column]').last()).toContainText('Nested content');
+  await page.keyboard.press('ArrowRight');
+  await expect(handles.nth(2)).toBeFocused();
+  expect(read(workspace, name)).toBe(movedPage());
+  await page.getByRole('button', { name: 'Reading', exact: true }).first().click();
+  await expect(handles).toHaveCount(0);
+});
+
+test('pointer moves the first column to the end with an insertion line', async ({ page, workspace }, testInfo) => {
+  const name = 'pages-column-pointer.mdx';
+  await open(page, workspace, name, movingPage(movingColumns));
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const handle = page.getByRole('button', { name: 'Move column', exact: true }).first();
+  await handle.hover();
+  await expect(handle).toHaveCSS('opacity', '1');
+  const start = (await handle.boundingBox())!;
+  const end = (await page.locator('[data-column]').last().boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(end.x + end.width - 4, end.y + 12, { steps: 8 });
+  await expect(page.locator('[data-column-insertion][data-end]')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('column-insertion.png') });
+  await page.mouse.up();
+  await expect.poll(() => read(workspace, name)).toBe(movedPage());
+  await expect(page.locator('[data-column-insertion]')).toHaveCount(0);
+  await expect(page.locator('[data-column]').last()).toContainText('Nested content');
+
+  // A drop within the same position leaves the complete file unchanged.
+  const last = page.getByRole('button', { name: 'Move column', exact: true }).last();
+  const same = (await last.boundingBox())!;
+  await page.mouse.move(same.x + 12, same.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(same.x + 20, same.y + 12, { steps: 3 });
+  await page.mouse.up();
+  expect(read(workspace, name)).toBe(movedPage());
+});
+
 test('a live Stat follows the database when it changes on disk', async ({ page, workspace }) => {
   await open(page, workspace, 'pages-stat.mdx', [
     '<Stat label="Done" source="pages.db" table="tasks" where="status = done" count />', '',
