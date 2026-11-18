@@ -4,19 +4,21 @@ import { resolve } from 'node:path';
 
 // Paths are relative to src/renderer. Areas may overlap: take every match.
 export const areas = [
-  [/^(surfaces\/DbSurface\.tsx|components\/DbView\.tsx|lib\/(db|row-window)\.ts)$/, ['database', 'db-virtualization']],
+  [/^(surfaces\/DbSurface\.tsx|components\/(DbView|db\/DbCards|db\/table-kit)\.tsx|lib\/(db|row-window)\.ts)$/, ['database', 'database-views', 'db-virtualization']],
+  [/^(surfaces\/CsvSurface\.tsx|components\/db\/table-kit\.tsx|lib\/(csv|csv-table)\.ts)$/, ['csv-tables']],
   [/^(components\/(FloatingGraph|GraphCanvas|SigmaGraph)\.tsx|lib\/(graph-layout|knowledge-graph)\.ts)$/, ['graph']],
-  [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels']],
+  [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels', 'workspace-layout-config']],
   [/^(views\/WorkspaceExplorer\.tsx|lib\/(explorer-state\.tsx|workspace-explorer\.ts))$/, ['workspace-explorer']],
   [/^(surfaces\/MermaidSurface\.tsx|components\/MermaidDiagram\.tsx|lib\/mermaid\.ts)$/, ['mermaid']],
-  [/^components\/(mdx-components|mdx-layout|MDXPreview|LiveEditor)\.tsx$/, ['flashcard', 'mdx-layout', 'rendering']],
+  [/^components\/(mdx-components|mdx-layout|MDXPreview|LiveEditor)\.tsx$/, ['flashcard', 'mdx-layout', 'rendering', 'mdx-pages']],
+  [/^(components\/(mdx-data|InsertMenu|FullWidthToggle)\.tsx|lib\/(data-query|columns)\.ts)$/, ['mdx-pages']],
   [/^(lib\/wikilinks\.ts|components\/(MDXPreview|LiveEditor)\.tsx)$/, ['wikilinks']],
   [/^plugins\/builtin\/version-history\.tsx$/, ['version-history']],
   [/^(surfaces\/(index\.ts|SurfaceBoundary\.tsx|CanvasSurface\.tsx|HtmxViewSurface\.tsx|DbSurface\.tsx)|canvas\/.*)$/, ['surfaces']],
   [/^(components\/(RunButton|XtermTerminal)\.tsx|lib\/terminal-bus\.ts|plugins\/builtin\/terminal\.tsx)$/, ['run-button']],
   [/^(plugins\/(host\.tsx|builtin\/ai-[^/]+\.tsx|builtin\/AssistantPanel\.tsx)|views\/PluginsPage\.tsx)$/, ['secrets']],
   [/^(lib\/(sanitize-html|view-security)\.ts|surfaces\/HtmxViewSurface\.tsx)$/, ['security']],
-  // Snake is a workspace HTML app; its renderer host is the HTMX surface.
+  // Snake is a plain HTML view; its renderer host is the HTMX surface.
   [/^surfaces\/HtmxViewSurface\.tsx$/, ['snake']],
 ];
 

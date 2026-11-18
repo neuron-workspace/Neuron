@@ -4,8 +4,12 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 
 interface NoteTabsProps {
   tabs: string[];
+  /** The tab a single click opened, which the next single click replaces. */
+  previewTab?: string | null;
   activeTab: string;
   onSelect: (note: string) => void;
+  /** Turn the preview into a tab that stays. */
+  onKeep?: (note: string) => void;
   onClose: (note: string) => void;
   onNewTab: () => void;
   onNewBrowser: () => void;
@@ -22,15 +26,17 @@ function noteLabel(path: string) {
   return path.split('/').pop()?.replace(/\.(md|mdx)$/, '') ?? path;
 }
 
-export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onNewTab, onNewBrowser, onOpenToSide }: NoteTabsProps) {
+export default function NoteTabs({ tabs, previewTab = null, activeTab, onSelect, onKeep, onClose, onNewTab, onNewBrowser, onOpenToSide }: NoteTabsProps) {
   return (
     <nav aria-label="Open notes" className="flex h-8 bg-[var(--surface)] min-w-0 flex-1 items-stretch overflow-x-auto whitespace-nowrap">
       {tabs.map((note) => {
         const active = note === activeTab;
+        const preview = note === previewTab;
         return (
           <ContextMenu key={note}>
           <ContextMenuTrigger asChild>
           <div
+            data-preview={preview ? 'true' : undefined}
             className={cn(
               'group flex min-w-[8rem] max-w-[13rem] shrink-0 items-center border-r border-[var(--divider)]',
               active ? 'bg-[var(--canvas)] text-[var(--ink)] shadow-[inset_0_-2px_var(--accent)]' : 'text-[var(--ink-muted)] hover:bg-[var(--surface)] hover:text-[var(--ink-secondary)]',
@@ -39,15 +45,16 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onNewTab,
             <button
               type="button"
               aria-current={active ? 'page' : undefined}
-              title={note}
+              title={preview ? `${note} (preview: double-click to keep)` : note}
               className="interactive flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 text-left text-xs"
               onClick={() => onSelect(note)}
+              onDoubleClick={() => onKeep?.(note)}
               onAuxClick={(event) => { if (event.button === 1) onClose(note); }}
             >
               {isUrl(note)
                 ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />
                 : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />}
-              <span className="truncate font-sans">{noteLabel(note)}</span>
+              <span className={cn('truncate font-sans', preview && 'italic')}>{noteLabel(note)}</span>
             </button>
             <button
               type="button"
@@ -64,6 +71,7 @@ export default function NoteTabs({ tabs, activeTab, onSelect, onClose, onNewTab,
           </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
+            <ContextMenuItem disabled={!preview || !onKeep} onSelect={() => onKeep?.(note)}>Keep open</ContextMenuItem>
             <ContextMenuItem disabled={!onOpenToSide || !/\.(md|mdx)$/.test(note)} onSelect={() => onOpenToSide?.(note)}>Open to the side</ContextMenuItem>
             <ContextMenuItem onSelect={() => onClose(note)}>Close tab</ContextMenuItem>
           </ContextMenuContent>

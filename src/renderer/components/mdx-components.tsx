@@ -1,24 +1,21 @@
-import { AlertCircle, Info, CheckCircle, AlertTriangle } from 'lucide-react';
+import { CircleCheck, CircleX, Info, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { CALLOUT_LABELS, calloutKind, type CalloutKind } from '../lib/callout-kind';
 
-export type SemanticType = 'success' | 'warning' | 'error' | 'info';
+export type SemanticType = CalloutKind;
 
-export function parseSemanticType(value: string | undefined): SemanticType {
-  return value === 'success' || value === 'warning' || value === 'error' ? value : 'info';
+export const parseSemanticType = calloutKind;
+
+export function parseBadgeType(type?: string): CalloutKind | 'neutral' {
+  return ['neutral', 'default', 'plain'].includes(type?.trim().toLowerCase() ?? '') ? 'neutral' : calloutKind(type);
 }
 
 interface BadgeProps {
-  type?: SemanticType;
+  type?: SemanticType | 'neutral' | 'default' | 'plain';
   text: React.ReactNode;
 }
 
 export function Badge({ type = 'info', text }: BadgeProps) {
-  const styles = {
-    success: 'surface-success text-accent',
-    warning: 'surface-warning text-warning',
-    error: 'surface-danger text-danger',
-    info: 'surface-info text-info',
-  };
-  return <span className={`inline-block rounded font-mono text-xs px-2 py-0.5 border ${styles[type]}`}>{text}</span>;
+  return <span data-badge-kind={parseBadgeType(type)} className="mdx-badge inline-block max-w-full break-words rounded px-1.5 py-0.5 font-sans text-xs font-medium">{text}</span>;
 }
 
 interface CalloutProps {
@@ -27,23 +24,31 @@ interface CalloutProps {
   children: React.ReactNode;
 }
 
+const CALLOUT_ICONS: Record<CalloutKind, LucideIcon> = {
+  success: CircleCheck, info: Info, warning: TriangleAlert, error: CircleX,
+};
+
+/** Takes its colour from the enclosing `.callout[data-callout-kind]`. */
+export function CalloutIcon({ kind, className }: { kind: CalloutKind; className?: string }) {
+  const Icon = CALLOUT_ICONS[kind];
+  return <Icon aria-hidden="true" strokeWidth={1.75} className={className ? 'callout-icon ' + className : 'callout-icon'} />;
+}
+
 export function Callout({ type = 'info', title, children }: CalloutProps) {
-  const config = {
-    info: { border: 'surface-info', text: 'text-info', icon: Info },
-    success: { border: 'surface-success', text: 'text-accent', icon: CheckCircle },
-    warning: { border: 'surface-warning', text: 'text-warning', icon: AlertTriangle },
-    error: { border: 'surface-danger', text: 'text-danger', icon: AlertCircle },
-  };
-  const active = config[type];
-  const Icon = active.icon;
+  const kind = calloutKind(type);
   return (
-    <div className={`callout ${active.border} p-4 my-4 font-sans`}>
-      <div className="flex items-start space-x-3">
-        <Icon className={`h-5 w-5 shrink-0 ${active.text} mt-0.5`} />
-        <div>
-          {title && <h5 className={`font-semibold text-sm ${active.text} mb-1`}>{title}</h5>}
-          <div className="text-secondary text-sm leading-6">{children}</div>
-        </div>
+    <div
+      role="note"
+      // A title already names the box; without one the kind is otherwise only a colour.
+      aria-label={title ? undefined : CALLOUT_LABELS[kind]}
+      data-callout-kind={kind}
+      className="callout my-4 flex items-start gap-2.5 px-3.5 py-3 font-sans"
+    >
+      {/* Centred on the first line: the 20px title, or else the body's 28px line. */}
+      <CalloutIcon kind={kind} className={title ? 'mt-0.5' : 'mt-1.5'} />
+      <div className="callout-body min-w-0 flex-1">
+        {title && <div className="callout-title">{title}</div>}
+        {children}
       </div>
     </div>
   );
@@ -86,9 +91,14 @@ export function parseMarkdownTable(lines: string[]): ParsedTable | null {
   return { headers, aligns, rows };
 }
 
+export function numericColumns(rows: string[][], columns: number): boolean[] {
+  return Array.from({ length: columns }, (_, i) => rows.length > 0 && rows.every((row) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(row[i]?.trim() ?? '')));
+}
+
 export function MarkdownTable({ headers, aligns, rows }: ParsedTable) {
   const columns = Math.max(headers.length, aligns.length);
-  const align = (i: number): TableAlign => aligns[i] ?? 'left';
+  const numeric = numericColumns(rows, columns);
+  const align = (i: number): TableAlign => numeric[i] ? 'right' : aligns[i] ?? 'left';
   return (
     <div className="my-4 overflow-x-auto rounded-md border border-[var(--divider)] font-sans">
       <table className="w-full min-w-[24rem] border-collapse text-sm">
@@ -105,7 +115,7 @@ export function MarkdownTable({ headers, aligns, rows }: ParsedTable) {
           {rows.map((row, ri) => (
             <tr key={ri} className="border-b border-[var(--divider)] last:border-b-0">
               {Array.from({ length: columns }, (_, ci) => (
-                <td key={ci} style={{ textAlign: align(ci) }} className="px-3 py-2 align-top text-xs leading-5 text-[var(--md-text)]">
+                <td key={ci} style={{ textAlign: align(ci), fontVariantNumeric: numeric[ci] ? 'tabular-nums' : undefined }} className="px-3 py-2 align-top text-xs leading-5 text-[var(--md-text)]">
                   {row[ci] ?? ''}
                 </td>
               ))}

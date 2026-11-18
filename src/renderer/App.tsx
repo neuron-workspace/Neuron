@@ -4,22 +4,27 @@ import { Eye, FileCode2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import MDXPreview from './components/MDXPreview';
+import FullWidthToggle from './components/FullWidthToggle';
+import { CalloutIcon } from './components/mdx-components';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import Workbench from './components/Workbench';
 import FloatingGraph from './components/FloatingGraph';
 import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
+import { NEW_FILE_KINDS, startingCompanions, startingContent } from './lib/new-file';
+import { isCsvPath, tableMetaPath } from './lib/csv-table';
+import { closeTab as closeTabIn, EMPTY_TABS, keepTab, openTab, removeMissing, type TabState } from './lib/tabs';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import NoteTabs from './components/NoteTabs';
-import RepositoriesPage from './views/RepositoriesPage';
-import PluginsPage from './views/PluginsPage';
-import SettingsPage from './views/SettingsPage';
+import SettingsWindow from './views/SettingsWindow';
+import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
+import type { SettingsSection } from '../main/workspace-windows';
 import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { PluginProvider } from './plugins/host';
+import { PluginProvider, usePlugins } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
 import { getSurface } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
@@ -27,12 +32,14 @@ import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
 import './surfaces/MermaidSurface'; // registers the Mermaid diagram surface
+import './surfaces/CsvSurface'; // registers the .csv table surface
 import { SurfaceBoundary } from './surfaces/SurfaceBoundary';
 import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from './surfaces/panels';
 import { Segmented } from './components/ui/segmented';
 import BrowserView from './components/BrowserView';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
-import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, type SavedLayout, type WorkbenchLayout } from './lib/layout';
+import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, workspacePanelsPatch, type SavedLayout, type WorkbenchLayout } from './lib/layout';
+import { hasLayoutTree, parseWorkspacePanels, sameJson } from './surfaces/layout';
 import LayoutSwitcher from './components/LayoutSwitcher';
 import SideNote from './components/SideNote';
 import { Panel as SplitPanel, PanelGroup as SplitGroup, PanelResizeHandle as SplitHandle } from 'react-resizable-panels';
@@ -42,7 +49,31 @@ import {
   addRecent, pruneRecents, recentsKey, resolveRecents, type RecentEntry,
 } from './lib/workspace-explorer';
 import { registerTerminalOpener } from './lib/terminal-bus';
+import { useTerminalToggle } from './lib/useTerminalToggle';
 import { type SidebarMode } from './components/ActivityRail';
+
+/** Hands the terminal toggle to the global shortcut handler. Renders nothing. */
+function TerminalShortcut({ toggleRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
+  const { toggle } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
+  toggleRef.current = toggle;
+  return null;
+}
+
+/**
+ * Applies the sidebar and terminal settings of .neuron/layout.json once the
+ * stored layout and the plugin panels are both in, then reports it is done.
+ * Renders nothing; it lives inside PluginProvider to see the panel list.
+ */
+function WorkspacePanelsApplier({ content, layoutReady, layout, onLayoutChange, onDone }: { content: string | null; layoutReady: boolean; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onDone: () => void }) {
+  const { panels, panelsReady } = usePlugins();
+  useEffect(() => {
+    if (content === null || !layoutReady || !panelsReady) return;
+    const patch = workspacePanelsPatch(panels, layout, parseWorkspacePanels(content));
+    if (patch) onLayoutChange(patch);
+    onDone();
+  }, [content, layoutReady, panelsReady, panels, layout, onLayoutChange, onDone]);
+  return null;
+}
 
 interface PropertiesSettings { removeEmpty: boolean; showInReading: boolean; collapsedByDefault: boolean }
 const DEFAULT_PROPERTIES_SETTINGS: PropertiesSettings = { removeEmpty: true, showInReading: true, collapsedByDefault: false };
@@ -51,38 +82,50 @@ const isUrl = (s: string | null): s is string => !!s && /^https?:\/\//.test(s);
 
 // The workspace's own config lives in a .neuron folder at the workspace root.
 const SHELL_CONFIG = '.neuron/layout.json';
-import type { RepositoryInfo } from './electron.d';
+const notInConfig = (path: string) => path !== '.neuron' && !path.startsWith('.neuron/');
+const NO_FILES: string[] = [];
+import type { RepositoryInfo, WorkspaceEntries } from './electron.d';
 import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appearance } from './lib/theme';
 
 interface NoteData { path: string; content: string }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
+// Settings, Plugins and Workspaces are sections of the Settings window, so the
+// main area always shows something the sidebar's Files, Tags and Graph act on.
+type View = 'notes' | 'gallery';
 // The same three modes the layout shell offers, under the same names. This was
 // 'raw' here and 'split' there, presented as a dropdown here and a button row
 // there, so the identical choice looked and read like two different features
 // depending on whether the workspace happened to have a layout.json.
 type EditorMode = EditMode;
 
-// Default content for new .html views. Plain HTML + htmx attributes;
-// Neuron serves it from the local view server with the neuron-view stylesheet.
-const HTMX_VIEW_TEMPLATE = `<h1>New HTMX view</h1>
-<p>This is ordinary HTML with <a href="https://htmx.org">htmx</a> attributes.
-It talks to Neuron's local API — see <code>GET /api/v1/context</code>.</p>
+// Default content for new .html views: a complete HTML document. Neuron serves
+// it as written and adds only neuron.js, htmx.js and data-theme on <html>.
+const HTMX_VIEW_TEMPLATE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New view</title>
+  <!-- Neuron's stylesheet. It styles a body with class="neuron-view" and
+       follows the app's light or dark theme. Remove it to style from scratch. -->
+  <link rel="stylesheet" href="neuron.css">
+</head>
+<body class="neuron-view">
+  <h1>New view</h1>
+  <p>Workspace: <strong id="workspace">…</strong></p>
 
-<section class="neuron-grid cols-3">
-  <div class="neuron-card" hx-get="/api/v1/fragments/workspace-summary" hx-trigger="load" hx-swap="innerHTML">
-    Loading…
-  </div>
-</section>
+  <!-- htmx: fetch a server-rendered fragment when the page loads. This one
+       needs "notes.read" and "tags.read" in the view's manifest. -->
+  <section hx-get="api/v1/fragments/workspace-summary" hx-trigger="load">Loading…</section>
 
-<section class="neuron-card">
-  <form hx-get="/api/v1/search" hx-target="#search-results"
-        hx-trigger="submit, input changed delay:300ms from:#query">
-    <label for="query">Search notes</label>
-    <input id="query" class="neuron-input" name="query" type="search" autocomplete="off" />
-  </form>
-  <div id="search-results"></div>
-</section>
+  <script>
+    // neuron: the same API as JSON. context() needs no permissions.
+    neuron.context()
+      .then((context) => { document.getElementById('workspace').textContent = context.workspace.name; })
+      .catch((error) => { document.getElementById('workspace').textContent = error.message; });
+  </script>
+</body>
+</html>
 `;
 
 const NEURON_CONFIG_TEMPLATE = `{
@@ -104,10 +147,13 @@ export default function App() {
   const [repoReady, setRepoReady] = useState(false);
 
   const [notes, setNotes] = useState<string[]>([]);
-  const [selectedNote, setSelectedNote] = useState<string | null>(null);
-  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  // The open tabs, which one is the preview, and which one is showing: one
+  // state, because each change to the strip moves more than one of them.
+  const [tabState, setTabState] = useState<TabState>(EMPTY_TABS);
+  const { tabs: openTabs, preview: previewTab, selected: selectedNote } = tabState;
   const [noteContent, setNoteContent] = useState('');
   const [notesData, setNotesData] = useState<NoteData[]>([]);
+  const [entries, setEntries] = useState<WorkspaceEntries | null>(null);
   const [view, setView] = useState<View>('notes');
   const [editorModes, setEditorModes] = useState<Record<string, EditorMode>>({});
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -161,26 +207,29 @@ export default function App() {
     commitLayout(next);
   }, [commitLayout]);
 
+  // The workspace's starting arrangement waits for this, or the stored layout
+  // arriving afterwards would replace it.
+  const [layoutReady, setLayoutReady] = useState(!window.electronAPI);
   useEffect(() => {
     void window.electronAPI?.settings.get<Partial<WorkbenchLayout>>('layout').then((stored) => {
       if (stored) setLayout(resolveLayout(stored));
-    });
+      setLayoutReady(true);
+    }).catch(() => setLayoutReady(true));
     void window.electronAPI?.settings.get<Partial<PropertiesSettings>>('properties').then((stored) => {
       if (stored) setPropsSettings({ ...DEFAULT_PROPERTIES_SETTINGS, ...stored });
     });
   }, []);
 
-  // Settings and the workspace manager are about the app, not this workspace,
-  // so they open in a window of their own.
+  // Settings is about the app, not this workspace, so it opens in a window of
+  // its own. There is no in-page fallback: without the bridge there is no app.
   const remoteAppearance = useRef<string | null>(null);
-  const utilityWindow = useMemo(() => {
-    const page = new URLSearchParams(window.location.search).get('window');
-    return page === 'settings' || page === 'workspaces' ? page : null;
+  const utilityWindow = useMemo(() => (new URLSearchParams(window.location.search).get('window') === 'settings' ? 'settings' : null), []);
+  const openSettings = useCallback((section: SettingsSection) => {
+    void window.electronAPI?.windowControls?.openPage(section);
   }, []);
-  const openGlobalPage = useCallback((page: 'settings' | 'workspaces') => {
-    if (window.electronAPI?.windowControls?.openPage) void window.electronAPI.windowControls.openPage(page);
-    else setView(page === 'settings' ? 'settings' : 'repositories');
-  }, []);
+  // Plugins are switched on per workspace, so they are set in this window.
+  const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettingsSection | null>(null);
+  const openPlugins = useCallback(() => setWorkspaceSettings('plugins'), []);
   // Another window changed a shared setting: take the new value.
   useEffect(() => window.electronAPI?.settings.onChanged?.((key) => {
     if (key === 'appearance') void window.electronAPI.settings.get<Appearance>('appearance').then((stored) => { const next = normalizeAppearance(stored); remoteAppearance.current = JSON.stringify(next); applyTheme(next); setAppearance(next); });
@@ -239,6 +288,13 @@ export default function App() {
   const setRightPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ rightPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.rightPanel) });
   const graphOverlayOpen = layout.graphOverlay;
   const toggleGraphOverlay = () => patchLayout({ graphOverlay: !layoutRef.current.graphOverlay });
+  // The graph floats over the notes view. Asked for from the component gallery,
+  // it brings the notes back rather than turning on where it cannot be seen.
+  const showOrToggleGraph = () => {
+    if (view === 'notes') { toggleGraphOverlay(); return; }
+    setView('notes');
+    if (!layoutRef.current.graphOverlay) patchLayout({ graphOverlay: true });
+  };
   const setBottomPanelOpen = (fn: ((v: boolean) => boolean) | boolean) => patchLayout({ bottomPanel: typeof fn === 'boolean' ? fn : fn(layoutRef.current.bottomPanel) });
 
   // A <Run /> button in a note reveals the terminal it is about to write to.
@@ -248,12 +304,33 @@ export default function App() {
     const dock = layoutRef.current.panels['terminal:terminal.panel']?.dock ?? 'bottom';
     patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
+  // The plugin list lives below App (inside PluginProvider), so the shortcut
+  // reaches the terminal toggle through this ref, filled by <TerminalShortcut />.
+  const toggleTerminalRef = useRef<(() => void) | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [wide, setWide] = useState(true);
   const [bindings, setBindings] = useState<Bindings>(DEFAULT_BINDINGS);
   const [surfaceSourceMode, setSurfaceSourceMode] = useState<Record<string, boolean>>({});
   const [shellConfig, setShellConfig] = useState<string | null>(null);
   const [pendingShellConfig, setPendingShellConfig] = useState<string | null>(null);
+  // The applied content, readable from the file watcher, and kept in step as it
+  // is set so a watcher event for our own write already compares against it.
+  const shellConfigRef = useRef<string | null>(null);
+  const adoptShellConfig = useCallback((content: string | null) => {
+    shellConfigRef.current = content;
+    setShellConfig(content);
+  }, []);
+  // Offer the changed file only when its meaning differs from what is applied.
+  const offerShellConfig = useCallback((content: string) => {
+    setPendingShellConfig(sameJson(shellConfigRef.current ?? '', content) ? null : content);
+  }, []);
+  // Content whose sidebar and terminal settings are still to be applied.
+  const [workspacePanels, setWorkspacePanels] = useState<string | null>(null);
+  const clearWorkspacePanels = useCallback(() => setWorkspacePanels(null), []);
+  // Which workspace this window last opened, so its settings apply once per open.
+  const openedWorkspace = useRef<string | null>(null);
+  // A file holding only the sidebar and terminal keys keeps the notes view.
+  const layoutShell = shellConfig && hasLayoutTree(shellConfig) ? shellConfig : null;
   const [propsSettings, setPropsSettings] = useState<PropertiesSettings>(DEFAULT_PROPERTIES_SETTINGS);
 
   const saveVersion = useRef(0);
@@ -310,14 +387,6 @@ export default function App() {
     (async () => { await reloadRepoState(); setRepoReady(true); })();
     return window.electronAPI.repository.onChanged(() => { void reloadRepoState(); });
   }, [reloadRepoState]);
-  // The workspace manager lists what other windows open and forget.
-  useEffect(() => {
-    if (utilityWindow !== 'workspaces') return;
-    const refresh = () => { void reloadRepoState(); };
-    window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  }, [utilityWindow, reloadRepoState]);
-
   const createRepository = useCallback(async () => {
     // The folder may open in its own window, so ask what this window shows now.
     if (await window.electronAPI?.repository.create()) void reloadRepoState();
@@ -331,21 +400,26 @@ export default function App() {
   }, [reloadRepoState]);
 
   // --- Notes ----------------------------------------------------------------
+  // Every file and folder, for the tree and the explorer. A failed listing
+  // leaves the previous one: it only adds to what notes already show.
+  const loadEntries = useCallback(() => window.electronAPI.listEntries().catch(() => null), []);
   const loadNotes = useCallback(async () => {
     if (!window.electronAPI) return;
     try {
-      const fileList = await window.electronAPI.listNotes();
+      // Together, so the sidebar's first collapse sees every folder at once.
+      const [fileList, listing] = await Promise.all([window.electronAPI.listNotes(), loadEntries()]);
       setNotes(fileList);
-      setOpenTabs((current) => current.filter((note) => fileList.includes(note)));
-      setSelectedNote((current) => current && fileList.includes(current) ? current : null);
+      if (listing) setEntries(listing);
+      setTabState((current) => removeMissing(current, fileList));
       // Configuration is reachable in the explorer but is not knowledge: it is
       // not a graph node, it has no wiki-links, its words are not yours, and it
       // should not turn up in a search for something you wrote. `notes` keeps
       // it so it can be opened; `notesData` -- what the graph, tags, search and
-      // link index are all built from -- does not.
+      // link index are all built from -- does not. Nor does a CSV: it is data,
+      // not a note, and can be far larger than anything worth holding here.
       const data = await Promise.all(
         fileList
-          .filter((path) => !path.startsWith('.neuron/'))
+          .filter((path) => !path.startsWith('.neuron/') && !isCsvPath(path))
           .map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })),
       );
       setNotesData(data);
@@ -353,12 +427,39 @@ export default function App() {
     } catch {
       setNotice('Could not load the workspace.');
     }
-  }, []);
+  }, [loadEntries]);
 
   useEffect(() => {
-    if (!repository) { setNotes([]); setNotesData([]); setTags([]); setSelectedNote(null); return; }
+    if (!repository) { setNotes([]); setNotesData([]); setEntries(null); setTags([]); setTabState((current) => ({ ...current, selected: null })); return; }
+    setEntries(null);
     loadNotes();
   }, [repository, loadNotes]);
+
+  // The watcher says only that something appeared or went away; a burst of
+  // those (a folder copied in) becomes one new listing. Coming back to the
+  // window asks too: the watcher never reports a new empty folder, and the
+  // file manager is where one is usually made.
+  useEffect(() => {
+    if (!repository || !window.electronAPI?.onWorkspaceChanged) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const refresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void loadEntries().then((listing) => { if (listing && !cancelled) setEntries(listing); });
+      }, 300);
+    };
+    const unsubscribe = window.electronAPI.onWorkspaceChanged(refresh);
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; clearTimeout(timer); unsubscribe(); window.removeEventListener('focus', refresh); };
+  }, [repository, loadEntries]);
+
+  // A preview belongs to the workspace it was opened in. Keyed on the path,
+  // because the same workspace re-reported is a new object.
+  const repositoryPath = repository?.path ?? null;
+  useEffect(() => {
+    setTabState((current) => current.preview === null ? current : removeMissing(current, (path) => path !== current.preview));
+  }, [repositoryPath]);
 
   useEffect(() => {
       const allTags = new Set<string>();
@@ -390,32 +491,43 @@ export default function App() {
   // nothing -- and compare before setting, or this loops forever.
   useEffect(() => {
     setExplorerRecents((current) => {
-      const pruned = pruneRecents(current, explorerPaths);
+      const pruned = pruneRecents(current, explorerAllPaths);
       return pruned.length === current.length ? current : pruned;
     });
-  }, [notes]);
+  }, [notes, entries]);
 
   useEffect(() => {
-    if (!repository || !window.electronAPI) { setShellConfig(null); return; }
+    if (!repository || !window.electronAPI) { adoptShellConfig(null); openedWorkspace.current = null; return; }
     let cancelled = false;
+    // This effect also re-runs when the same workspace is merely reloaded; only
+    // a newly opened one gets its starting arrangement.
+    const opened = openedWorkspace.current !== repository.path;
     void (async () => {
       let content = await window.electronAPI.readNote(SHELL_CONFIG);
       if (content.startsWith('Error:')) {
         // Migrate the legacy root-level neuron.config into .neuron/layout.json.
         const legacy = await window.electronAPI.readNote('neuron.config');
-        if (legacy.startsWith('Error:')) { if (!cancelled) setShellConfig(null); return; }
+        if (legacy.startsWith('Error:')) {
+          if (!cancelled) { adoptShellConfig(null); openedWorkspace.current = repository.path; }
+          return;
+        }
+        if (!cancelled) adoptShellConfig(legacy);
         await window.electronAPI.writeNote(SHELL_CONFIG, legacy);
         content = legacy;
       }
-      if (!cancelled) setShellConfig(content);
+      if (cancelled) return;
+      adoptShellConfig(content);
+      openedWorkspace.current = repository.path;
+      if (opened) setWorkspacePanels(content);
     })();
     return () => { cancelled = true; };
-  }, [repository]);
+  }, [repository, adoptShellConfig]);
 
   useEffect(() => {
     if (!window.electronAPI?.onNotesChanged) return;
     let cancelled = false;
     const versions = new Map<string, number>();
+    let shellConfigTimer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = window.electronAPI.onNotesChanged((event, path) => {
       const version = (versions.get(path) ?? 0) + 1;
       versions.set(path, version);
@@ -427,13 +539,12 @@ export default function App() {
         setNotes(current => current.filter(n => !removed(n)));
         setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
-        setOpenTabs(current => current.filter(n => !removed(n)));
-        setSelectedNote(current => current !== null && removed(current) ? null : current);
+        setTabState(current => removeMissing(current, n => !removed(n)));
       } else {
         void window.electronAPI.readNote(path).then(content => {
           if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
           setNotes(current => current.includes(path) ? current : [...current, path].sort());
-          if (!path.startsWith('.neuron/')) setNotesData(current => {
+          if (!path.startsWith('.neuron/') && !isCsvPath(path)) setNotesData(current => {
             const existing = current.find(n => n.path === path);
             if (existing?.content === content) return current;
             return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
@@ -449,17 +560,25 @@ export default function App() {
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
-      void window.electronAPI?.readNote(SHELL_CONFIG).then((content) => {
-        if (content.startsWith('Error:')) {
-          setShellConfig(null);
-          setPendingShellConfig(null);
-          return;
-        }
-        setPendingShellConfig(content);
-      });
+      // A save can arrive as several events (truncate, then the content), and
+      // the first read may land between them. Read once the file has been quiet,
+      // and treat an empty file as a write in progress rather than a change.
+      clearTimeout(shellConfigTimer);
+      shellConfigTimer = setTimeout(() => {
+        void window.electronAPI?.readNote(SHELL_CONFIG).then((content) => {
+          if (cancelled) return;
+          if (content.startsWith('Error:')) {
+            adoptShellConfig(null);
+            setPendingShellConfig(null);
+            return;
+          }
+          if (content.trim() === '') return;
+          offerShellConfig(content);
+        });
+      }, 250);
     });
-    return () => { cancelled = true; unsubscribe(); };
-  }, [repository]);
+    return () => { cancelled = true; clearTimeout(shellConfigTimer); unsubscribe(); };
+  }, [repository, adoptShellConfig, offerShellConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -476,9 +595,10 @@ export default function App() {
     return () => { cancelled = true; };
   }, [selectedNote]);
 
-  const handleSelectNote = useCallback((note: string) => {
-    setSelectedNote(note);
-    setOpenTabs((current) => current.includes(note) ? current : [...current, note]);
+  // A preview by default: most routes here are a look at a file, and only a
+  // double click, creating something or editing it says to keep the tab.
+  const handleSelectNote = useCallback((note: string, options?: { keep?: boolean }) => {
+    setTabState((current) => openTab(current, note, options?.keep === true));
     setView('notes');
     // Opening a file leaves home, whichever route got here -- sidebar, explorer,
     // command palette or a wiki-link. One place to clear it, because a second
@@ -487,6 +607,8 @@ export default function App() {
     if (!isUrl(note)) setExplorerRecents((current) => addRecent(current, { path: note, kind: 'file' }));
     setNotice(null);
   }, []);
+  const keepNote = useCallback((note: string) => handleSelectNote(note, { keep: true }), [handleSelectNote]);
+  const keepOpenTab = useCallback((note: string) => setTabState((current) => keepTab(current, note)), []);
 
   /** Show the workspace explorer without disturbing what is already open. */
   const goHome = useCallback((folder = '') => {
@@ -542,15 +664,40 @@ export default function App() {
     [notes],
   );
 
-  const createNote = useCallback(async (relativePath: string, content?: string): Promise<boolean> => {
+  // Files Neuron does not open, and every folder on disk. Shown beside the
+  // notes so a folder of PDFs or images does not look empty, but never read.
+  const otherFiles = useMemo(() => {
+    if (!entries) return [];
+    const known = new Set(notes);
+    return entries.files.filter((path) => !known.has(path));
+  }, [entries, notes]);
+  const treeFolders = useMemo(
+    () => [...new Set([...createdFolders, ...(entries?.folders ?? [])])],
+    [createdFolders, entries],
+  );
+  const explorerOther = useMemo(() => otherFiles.filter(notInConfig), [otherFiles]);
+  const explorerAllPaths = useMemo(() => [...explorerPaths, ...explorerOther], [explorerPaths, explorerOther]);
+  const explorerFolders = useMemo(() => treeFolders.filter(notInConfig), [treeFolders]);
+  const revealFile = useCallback((path: string) => {
+    void window.electronAPI?.revealInFolder(path).then((result) => {
+      if (!result.success) setNotice(`Could not show “${path}” in its folder.`);
+    });
+  }, []);
+
+  const createNote = useCallback(async (relativePath: string, content?: string, companions: { path: string; content: string }[] = []): Promise<boolean> => {
     if (!window.electronAPI) return false;
     try {
       const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '');
       const body = content ?? '# ' + title + '\n\n';
+      // First, so the file is what its companions describe from the moment it opens.
+      for (const companion of companions) {
+        const written = await window.electronAPI.writeNote(companion.path, companion.content);
+        if (!written.success) { setNotice('Could not create “' + relativePath + '”. ' + (written.error ?? '')); return false; }
+      }
       const result = await window.electronAPI.writeNote(relativePath, body);
       if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
       await loadNotes();
-      handleSelectNote(relativePath);
+      handleSelectNote(relativePath, { keep: true });
       setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
       setSaveState('saved');
       return true;
@@ -579,13 +726,18 @@ export default function App() {
     if (!window.electronAPI) return false;
     const result = await window.electronAPI.deleteNote(note);
     if (!result.success) { setNotice(`Could not delete “${note}”. ${result.error ?? ''}`.trim()); return false; }
-    setOpenTabs((current) => current.filter((tab) => tab !== note));
-    setSelectedNote((current) => (current === note ? null : current));
+    // Left behind, the metadata would make a later CSV of the same name Neuron's
+    // to write without ever asking.
+    if (isCsvPath(note)) await window.electronAPI.deleteNote(tableMetaPath(note));
+    setTabState((current) => removeMissing(current, (path) => path !== note));
     await loadNotes();
     return true;
   }, [loadNotes]);
 
   const handleContentChange = useCallback(async (value: string) => {
+    // Kept in the same update as the change itself, so a preview never holds
+    // an unsaved edit and the next single click cannot replace a tab mid-save.
+    if (selectedNote) keepOpenTab(selectedNote);
     setNoteContent(value);
     if (!selectedNote || !window.electronAPI) return;
     const version = ++saveVersion.current;
@@ -596,9 +748,9 @@ export default function App() {
     if (version !== saveVersion.current) return;
     openNoteRef.current.saving = false;
     setSaveState(result.success ? 'saved' : 'error');
-    if (result.success && selectedNote === SHELL_CONFIG) setPendingShellConfig(value);
+    if (result.success && selectedNote === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${selectedNote}” could not be saved.`);
-  }, [selectedNote]);
+  }, [selectedNote, offerShellConfig, keepOpenTab]);
 
   const requestCreate = useCallback(async () => {
     if (creatingUntitled.current) return;
@@ -607,6 +759,19 @@ export default function App() {
       const paths = await window.electronAPI.listNotes();
       await createNote(nextUntitled([...paths, ...createdFolders], ''), '# Untitled\n\n');
     } catch { setNotice('Could not create a note.'); }
+    finally { creatingUntitled.current = false; }
+  }, [createNote, createdFolders]);
+
+  // A database or canvas starts with content its surface can open, in the
+  // workspace root like New note, and is kept as a tab by createNote.
+  const requestCreateKind = useCallback(async (kind: 'database' | 'canvas' | 'table') => {
+    if (creatingUntitled.current) return;
+    creatingUntitled.current = true;
+    try {
+      const paths = await window.electronAPI.listNotes();
+      const path = nextUntitled([...paths, ...createdFolders], '', 'Untitled', NEW_FILE_KINDS[kind].ext);
+      await createNote(path, startingContent(kind), startingCompanions(kind, path));
+    } catch { setNotice(`Could not create a ${kind}.`); }
     finally { creatingUntitled.current = false; }
   }, [createNote, createdFolders]);
 
@@ -631,14 +796,15 @@ export default function App() {
   }, [selectedNote, notes, createNote]);
 
   const toggleShell = useCallback(async () => {
-    if (shellConfig) { setShellConfig(null); return; }
+    if (layoutShell) { adoptShellConfig(null); return; }
     if (!window.electronAPI) return;
     const existing = await window.electronAPI.readNote(SHELL_CONFIG);
     const missing = existing.startsWith('Error:');
+    // Adopted before the write, so the watcher event for it finds nothing new.
+    adoptShellConfig(missing ? NEURON_CONFIG_TEMPLATE : existing);
     if (missing) await window.electronAPI.writeNote(SHELL_CONFIG, NEURON_CONFIG_TEMPLATE);
-    setShellConfig(missing ? NEURON_CONFIG_TEMPLATE : existing);
     setView('notes');
-  }, [shellConfig]);
+  }, [layoutShell, adoptShellConfig]);
 
   // Pull Chrome's cookies into the in-app browser session (stay logged in).
   const importChromeLogins = useCallback(async () => {
@@ -655,7 +821,7 @@ export default function App() {
   const openWebsite = useCallback(() => {
     const n = ++browserCounter.current;
     const url = `https://duckduckgo.com/#neuron-tab-${n}`;
-    handleSelectNote(url);
+    handleSelectNote(url, { keep: true });
   }, [handleSelectNote]);
 
   // A second note beside the editor. Only its path is state here: its content
@@ -677,11 +843,12 @@ export default function App() {
   }, []);
   const explorerState = useMemo(() => ({
     atHome, repositoryName: repository?.name ?? 'Workspace', paths: explorerPaths,
-    folders: createdFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
-    openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder,
+    otherFiles: explorerOther, fileInfo: entries?.info ?? {}, skipped: entries?.skipped ?? 0, truncated: entries?.truncated ?? false,
+    folders: explorerFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
+    openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder, reveal: revealFile,
     editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
-  }), [atHome, repository, explorerPaths, createdFolders, notesData, explorerFolder, navigateExplorer,
-    handleSelectNote, openToSide, createNote, createSectionFolder, editorModes, explorerRecents, clearExplorerRecents]);
+  }), [atHome, repository, explorerPaths, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
+    handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents]);
 
   // A deleted or renamed file, or another workspace, simply has no side pane.
   const sidePath = sideNote && notes.includes(sideNote) ? sideNote : null;
@@ -703,15 +870,10 @@ export default function App() {
   };
 
   const closeTab = useCallback((note: string) => {
-    setOpenTabs((current) => {
-      const index = current.indexOf(note);
-      const remaining = current.filter((tab) => tab !== note);
-      if (!remaining.length) { setExplorerFolder(''); setAtHome(true); }
-      setSelectedNote((active) => {
-        if (active !== note) return active;
-        return remaining[Math.min(Math.max(index, 0), remaining.length - 1)] ?? null;
-      });
-      return remaining;
+    setTabState((current) => {
+      const next = closeTabIn(current, note);
+      if (!next.tabs.length) { setExplorerFolder(''); setAtHome(true); }
+      return next;
     });
   }, []);
 
@@ -775,6 +937,12 @@ export default function App() {
     [selectedTag, notesData, notes],
   );
 
+  // CSV tables are found by name in the sidebar search; their contents are not read for it.
+  const searchableFiles = useMemo(
+    () => [...notesData, ...notes.filter(isCsvPath).map((path) => ({ path, content: '' }))],
+    [notesData, notes],
+  );
+
   const bridge = useMemo(() => ({
     activeNote: selectedNote,
     noteContent,
@@ -827,6 +995,7 @@ export default function App() {
         case 'toggle-sidebar': setSidebarOpen((v) => !v); break;
         case 'toggle-right': setRightPanelOpen((v) => !v); break;
         case 'toggle-bottom': setBottomPanelOpen((v) => !v); break;
+        case 'toggle-terminal': toggleTerminalRef.current?.(); break;
         case 'toggle-zen': patchLayout({ zen: !layoutRef.current.zen }); break;
         case 'toggle-graph': toggleGraphOverlay(); break;
         case 'toggle-fullscreen': void window.electronAPI.windowControls.toggleFullScreen(); break;
@@ -876,7 +1045,7 @@ export default function App() {
   const editorHeader = (
     <header className="shrink-0">
       <div className="pane-header editor-tab-header flex items-center">
-      <NoteTabs tabs={openTabs} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
+      <NoteTabs tabs={openTabs} previewTab={previewTab} activeTab={atHome ? '' : selectedNote ?? ''} onSelect={handleSelectNote} onKeep={keepOpenTab} onClose={closeTab} onOpenToSide={openToSide} onNewTab={() => goHome()} onNewBrowser={openWebsite} />
       </div>
       {selectedNote && !atHome && <div className="note-header flex h-8 min-w-0 items-center gap-3 px-3">
         <div aria-label="Note path" title={selectedNote} className="min-w-0 flex-1 truncate font-sans text-xs text-[var(--ink-muted)]">
@@ -898,16 +1067,17 @@ export default function App() {
           </div>
       ) : selectedNote && !browsing ? (
           <div className="flex shrink-0 items-center gap-3">
+            {/\.(md|mdx)$/i.test(selectedNote) && <FullWidthToggle doc={noteContent} onChange={handleContentChange} removeEmpty={propsSettings.removeEmpty} />}
             {/* Not in a layout workspace. There the editor is a panel that owns
                 its own view mode, so this switch drove nothing -- two identical
                 controls one above the other, and only the lower one worked. It
                 was invisible while this was a dropdown and the other a row of
                 text; giving them the same shape is what showed it. */}
-            {!shellConfig && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
+            {!layoutShell && <Segmented label="View mode" value={editorMode} onChange={setEditorMode} options={EDIT_MODES} />}
             {/* In a layout workspace the editor panel owns the view mode and
                 renders its switch into this slot, so it shares the note header
                 instead of taking a row of its own. */}
-            {shellConfig && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
+            {layoutShell && <div id={EDITOR_MODE_SLOT} className="flex items-center" />}
           </div>
       ) : null}
       </div>}
@@ -926,7 +1096,9 @@ export default function App() {
           <BrowserView key={selectedNote} url={selectedNote} />
         ) : Surface ? (
           surfaceEditing
-            ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
+            // A CSV is read-only as source: the editor would turn CRLF into LF on
+            // the first keystroke, and a CSV Neuron does not manage must not change.
+            ? <Editor ref={editorRef} value={noteContent} onChange={handleContentChange} readOnly={isCsvPath(selectedNote)} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />
             : <SurfaceBoundary resetKey={`${selectedNote}:${noteContent.length}`}><Surface path={selectedNote} content={noteContent} notesData={notesData} onSelectNote={handleSelectNote} selectedNote={selectedNote} onChangeNote={handleContentChange} colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} /></SurfaceBoundary>
         ) : (
           <>
@@ -948,6 +1120,11 @@ export default function App() {
         <WorkspaceExplorer
           repositoryName={explorerState.repositoryName}
           paths={explorerState.paths}
+          otherFiles={explorerState.otherFiles}
+          fileInfo={explorerState.fileInfo}
+          skipped={explorerState.skipped}
+          truncated={explorerState.truncated}
+          onReveal={explorerState.reveal}
           folder={explorerState.folder}
           onNavigate={explorerState.navigate}
           onOpenFile={explorerState.openFile}
@@ -964,15 +1141,9 @@ export default function App() {
   );
 
   let mainContent: React.ReactNode;
-  if (view === 'repositories') {
-    mainContent = <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />;
-  } else if (view === 'plugins') {
-    mainContent = <PluginsPage layout={layout} onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })} />;
-  } else if (view === 'settings') {
-    mainContent = <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />;
-  } else if (view === 'gallery') {
-    mainContent = <ComponentGallery />;
-  } else if (shellConfig && !Surface && !browsing) {
+  if (view === 'gallery') {
+    mainContent = <ComponentGallery colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} />;
+  } else if (layoutShell && !Surface && !browsing) {
     // Shell handles plain notes in its editor slot; surface files (.html, .db, .canvas) and
     // browser tabs are full-page documents, so let them fall through to notesView.
     mainContent = (
@@ -981,7 +1152,7 @@ export default function App() {
           <LayoutSurface
             editorHeader={editorHeader}
             path={SHELL_CONFIG}
-            content={shellConfig}
+            content={layoutShell}
             notesData={notesData}
             onSelectNote={handleSelectNote}
             selectedNote={selectedNote}
@@ -1001,24 +1172,26 @@ export default function App() {
   }
 
   if (utilityWindow) {
+    // The plugin host runs here too, for the Connectors section. It has no
+    // workspace, so no plugin is on here.
     return (
-      <TooltipProvider delayDuration={300}>
-        <div className="flex h-screen flex-col bg-[var(--nav)] font-sans text-[var(--ink)]" data-utility-window={utilityWindow}>
-          <header className="titlebar flex h-10 shrink-0 items-center px-4 text-[13px] font-medium text-[var(--ink-secondary)]">
-            {utilityWindow === 'settings' ? 'Settings' : 'Workspaces'}
-          </header>
-          <main className="shell-card mx-2 mb-2 min-h-0 flex-1 overflow-auto">
-            {utilityWindow === 'settings'
-              ? <SettingsPage appearance={appearance} onAppearanceChange={handleAppearanceChange} bindings={bindings} onBindingsChange={updateBindings} properties={propsSettings} onPropertiesChange={updatePropsSettings} />
-              : <RepositoriesPage current={repository} recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} onReload={reloadRepoState} />}
-          </main>
-        </div>
-      </TooltipProvider>
+      <PluginProvider catalog={builtinPlugins} bridge={bridge} workspace={null}>
+        <TooltipProvider delayDuration={300}>
+          <SettingsWindow
+            appearance={appearance} onAppearanceChange={handleAppearanceChange}
+            bindings={bindings} onBindingsChange={updateBindings}
+            properties={propsSettings} onPropertiesChange={updatePropsSettings}
+            recents={recents}
+            onCreateRepo={createRepository} onOpenRepo={openRepository} onSwitchRepo={switchRepository}
+            onReloadRepos={reloadRepoState}
+          />
+        </TooltipProvider>
+      </PluginProvider>
     );
   }
 
   return (
-    <PluginProvider catalog={builtinPlugins} bridge={bridge}>
+    <PluginProvider catalog={builtinPlugins} bridge={bridge} workspace={repository?.path ?? null}>
       <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
         <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
@@ -1033,11 +1206,12 @@ export default function App() {
             bottomPanelOpen={bottomPanelOpen}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onToggleRightPanel={() => setRightPanelOpen((v) => !v)}
-            onToggleGraph={toggleGraphOverlay}
+            onToggleGraph={showOrToggleGraph}
             onToggleBottomPanel={() => setBottomPanelOpen((v) => !v)}
-            onOpenMarketplace={() => setView('plugins')}
+            onManageWorkspaces={() => openSettings('workspaces')}
+            onOpenWorkspaceSettings={() => setWorkspaceSettings('general')}
             onOpenCommandPalette={() => setPaletteOpen(true)}
-            onOpenSettings={() => openGlobalPage('settings')}
+            onOpenSettings={() => openSettings('appearance')}
             onSwitchRepo={switchRepository}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}
@@ -1052,29 +1226,33 @@ export default function App() {
             <RepositoryOnboarding recents={recents} onCreate={createRepository} onOpen={openRepository} onSwitch={switchRepository} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
-            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={() => setView('plugins')}
+            <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={openPlugins}
               sidebar={
                 <Sidebar
                   collapsed={layout.sidebarCollapsed}
                   onToggleCollapsed={() => patchLayout({ sidebarCollapsed: !layout.sidebarCollapsed })}
                   onSelectMode={(mode) => { setSidebarMode(mode); setView('notes'); }}
-                  onNavigate={(next) => (next === 'settings' ? openGlobalPage('settings') : next === 'repositories' ? openGlobalPage('workspaces') : setView(next))}
+                  onOpenSettings={(section) => (section === 'plugins' ? openPlugins() : openSettings(section))}
                   graphOpen={graphOverlayOpen}
-                  onToggleGraph={toggleGraphOverlay}
+                  onToggleGraph={showOrToggleGraph}
                   sidebarSide={layout.sidebarSide}
                   onMoveSidebar={(side) => patchLayout({ sidebarSide: side })}
                   notes={filteredNotes}
-                  notesData={notesData}
+                  notesData={searchableFiles}
                   selectedNote={selectedNote}
                   onSelectNote={handleSelectNote}
+                  onKeepNote={keepNote}
                   onDeleteNote={handleDeleteNote}
                   onRequestCreate={requestCreate}
                   onRequestCreateFolder={requestCreateFolder}
+                  onRequestCreateKind={requestCreateKind}
                   onRefresh={loadNotes}
                   view={view}
                   mode={sidebarMode}
                   repositoryName={repository.name}
-                  folders={createdFolders}
+                  folders={selectedTag ? createdFolders : treeFolders}
+                  otherFiles={selectedTag ? NO_FILES : otherFiles}
+                  onReveal={revealFile}
                   revealedFolder={revealedFolder}
                   tags={tags}
                   onSelectTag={setSelectedTag}
@@ -1083,25 +1261,27 @@ export default function App() {
               }>
               <SplitGroup direction="horizontal" autoSaveId="neuron.editor.split" className="flex h-full min-h-0 min-w-0">
               <SplitPanel id="editor-main" order={1} minSize={25} className="min-w-0">
-              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && shellConfig && !Surface && !browsing) && 'shell-card')}>
+              <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden', !(view === 'notes' && layoutShell && !Surface && !browsing) && 'shell-card')}>
                 {notice && (
-                  <div role="alert" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
+                  <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+                    <CalloutIcon kind="error" />
                     <span>{notice}</span>
                     <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
                   </div>
                 )}
                 {pendingShellConfig && (
-                  <div role="status" className="surface-danger absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-md border px-3 py-2 text-xs text-[var(--ink)] shadow-lg">
+                  <div role="status" data-callout-kind="info" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+                    <CalloutIcon kind="info" />
                     <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
-                    <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { setShellConfig(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
+                    <button className="interactive min-h-[28px] rounded px-2 font-medium text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" onClick={() => { adoptShellConfig(pendingShellConfig); setWorkspacePanels(pendingShellConfig); setPendingShellConfig(null); setView('notes'); }}>Update view</button>
                     <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Not now</button>
                   </div>
                 )}
                 {mainContent}
                 {/* Notes only. It is a map of the workspace, so it
-                    has nothing to say over Settings, Plugins or
-                    Repositories -- and it was covering their controls,
-                    which an E2E click timeout caught. Anchored to
+                    has nothing to say over the component gallery --
+                    and it used to cover page controls, which an E2E
+                    click timeout caught. Anchored to
                     <main> rather than the notes view because a
                     workspace with a shell config renders a layout
                     instead of notesView, and the map is just as
@@ -1126,7 +1306,7 @@ export default function App() {
                     <SideNote path={sidePath} content={sideContent} saveState={sidePath === selectedNote ? saveState : sideSave}
                       colorScheme={PRESETS[appearance.preset]?.colorScheme ?? 'dark'} notes={notes} tags={tags}
                       onChange={(value) => { void changeSideNote(value); }} onOpenNote={handleSelectNote}
-                      onSwap={() => { const main = selectedNote; handleSelectNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
+                      onSwap={() => { const main = selectedNote; keepNote(sidePath); if (main && /\.(md|mdx)$/.test(main)) openToSide(main); }}
                       onClose={() => openToSide(null)} />
                   </SplitPanel>
                 </>
@@ -1136,7 +1316,9 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} />}
+          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
+          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
+          <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 
         <CommandPalette
@@ -1148,15 +1330,16 @@ export default function App() {
           onOpenChange={setPaletteOpen}
           notes={notes}
           onSelectNote={handleSelectNote}
-          onOpenMarketplace={() => setView('plugins')}
-          onOpenSettings={() => openGlobalPage('settings')}
+          onOpenMarketplace={openPlugins}
+          onOpenSettings={() => openSettings('appearance')}
           onCreate={() => requestCreate()}
           onCreateSurface={createSurfaceFile}
+          onCreateKind={requestCreateKind}
           onOpenWebsite={openWebsite}
           onOpenGallery={() => setView('gallery')}
           onToggleShell={toggleShell}
-          shellActive={!!shellConfig}
-          onToggleGraph={toggleGraphOverlay}
+          shellActive={!!layoutShell}
+          onToggleGraph={showOrToggleGraph}
           graphActive={graphOverlayOpen}
           onImportChromeLogins={importChromeLogins}
           layout={layout}
@@ -1171,6 +1354,16 @@ export default function App() {
           onCloseSide={() => openToSide(null)}
           bindings={bindings}
         />
+        {repository && (
+          <WorkspaceSettingsDialog
+            section={workspaceSettings}
+            onSectionChange={setWorkspaceSettings}
+            workspace={repository}
+            layout={layout}
+            onOpenDock={(dock) => patchLayout({ [`${dock}Panel`]: true })}
+            onRenamed={() => void reloadRepoState()}
+          />
+        )}
       </TooltipProvider>
       </ExplorerProvider>
     </PluginProvider>

@@ -1,15 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Sparkles, Plug, PencilRuler, LayoutGrid, Search, PackagePlus, ShieldCheck, PanelRight, PanelBottom, TerminalSquare } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Sparkles, Plug, PencilRuler, LayoutGrid, Search, ShieldCheck, PanelRight, PanelBottom, TerminalSquare } from 'lucide-react';
 import { DOCKS, placePanels, type Dock, type WorkbenchLayout } from '../lib/layout';
 import { usePlugins } from '../plugins/host';
-import type { PluginCategory, PluginManifest, SandboxedPluginDescriptor } from '../plugins/types';
+import type { PluginCategory, PluginManifest } from '../plugins/types';
 import { Input } from '../components/ui/input';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
-import { ScrollArea } from '../components/ui/scroll-area';
-import { Segmented } from '../components/ui/segmented';
 import { cn } from '../lib/utils';
+import { ConnectorBadge } from './ConnectorsPage';
 
 const categoryMeta: Record<PluginCategory, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
   ai: { label: 'AI', icon: Sparkles },
@@ -18,87 +17,50 @@ const categoryMeta: Record<PluginCategory, { label: string; icon: React.Componen
   view: { label: 'Views', icon: LayoutGrid },
 };
 
-const SANDBOXED_MANIFEST = /^plugins\/([^/]+)\/neuron\.app\.json$/i;
-
-function sandboxedDescriptor(manifestPath: string, raw: unknown): SandboxedPluginDescriptor | null {
-  const match = manifestPath.match(SANDBOXED_MANIFEST);
-  if (!match || !raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const manifest = raw as Record<string, unknown>;
-  const folder = match[1];
-  return {
-    name: typeof manifest.name === 'string' ? manifest.name : folder,
-    version: typeof manifest.version === 'string' ? manifest.version : 'unversioned',
-    description: typeof manifest.description === 'string' ? manifest.description : 'A sandboxed HTML plugin in this workspace.',
-    entry: `plugins/${folder}/index.html`,
-    manifestPath,
-    permissions: Array.isArray(manifest.permissions) ? manifest.permissions.filter((permission): permission is string => typeof permission === 'string') : [],
-  };
-}
-
-function ConfigForm({ manifest }: { manifest: PluginManifest }) {
+/** Options of a plugin with no connector: per workspace, never secrets. */
+function WorkspaceOptions({ manifest }: { manifest: PluginManifest }) {
   const { getConfig, setConfig } = usePlugins();
+  const fields = (manifest.configSchema ?? []).filter((f) => f.type !== 'password');
   const [values, setValues] = useState<Record<string, string>>(getConfig(manifest.id));
-  // A password field can never be pre-filled: the value lives in the main
-  // process and there is no getter. All the renderer may know is whether one is
-  // set, so the field shows that and stays empty until the user types a
-  // replacement.
-  const [storedSecrets, setStoredSecrets] = useState<Record<string, boolean>>({});
   useEffect(() => setValues(getConfig(manifest.id)), [manifest.id, getConfig]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const entries = await Promise.all(
-        (manifest.configSchema ?? [])
-          .filter((f) => f.type === 'password')
-          .map(async (f) => [f.key, await (window.electronAPI?.settings.hasSecret(manifest.id, f.key) ?? false)] as const),
-      );
-      if (!cancelled) setStoredSecrets(Object.fromEntries(entries));
-    })();
-    return () => { cancelled = true; };
-  }, [manifest.id, manifest.configSchema]);
-  if (!manifest.configSchema?.length) return null;
-  const save = () => {
-    setConfig(manifest.id, values);
-    // A submitted secret is now stored; reflect that and clear the input rather
-    // than leaving the typed value sitting in renderer state.
-    for (const field of manifest.configSchema ?? []) {
-      if (field.type === 'password' && values[field.key]) {
-        setStoredSecrets((prev) => ({ ...prev, [field.key]: true }));
-        setValues((prev) => ({ ...prev, [field.key]: '' }));
-      }
-    }
-  };
+  if (manifest.connector || fields.length === 0) return null;
+  const save = () => setConfig(manifest.id, values);
   return (
     <div className="mt-3 space-y-3 border-t border-[var(--divider)] pt-3">
-      {manifest.configSchema.map((field) => (
+      {fields.map((field) => (
         <div key={field.key} className="space-y-1">
           <label className="text-[11px] font-medium text-[var(--ink-secondary)]" htmlFor={`${manifest.id}-${field.key}`}>{field.label}</label>
-          <Input
-            id={`${manifest.id}-${field.key}`}
-            type={field.type === 'password' ? 'password' : 'text'}
-            placeholder={field.type === 'password' && storedSecrets[field.key] ? 'Saved — type to replace' : field.placeholder}
-            value={values[field.key] ?? ''}
-            onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-            onBlur={save}
-          />
+          <Input id={`${manifest.id}-${field.key}`} placeholder={field.placeholder} value={values[field.key] ?? ''}
+            onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))} onBlur={save} />
           {field.description && <p className="text-[10px] leading-4 text-[var(--ink-muted)]">{field.description}</p>}
         </div>
       ))}
-      <Button size="sm" variant="secondary" onClick={save}>Save settings</Button>
     </div>
   );
 }
 
-function PluginRow({
-  manifest,
-  layout,
-  onOpenDock,
-}: {
-  manifest: PluginManifest;
-  layout: WorkbenchLayout;
-  onOpenDock: (dock: Dock) => void;
-}) {
-  const { isEnabled, setEnabled, getConfig, panels, commands } = usePlugins();
+/** "Uses Claude", with the connector's status, and the way to set it up when it is not. */
+function ConnectorLine({ manifest }: { manifest: PluginManifest }) {
+  const { connectorOf, connectorStatus } = usePlugins();
+  const connector = connectorOf(manifest.id);
+  if (!connector) return null;
+  const status = connectorStatus(connector.id);
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-secondary)]" data-connector-line={connector.id}>
+      {status === 'connected' ? (
+        <><span>Uses {connector.name}</span><ConnectorBadge status={status} /></>
+      ) : (
+        <>
+          <span>Set up {connector.name} in Settings</span>
+          <Button size="sm" variant="outline" onClick={() => void window.electronAPI?.windowControls.openPage('connectors')}>Set up</Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PluginRow({ manifest, layout, onOpenDock }: { manifest: PluginManifest; layout: WorkbenchLayout; onOpenDock?: (dock: Dock) => void }) {
+  const { isEnabled, setEnabled, panels, commands } = usePlugins();
   const enabled = isEnabled(manifest.id);
   const meta = categoryMeta[manifest.category];
   const Icon = meta.icon;
@@ -107,14 +69,9 @@ function PluginRow({
   const sidePanels = [...placed.left, ...placed.right].flat();
   const bottomPanels = placed.bottom.flat();
   const myCommands = commands.filter((c) => c.pluginId === manifest.id);
-  const needsConfig = enabled && !!manifest.configSchema?.length && Object.keys(getConfig(manifest.id)).length === 0;
 
   return (
-    // The switch already says whether this is on. An accent border, a filled
-    // background and an "Enabled" badge said it three more times, which left
-    // nothing louder for the state that actually needs attention -- a plugin
-    // that is on but not yet configured.
-    <div className={cn('p-4', enabled && 'bg-[var(--surface)]')}>
+    <div className={cn('p-4', enabled && 'bg-[var(--surface)]')} data-plugin-row={manifest.id}>
       <div className="flex items-start gap-3">
         <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
           <Icon className="h-4 w-4" />
@@ -123,10 +80,9 @@ function PluginRow({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold text-[var(--ink)]">{manifest.name}</h3>
             <Badge variant="outline">{meta.label}</Badge>
-            {enabled && needsConfig && <Badge variant="warning">Needs configuration</Badge>}
           </div>
           <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">{manifest.description}</p>
-          <p className="mt-1 font-mono text-[10px] text-[var(--ink-muted)]">v{manifest.version}{manifest.author ? ` · ${manifest.author}` : ''}</p>
+          <ConnectorLine manifest={manifest} />
           {enabled && (myPanels.length > 0 || myCommands.length > 0) && (
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-[var(--ink-muted)]">
               {sidePanels.length > 0 && <span className="flex items-center gap-1"><PanelRight className="h-3 w-3" /> {sidePanels.map((p) => p.view.title).join(', ')}</span>}
@@ -134,7 +90,7 @@ function PluginRow({
               {myCommands.length > 0 && <span className="flex items-center gap-1"><TerminalSquare className="h-3 w-3" /> {myCommands.map((c) => c.command.title).join(', ')}</span>}
             </div>
           )}
-          {enabled && (sidePanels.length > 0 || bottomPanels.length > 0) && (
+          {onOpenDock && enabled && (sidePanels.length > 0 || bottomPanels.length > 0) && (
             <div className="mt-3 flex flex-wrap gap-2">
               {DOCKS.filter((dock) => placed[dock].length > 0).map((dock) => (
                 <Button key={dock} size="sm" variant="outline" onClick={() => onOpenDock(dock)}>Open {dock} dock</Button>
@@ -142,159 +98,55 @@ function PluginRow({
             </div>
           )}
         </div>
-        <Switch checked={enabled} onCheckedChange={(on) => setEnabled(manifest.id, on)} aria-label={`Enable ${manifest.name}`} />
+        <EnableSwitch name={manifest.name} checked={enabled} onChange={(on) => setEnabled(manifest.id, on)} />
       </div>
-      {enabled && <ConfigForm manifest={manifest} />}
+      {enabled && <WorkspaceOptions manifest={manifest} />}
     </div>
   );
 }
 
-function SandboxedPluginRow({ plugin, onOpen }: { plugin: SandboxedPluginDescriptor; onOpen: () => void }) {
+function EnableSwitch({ name, checked, onChange }: { name: string; checked: boolean; onChange: (on: boolean) => void }) {
   return (
-    <div className="p-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--accent-strong)]">
-          <LayoutGrid className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-[var(--ink)]">{plugin.name}</h3>
-            <Badge variant="outline">Sandboxed HTML</Badge>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">{plugin.description}</p>
-          <p className="mt-1 font-mono text-[10px] text-[var(--ink-muted)]">{plugin.entry} · v{plugin.version}</p>
-          <p className="mt-2 text-[10px] leading-4 text-[var(--ink-muted)]">
-            Requests: {plugin.permissions.length ? plugin.permissions.join(', ') : 'no workspace capabilities'}
-          </p>
-        </div>
-        <Button className="shrink-0" size="sm" variant="outline" onClick={onOpen}>Open isolated app</Button>
-      </div>
-    </div>
+    <label className="flex shrink-0 items-center gap-2 text-[11px] text-[var(--ink-muted)]">
+      Enable for this workspace
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={`Enable ${name} for this workspace`} />
+    </label>
   );
 }
 
-export default function PluginsPage({ layout, onOpenDock }: { layout: WorkbenchLayout; onOpenDock: (dock: Dock) => void }) {
-  const { plugins, runtimeFor } = usePlugins();
-  const [sandboxedPlugins, setSandboxedPlugins] = useState<SandboxedPluginDescriptor[]>([]);
+/**
+ * The Plugins section of the Workspace settings dialog. What is switched on
+ * here is on for this workspace only, and only on this machine: the record is
+ * in the app's settings, not in the workspace folder, so a shared workspace
+ * cannot switch anything on for itself.
+ */
+export default function PluginsPage({ layout, onOpenDock }: { layout: WorkbenchLayout; onOpenDock?: (dock: Dock) => void }) {
+  const { plugins } = usePlugins();
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<PluginCategory | 'all'>('all');
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const files = await window.electronAPI.listNotes();
-        const fileSet = new Set(files);
-        const discovered = await Promise.all(files.filter((path) => SANDBOXED_MANIFEST.test(path)).map(async (manifestPath) => {
-          try {
-            const descriptor = sandboxedDescriptor(manifestPath, JSON.parse(await window.electronAPI.readNote(manifestPath)));
-            return descriptor && fileSet.has(descriptor.entry) ? descriptor : null;
-          } catch {
-            return null;
-          }
-        }));
-        if (!cancelled) setSandboxedPlugins(
-          discovered
-            .filter((plugin): plugin is SandboxedPluginDescriptor => plugin !== null)
-            .sort((a, b) => a.entry.localeCompare(b.entry)),
-        );
-      } catch {
-        if (!cancelled) setSandboxedPlugins([]);
-      }
-    };
-    void load();
-    const unsubscribe = window.electronAPI.onNotesChanged((_event, path) => {
-      if (path === 'plugins' || path.startsWith('plugins/')) void load();
-    });
-    return () => { cancelled = true; unsubscribe(); };
-  }, []);
-
-  const presentCategories = useMemo(() => Array.from(new Set<PluginCategory>([
-    ...plugins.map((p) => p.category),
-    ...(sandboxedPlugins.length ? ['view' as const] : []),
-  ])), [plugins, sandboxedPlugins.length]);
-  const filtered = plugins.filter((p) => {
-    const matchesCategory = category === 'all' || p.category === category;
-    const q = query.trim().toLowerCase();
-    const matchesQuery = !q || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
-    return matchesCategory && matchesQuery;
-  });
-  const filteredSandboxed = sandboxedPlugins.filter((plugin) => {
-    const q = query.trim().toLowerCase();
-    return (category === 'all' || category === 'view')
-      && (!q || plugin.name.toLowerCase().includes(q) || plugin.description.toLowerCase().includes(q) || plugin.entry.toLowerCase().includes(q));
-  });
-  const openSandboxedPlugin = (entry: string) => runtimeFor('sandboxed-html-catalog').openNote(entry);
+  const q = query.trim().toLowerCase();
+  const filtered = plugins.filter((p) => !q || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
 
   return (
-    <div className="canvas-surface flex h-full w-full flex-col">
-      {/* The header ran the full width of the window while the list below it
-          was centred in a 768px column, so the page title started 235px to the
-          left of the first plugin it introduced. One column for both. */}
-      <header className="border-b divider-color">
-        <div className="mx-auto max-w-3xl px-6 py-4">
-          {/* Named as the rest of the app names it -- the title bar, the command
-              palette and the activity rail all say "Plugins & integrations". */}
-          <h1 className="text-base font-semibold tracking-[-0.01em] text-[var(--ink)]">Plugins &amp; integrations</h1>
-          <p className="mt-1 flex items-start gap-1.5 text-xs leading-5 text-[var(--ink-secondary)]">
-            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
-            Built-ins are trusted Neuron code. Workspace plugins run as capability-scoped HTML apps in an isolated webview.
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <label className="relative w-full max-w-xs">
-              <span className="sr-only">Search plugins</span>
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins" className="pl-8" />
-            </label>
-            {/* One choice at a time, so the app's segmented control rather than
-                a row of chips that fill with accent and stand 4px shorter than
-                the search field beside them. */}
-            <Segmented
-              label="Filter by category"
-              value={category}
-              onChange={setCategory}
-              options={[
-                { value: 'all' as const, label: 'All' },
-                ...presentCategories.map((c) => ({ value: c, label: categoryMeta[c].label })),
-              ]}
-            />
-          </div>
-        </div>
-      </header>
+    <div>
+      <p className="flex items-start gap-1.5 text-xs leading-5 text-[var(--ink-secondary)]">
+        <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
+        Plugins are trusted Neuron code. Custom HTML views run isolated, with only the permissions you approve.
+      </p>
+      <label className="relative mt-3 block w-full max-w-xs">
+        <span className="sr-only">Search plugins</span>
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-muted)]" />
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search plugins" className="pl-8" />
+      </label>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto max-w-3xl px-6 py-6">
-          {/* Rows in one frame, not a stack of cards. Each plugin was its own
-              bordered box, and an enabled one with settings became a box
-              containing a bordered box -- the nested card the design system
-              rules out. */}
-          {(filtered.length > 0 || filteredSandboxed.length > 0) && (
-            <div className="divide-y divide-[var(--divider)] overflow-hidden rounded-md border border-[var(--divider)]">
-              {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} layout={layout} onOpenDock={onOpenDock} />)}
-              {filteredSandboxed.map((plugin) => (
-                <SandboxedPluginRow
-                  key={plugin.manifestPath}
-                  plugin={plugin}
-                  onOpen={() => openSandboxedPlugin(plugin.entry)}
-                />
-              ))}
-            </div>
-          )}
-          {filtered.length === 0 && filteredSandboxed.length === 0 && (
-            <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>
-          )}
-
-          <div className="mt-4 flex items-center gap-3 rounded-md border border-dashed border-[var(--divider)] p-4">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-[var(--divider)] bg-[var(--surface)] text-[var(--ink-muted)]">
-              <PackagePlus className="h-4 w-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold text-[var(--ink)]">Add a custom plugin</h3>
-              <p className="mt-1 text-xs leading-5 text-[var(--ink-secondary)]">Copy a folder containing <code>index.html</code> and <code>neuron.app.json</code> into <code>plugins/</code>. It runs as an isolated HTML app, never as renderer code.</p>
-            </div>
+      <div className="mt-4">
+        {filtered.length > 0 ? (
+          <div className="divide-y divide-[var(--divider)] overflow-hidden rounded-md border border-[var(--divider)]">
+            {filtered.map((manifest) => <PluginRow key={manifest.id} manifest={manifest} layout={layout} onOpenDock={onOpenDock} />)}
           </div>
-        </div>
-      </ScrollArea>
+        ) : (
+          <p className="py-12 text-center text-sm text-[var(--ink-muted)]">No plugins match your search.</p>
+        )}
+      </div>
     </div>
   );
 }

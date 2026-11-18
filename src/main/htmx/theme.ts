@@ -62,7 +62,10 @@ body.neuron-view {
   -webkit-font-smoothing: antialiased;
 }
 
-body.neuron-view.theme-dark {
+/* Fragments get the theme as a body class; a full document gets data-theme on
+   <html>, and opts into this kit with <body class="neuron-view">. */
+body.neuron-view.theme-dark,
+html[data-theme="dark"] body.neuron-view {
   --background: #0e1417;
   --foreground: #e7eaeb;
   --card: #161d21;

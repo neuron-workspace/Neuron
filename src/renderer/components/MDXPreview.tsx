@@ -1,10 +1,13 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react';
 import { AlertCircle, ArrowUpRight, Link2, FileWarning } from 'lucide-react';
-import { Badge, Callout, parseSemanticType } from './mdx-components';
+import { Badge, Callout, numericColumns, parseBadgeType, parseSemanticType } from './mdx-components';
 import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
 import DbView from './DbView';
-import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard } from './mdx-layout';
+import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard, Columns } from './mdx-layout';
+import { resolveWidths, splitColumns, writeColumnWidths } from '../lib/columns';
+import { Chart, DataForm, DataStat } from './mdx-data';
+import InsertMenu, { firstDatabase, snippetFor, type InsertKind } from './InsertMenu';
 import DocumentProperties from './properties/DocumentProperties';
 import { applyFrontmatter, isFullWidth, parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
@@ -103,6 +106,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false, editable = false, onChangeSource, onRequestRawMode, removeEmptyFrontmatter = true }: MDXPreviewProps) {
   const [blankLine, setBlankLine] = useState<number | null>(null);
   const [active, setActive] = useState<BlockDraft | null>(null);
+  const [inserting, setInserting] = useState<{ range: SourceRange; anchor: DOMRect } | null>(null);
   const activeRef = useRef(active);
   const sourceRef = useRef(mdxContent);
   sourceRef.current = mdxContent;
@@ -160,7 +164,8 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
     active, colorScheme, finish, change: changeRange,
     draft: (draft) => { if (activeRef.current) updateActive({ ...activeRef.current, draft }); },
     focus: (line, end = false) => { pendingFocus.current = { line, end }; setBlankLine(line); },
-    open: (range) => {
+    insert: editable ? (range, anchor) => setInserting({ range, anchor: anchor.getBoundingClientRect() }) : undefined,
+    open: (range, cursor) => {
       const previous = activeRef.current;
       const before = sourceRef.current;
       finish(true);
@@ -169,8 +174,18 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       const startLine = range.startLine + shift;
       const endLine = range.endLine + shift;
       const source = parseFrontmatter(sourceRef.current).body.split(/\r?\n/).slice(startLine, endLine + 1).join('\n');
-      updateActive({ startLine, endLine, source, draft: source });
+      updateActive({ startLine, endLine, source, draft: source, cursor });
     },
+  };
+  // A block chosen from the `/` menu replaces the empty line, then opens for editing.
+  const insertBlock = async (kind: InsertKind) => {
+    const at = inserting;
+    setInserting(null);
+    if (!at) return;
+    const data = ['stat', 'chart', 'form', 'dbview'].includes(kind) ? await firstDatabase().catch(() => null) : null;
+    const { lines, cursor } = snippetFor(kind, data);
+    changeRange(at.range, lines);
+    editing.open({ startLine: at.range.startLine, endLine: at.range.startLine + lines.length - 1 }, cursor);
   };
   useLayoutEffect(() => {
     const requested = pendingFocus.current;
@@ -235,7 +250,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           <div
             key={`mermaid-${i}`}
             onClick={() => lineClick(startLine)}
-            className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--ink-muted)] transition-colors duration-150"
           >
             <MermaidDiagram source={codeText} colorScheme={colorScheme} />
           </div>
@@ -266,6 +281,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           i++;
         }
         const columnCount = Math.max(headers.length, tableAlignments.length);
+        const numeric = numericColumns(rows, columnCount);
         nodes.push(block(
           <div
             key={`table-${i}`}
@@ -282,7 +298,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                     <th
                       key={columnIndex}
                       scope="col"
-                      style={{ textAlign: tableAlignments[columnIndex] ?? 'left' }}
+                      style={{ textAlign: numeric[columnIndex] ? 'right' : tableAlignments[columnIndex] ?? 'left' }}
                       className="border-b border-[var(--divider)] px-3 py-2 text-xs font-semibold"
                     >
                       {canEdit
@@ -298,7 +314,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
                     {Array.from({ length: columnCount }, (_, columnIndex) => (
                       <td
                         key={columnIndex}
-                        style={{ textAlign: tableAlignments[columnIndex] ?? 'left' }}
+                        style={{ textAlign: numeric[columnIndex] ? 'right' : tableAlignments[columnIndex] ?? 'left', fontVariantNumeric: numeric[columnIndex] ? 'tabular-nums' : undefined }}
                         className="px-3 py-2 align-top text-xs leading-5"
                       >
                         {canEdit
@@ -440,7 +456,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       if (jsxStr.startsWith('<Badge')) {
         const textMatch = jsxStr.match(/text="([^"]+)"/);
         const typeMatch = jsxStr.match(/type="([^"]+)"/);
-        const type = parseSemanticType(typeMatch?.[1]);
+        const type = parseBadgeType(typeMatch?.[1]);
         return <Badge key={`badge-${index}`} text={textMatch ? attr('text', textMatch[1]) : 'badge'} type={type} />;
       }
 
@@ -465,6 +481,26 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         );
       }
 
+      // Columns: each top-level <Column> is parsed on the line it really starts
+      // on, and a dragged divider rewrites the width attributes in place.
+      if (/^<Columns\b/.test(jsxStr)) {
+        const segments = splitColumns(jsxStr);
+        const shown = segments.slice(0, 4);
+        const widths = resolveWidths(shown.map((segment) => segment.width));
+        const columns = shown.map((segment) => (segment.content.trim() ? parseMDX(segment.content, canEdit, childBase(segment.contentStart), true) : null));
+        const resize = canEdit ? (next: number[]) => {
+          const block = blockLines(index, endLine).join('\n');
+          const rewritten = writeColumnWidths(block, next);
+          if (rewritten !== block) changeRange({ startLine: index, endLine }, rewritten);
+        } : undefined;
+        return (
+          <div key={`Columns-${index}`} className="min-w-0 max-w-full">
+            {segments.length > 4 && <p className="text-xs text-[var(--ink-muted)]">Columns holds 2 to 4 columns; showing the first 4.</p>}
+            <Columns widths={widths} onResize={resize}>{columns}</Columns>
+          </div>
+        );
+      }
+
       // 3. Layout primitives. Children are re-parsed through parseMDX so a Card
       // can hold markdown, another Card, or a DbView -- without that they would
       // arrive as raw text and the components would be decorative boxes.
@@ -478,9 +514,14 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         Grid: (a, k) => <Grid {...a}>{k}</Grid>,
         Cell: (a, k) => <Cell {...a}>{k}</Cell>,
         Card: (a, k) => <Card {...a}>{k}</Card>,
-        Stat: (a) => <Stat {...a} />,
+        // With a source the number is counted from a table, not typed.
+        Stat: (a) => (a.raw.source !== undefined ? <DataStat {...a.raw} label={a.label} /> : <Stat {...a} />),
+        Chart: (a) => <Chart label={a.label ?? a.title} raw={a.raw} />,
+        Form: (a) => <DataForm title={a.title} raw={a.raw} />,
         Run: (a) => <Run {...a} />,
         Divider: (a) => <Divider {...a} />,
+        // Outside a <Columns> a column is just its content.
+        Column: (_a, k) => <>{k}</>,
         // Children are the answer, and they arrive already parsed, so a card
         // can answer with a list or a code span rather than one flat sentence.
         Flashcard: (a, k) => <Flashcard {...a}>{k}</Flashcard>,
@@ -506,21 +547,27 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           if (tag !== 'Run' && attrs[name] !== undefined) props[name] = attr(name, attrs[name]);
         }
         if (tag === 'Flashcard' && attrs.front !== undefined) props.frontNode = attr('front', attrs.front);
-        return <div key={`${tag}-${index}`}>{layout[tag](props, kids)}</div>;
+        // The attributes as written, for blocks that read data rather than show text.
+        props.raw = attrs;
+        return <div key={`${tag}-${index}`} className={tag === 'Cell' ? 'contents' : 'min-w-0 max-w-full'}>{layout[tag](props, kids)}</div>;
       }
 
       // 3. Match DbView — embeds a .db database (table/board/card) by @path.
       if (jsxStr.startsWith('<DbView')) {
-        const path = jsxStr.match(/path="([^"]+)"/)?.[1];
+        // `source` is the name the other data blocks use for the same thing.
+        const path = jsxStr.match(/\bpath="([^"]+)"/)?.[1] ?? jsxStr.match(/\bsource="([^"]+)"/)?.[1];
         const view = jsxStr.match(/view="([^"]+)"/)?.[1];
         const table = jsxStr.match(/table="([^"]+)"/)?.[1];
+        // A bare flag: values are blanked first so a word inside one cannot set it.
+        const openTag = jsxStr.slice(0, jsxStr.indexOf('>') + 1);
+        const editableView = /\beditable\b/.test(openTag.replace(/"[^"]*"/g, '""')) && !/\beditable="false"/.test(openTag);
         if (!path) {
           const err = new Error('<DbView /> needs a path, e.g. <DbView path="@Planner.db" />.') as MDXParseError;
           err.block = jsxStr;
           err.remediation = 'Add a path attribute pointing at a .db file relative to the workspace root, prefixed with @.';
           throw err;
         }
-        return <DbView key={`dbview-${index}`} path={path} view={view} table={table} />;
+        return <DbView key={`dbview-${index}`} path={path} view={view} table={table} editable={editableView} />;
       }
 
       // If unrecognized component tag
@@ -537,7 +584,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
 
       const err = new Error(`Component "<${tagName} />" is not registered in Neuron.`) as MDXParseError;
       err.block = jsxStr;
-      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge />, <Callout />, <Run />, and <DbView />.`;
+      err.remediation = `Register component "${tagName}" in src/renderer/components/MDXPreview.tsx or use supported components: <Badge />, <Callout />, <Run />, <DbView />, <Columns />, <Stat />, <Chart />, and <Form />.`;
       throw err;
 
     } catch (caughtError: unknown) {
@@ -637,7 +684,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           data-live-text={canEdit || undefined}
           key={index}
           onClick={() => lineClick(index)}
-          className="my-4 rounded-md border border-[var(--md-quote-border)] bg-[var(--surface)] px-4 py-3 font-sans text-sm italic text-[var(--md-quote)] cursor-pointer hover:border-[var(--accent)] transition-colors duration-150"
+            className="my-4 font-sans text-[var(--md-quote)] cursor-pointer"
         >
           {parseInlineFormatting(text.slice(2))}
         </blockquote>
@@ -829,6 +876,13 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             onChangeDoc={editable ? (next) => changeSource(applyFrontmatter(sourceRef.current, next)) : undefined}
             onViewRaw={editable ? onRequestRawMode : undefined} removeEmpty={removeEmptyFrontmatter} hideWhenEmpty={!editable} />
         </div>
+      )}
+      {inserting && (
+        <InsertMenu
+          anchor={inserting.anchor}
+          onChoose={(kind) => void insertBlock(kind)}
+          onClose={(restore) => { const at = inserting; setInserting(null); if (restore) editing.focus(at.range.startLine); }}
+        />
       )}
       {compilationError ? (
         <div role="alert" className="surface-danger rounded-md border p-5 font-sans">

@@ -91,6 +91,11 @@ function ExplorerPane({ explorer }: { explorer: ExplorerState }) {
     <WorkspaceExplorer
       repositoryName={explorer.repositoryName}
       paths={explorer.paths}
+      otherFiles={explorer.otherFiles}
+      fileInfo={explorer.fileInfo}
+      skipped={explorer.skipped}
+      truncated={explorer.truncated}
+      onReveal={explorer.reveal}
       folder={explorer.folder}
       onNavigate={explorer.navigate}
       onOpenFile={explorer.openFile}

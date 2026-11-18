@@ -58,7 +58,8 @@ test('New tab returns to the root without closing the note tab', async ({ page }
   const opened = (await file.getAttribute('data-file'))!;
   await file.dblclick();
   const tabs = page.getByRole('navigation', { name: 'Open notes' });
-  const tab = tabs.locator('button[title="' + opened + '"]');
+  // A preview tab's title adds a hint after the path.
+  const tab = tabs.locator('button[title^="' + opened + '"]');
   await expect(tab).toBeVisible();
   await tabs.getByRole('button', { name: 'New tab', exact: true }).click();
   await expect(page.getByRole('listbox', { name: 'Workspace contents' })).toBeVisible();
@@ -163,6 +164,66 @@ test('sidebar creates numbered root notes and folders without a dialog', async (
     await expect(sidebar.getByRole('button', { name, exact: true })).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
   }
+});
+
+test('sidebar New… menu creates a database and a canvas that open as tabs', async ({ page, workspace }) => {
+  const sidebar = page.getByRole('complementary', { name: 'Workspace sidebar' });
+  const tabs = page.getByRole('navigation', { name: 'Open notes' });
+
+  await sidebar.getByRole('button', { name: 'New…', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Database', exact: true }).click();
+  await expect.poll(() => existsSync(join(workspace, 'Untitled.db'))).toBe(true);
+  const raw = readFileSync(join(workspace, 'Untitled.db'), 'utf8');
+  expect(JSON.parse(raw)).toEqual({
+    version: 2,
+    tables: { table: { name: 'Table', schema: { order: ['name'], properties: { name: { name: 'Name', type: 'text' } } }, rows: [] } },
+  });
+  await expect(tabs.getByRole('button', { name: 'Close Untitled.db' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Table', level: 1 })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Column name' })).toHaveValue('Name');
+
+  await sidebar.getByRole('button', { name: 'New…', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Database', exact: true }).click();
+  await expect.poll(() => existsSync(join(workspace, 'Untitled 1.db'))).toBe(true);
+
+  await sidebar.getByRole('button', { name: 'New…', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Canvas', exact: true }).click();
+  await expect.poll(() => existsSync(join(workspace, 'Untitled.canvas'))).toBe(true);
+  expect(JSON.parse(readFileSync(join(workspace, 'Untitled.canvas'), 'utf8'))).toEqual({ nodes: [], edges: [] });
+  await expect(page.locator('[data-canvas-surface]')).toBeVisible();
+  await expect(tabs.getByRole('button', { name: 'Close Untitled.canvas' })).toBeVisible();
+  // The tabs stay: none of them was a preview that the next one replaced.
+  await expect(tabs.getByRole('button', { name: 'Close Untitled.db' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('the palette and the explorer menu create a database and a canvas', async ({ page, workspace }) => {
+  await page.getByRole('button', { name: /Search & commands/ }).click();
+  await page.getByRole('dialog').getByRole('combobox').fill('New database');
+  await page.getByRole('option', { name: 'New database', exact: true }).click();
+  await expect.poll(() => existsSync(join(workspace, 'Untitled.db'))).toBe(true);
+
+  await page.getByRole('button', { name: /Search & commands/ }).click();
+  await page.getByRole('dialog').getByRole('combobox').fill('New canvas');
+  await page.getByRole('option', { name: 'New canvas', exact: true }).click();
+  await expect.poll(() => existsSync(join(workspace, 'Untitled.canvas'))).toBe(true);
+
+  mkdirSync(join(workspace, 'plans'), { recursive: true });
+  writeFileSync(join(workspace, 'plans', 'existing.md'), '# Existing\n');
+  await page.getByRole('button', { name: 'Close Untitled.canvas' }).click();
+  await page.getByRole('button', { name: 'Close Untitled.db' }).click();
+  const folder = page.getByRole('option', { name: 'plans', exact: true });
+  await expect(folder).toBeVisible({ timeout: 15_000 });
+  await folder.dblclick();
+  await page.locator(explorer).getByRole('button', { name: 'New file type…' }).first().click();
+  await page.getByRole('menuitem', { name: 'Database', exact: true }).click();
+  const name = page.getByRole('textbox', { name: 'File name', exact: true });
+  await expect(name).toHaveValue('Untitled');
+  await expect(page.locator('.explorer-draft-ext')).toHaveText('.db');
+  await name.fill('Budget');
+  await name.press('Enter');
+  await expect.poll(() => existsSync(join(workspace, 'plans', 'Budget.db'))).toBe(true);
+  expect(JSON.parse(readFileSync(join(workspace, 'plans', 'Budget.db'), 'utf8')).version).toBe(2);
 });
 
 test('keyboard selection and Grid preference survive switching views', async ({ page }) => {

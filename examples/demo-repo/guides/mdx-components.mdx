@@ -25,12 +25,13 @@ If you forget a closing tag, the preview shows a clear compilation error with a 
 ## DbView
 
 Embed a `.db` database inline by `@path` from the workspace root. It stays live
-— editing the database in its own tab updates the embed. Use `view` to pick
-`table` (default), `board`, or `card`:
+— editing the database in its own tab updates the embed. It shows the view saved
+in the file; use `view` to pick `table`, `board`, or `gallery` instead:
 
 <DbView path="@Planner.db" table="tasks" view="board" />
 
-The embed is read-only; open the `.db` file itself to edit rows and schema.
+The embed is read-only unless you add `editable` (see Building pages below);
+open the `.db` file itself to change the schema.
 
 ## Flashcard
 
@@ -50,6 +51,99 @@ and in the Live editor.
 The prompt is plain text — attributes are not parsed as Markdown, so backticks
 and `**` appear literally there. Put anything that needs formatting in the
 answer, which is parsed like any other block.
+
+## Building pages
+
+A note can work like a small app: columns, numbers counted from a table,
+charts, a form that adds rows, and a board you can edit. [[Planner dashboard]]
+is built from nothing else. In Live, type `/` on an empty line to insert any of
+these blocks.
+
+### Full width
+
+The arrows button in the note header toggles `fullWidth: true` in the note's
+properties, which lifts the reading-width cap. Dashboards want it.
+
+### Columns
+
+Two to four columns side by side. Widths are optional and equal by default. In
+Live, hover the gap between two columns and drag it; the new widths are written
+back to the `width` attributes. Columns stack when the page is narrower than
+640px.
+
+```mdx
+<Columns>
+<Column width="40%">
+Left
+</Column>
+<Column width="60%">
+Right
+</Column>
+</Columns>
+```
+
+### Data sources
+
+Every data block names its table the same way: `source="Planner.db"` with
+`table="tasks"`, or `source="people.csv"`. Paths start at the workspace root.
+`where` keeps the rows that meet every condition joined by `and`:
+
+```mdx
+where="status = done"
+where="status != done and due < today"
+where="priority >= medium and done = false"
+```
+
+The operators are `=` `!=` `<` `>` `<=` `>=`. Columns are matched by id or by
+name, and values are plain words, numbers, `today`, `true` and `false`. Text
+compares without case, numbers as numbers, dates as dates, and a select by its
+option order. A condition that does not read is named in the block instead of
+being guessed at. Blocks update as soon as the file changes.
+
+### Stat
+
+A number counted from a table. Use `count` (the default), `sum="column"` or
+`avg="column"`. A typed `value` is used only when there is no `source`.
+
+```mdx
+<Stat label="Done" source="Planner.db" table="tasks" where="status = done" count />
+```
+
+<Stat label="Done" source="Planner.db" table="tasks" where="status = done" count />
+
+### Chart
+
+`type` is `bar`, `line`, `pie` or `number`. Bar and pie group by a column with
+`group`; a line runs along a date column with `x`, by `day`, `week` or `month`.
+Grouping by a select uses its option colours.
+
+```mdx
+<Chart type="bar" label="By priority" source="Planner.db" table="tasks" group="priority" count />
+<Chart type="line" source="Planner.db" table="tasks" x="due" by="week" count />
+<Chart type="number" label="Open" source="Planner.db" table="tasks" where="status != done" />
+```
+
+<Chart type="bar" label="By priority" source="Planner.db" table="tasks" group="priority" count />
+
+### Form
+
+Adds one row to a database table or a managed CSV. `fields` picks the columns
+(all of them by default); the inputs follow the column types, and the title
+column is required. Enter in a one-line field submits. A CSV has to be a Neuron
+table first, so the form can keep its column types.
+
+```mdx
+<Form title="Add a task" source="Planner.db" table="tasks" fields="title, status, due" submit="Add task" />
+```
+
+### Editable database views
+
+Add `editable` to a `DbView` to change cells, tick checkboxes and drag cards
+between board columns in place:
+
+```mdx
+<DbView source="Planner.db" table="tasks" view="board" editable />
+```
 
 ## Want more components?
 

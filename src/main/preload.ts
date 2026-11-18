@@ -12,6 +12,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   // Notes
   listNotes: () => ipcRenderer.invoke('notes:list'),
+  listEntries: () => ipcRenderer.invoke('workspace:entries'),
+  revealInFolder: (relativePath: string) => ipcRenderer.invoke('workspace:reveal', relativePath),
+  onWorkspaceChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('workspace:changed', listener);
+    return () => ipcRenderer.removeListener('workspace:changed', listener);
+  },
   readNote: (relativePath: string) => ipcRenderer.invoke('notes:read', relativePath),
   writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
@@ -59,8 +66,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Window controls
   windowControls: {
     setOverlayColors: (colors: { color: string; symbolColor: string }) => ipcRenderer.invoke('window:set-overlay-colors', colors),
-    // Settings and the workspace manager are about the app, not one workspace, so they open in their own window.
-    openPage: (page: 'settings' | 'workspaces') => ipcRenderer.invoke('window:open-page', page),
+    // Settings is about the app, not one workspace, so it opens in its own window at a section.
+    openPage: (section: string) => ipcRenderer.invoke('window:open-page', section),
+    onShowSection: (callback: (section: string) => void) => {
+      const listener = (_event: unknown, section: string) => callback(section);
+      ipcRenderer.on('settings:show-section', listener);
+      return () => ipcRenderer.removeListener('settings:show-section', listener);
+    },
+    // The workspace of the window that opened Settings, while it is still open.
+    openerWorkspace: () => ipcRenderer.invoke('window:opener-workspace'),
     // Menu items the macOS application menu owns but the renderer performs.
     onMenuCommand: (callback: (command: string) => void) => {
       const listener = (_event: unknown, command: string) => callback(command);
@@ -94,7 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Privileged plugin capabilities
   ai: {
-    complete: (request: { provider: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> }) =>
+    complete: (request: { provider: string; model?: string; system?: string; messages: AiMessage[] }) =>
       ipcRenderer.invoke('ai:complete', request),
   },
   net: {

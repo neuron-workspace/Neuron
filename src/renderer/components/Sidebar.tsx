@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppWindow, GripVertical, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Tag, Trash2, X } from 'lucide-react';
-import ActivityRail, { type SidebarMode } from './ActivityRail';
+import { GripVertical, ChevronDown, ChevronRight, ChevronsDownUp, FileCode2, FilePlus2, FolderClosed, FolderOpen, FolderPlus, Plus, RefreshCw, Search, Table2, Tag, Trash2, X } from 'lucide-react';
+import ActivityRail, { type SettingsTarget, type SidebarMode } from './ActivityRail';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
+import OtherFileIcon from './OtherFileIcon';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
 import { searchNotes } from '../lib/search';
 
-type View = 'notes' | 'repositories' | 'plugins' | 'settings' | 'gallery';
+type View = 'notes' | 'gallery';
 
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onSelectMode: (mode: SidebarMode) => void;
-  onNavigate: (view: View) => void;
+  onOpenSettings: (section: SettingsTarget) => void;
   graphOpen: boolean;
   onToggleGraph: () => void;
   sidebarSide: 'left' | 'right';
@@ -22,14 +25,20 @@ interface SidebarProps {
   notesData?: { path: string; content: string }[];
   selectedNote: string | null;
   onSelectNote: (note: string) => void;
+  /** Open as a tab that stays. A double click's first click has already opened the preview. */
+  onKeepNote?: (note: string) => void;
   onDeleteNote: (note: string) => Promise<boolean>;
   onRequestCreate: (section?: string) => void;
   onRequestCreateFolder: () => void;
+  onRequestCreateKind: (kind: 'database' | 'canvas' | 'table') => void;
   onRefresh: () => Promise<void>;
   view: View;
   mode: SidebarMode;
   repositoryName: string;
   folders: string[];
+  /** Files Neuron does not open: listed, selectable, never opened. */
+  otherFiles: string[];
+  onReveal: (path: string) => void;
   revealedFolder: string | null;
   tags: string[];
   onSelectTag: (tag: string | null) => void;
@@ -40,10 +49,10 @@ interface TreeNode {
   name: string;
   path: string;
   folders: Map<string, TreeNode>;
-  files: { name: string; path: string }[];
+  files: { name: string; path: string; other?: boolean }[];
 }
 
-function buildTree(paths: string[]): TreeNode {
+function buildTree(paths: string[], other: ReadonlySet<string> = new Set()): TreeNode {
   const root: TreeNode = { name: '', path: '', folders: new Map(), files: [] };
   for (const full of paths) {
     const segments = full.split('/');
@@ -57,15 +66,12 @@ function buildTree(paths: string[]): TreeNode {
       }
       node = node.folders.get(segment) as TreeNode;
     }
-    if (fileName) node.files.push({ name: fileName, path: full });
+    if (fileName) node.files.push({ name: fileName, path: full, other: other.has(full) });
   }
   return root;
 }
 
-// A folder is a mini-app when it holds a neuron.app.json marker: its contents
-// collapse into a single node that opens the folder's index.html entry.
-const isAppFolder = (node: TreeNode): boolean => node.files.some((f) => f.name === 'neuron.app.json');
-const isAppInternal = (name: string): boolean => name === 'neuron.app.json';
+const NONE: string[] = [];
 
 function allFolderPaths(node: TreeNode, out: string[] = []): string[] {
   for (const child of node.folders.values()) {
@@ -113,6 +119,11 @@ export default function Sidebar(props: SidebarProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deletingNote, setDeletingNote] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // A new file takes focus itself (a new table opens with its first cell
+  // focused). The menu handing focus back to its button once it has finished
+  // closing would take the first keystrokes typed into it.
+  const keepFocus = useRef(false);
+  const createKind = (kind: 'database' | 'canvas' | 'table') => { keepFocus.current = true; props.onRequestCreateKind(kind); };
 
   // The search box only filters in search mode; the explorer always shows all.
   const query = mode === 'search' ? search.trim() : '';
@@ -125,7 +136,14 @@ export default function Sidebar(props: SidebarProps) {
     [notesData, notes, query],
   );
   const filtered = useMemo(() => (query ? hits.map((hit) => hit.path) : notes), [hits, notes, query]);
-  const tree = useMemo(() => buildTree([...filtered, ...props.folders.map(path => path + '/')]), [filtered, props.folders]);
+  const otherFiles = query ? NONE : props.otherFiles;
+  const tree = useMemo(
+    () => buildTree([...filtered, ...otherFiles, ...props.folders.map(path => path + '/')], new Set(otherFiles)),
+    [filtered, otherFiles, props.folders],
+  );
+  // An other file is selected here only: it has no tab to be the open one.
+  const [selectedOther, setSelectedOther] = useState<string | null>(null);
+  useEffect(() => setSelectedOther(null), [selectedNote]);
 
   useEffect(() => {
     if (collapsedForRepo.current === repositoryName || tree.folders.size === 0) return;
@@ -164,13 +182,35 @@ export default function Sidebar(props: SidebarProps) {
     if (ok) setPendingDelete(null);
   };
 
-  const renderFile = (file: { name: string; path: string }, depth: number) => {
-    const isSelected = selectedNote === file.path && view === 'notes';
+  const renderOther = (file: { name: string; path: string }, depth: number) => {
+    const isSelected = selectedOther === file.path;
+    return (
+      <ContextMenu key={file.path}>
+        <ContextMenuTrigger asChild>
+          <div className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} data-other-file={file.path} style={{ paddingLeft: `${8 + depth * 14}px` }}>
+            <button aria-pressed={isSelected} title={`${file.name} (Neuron does not open this kind of file)`} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left text-[var(--ink-muted)]" onClick={() => { setSelectedOther(file.path); setPendingDelete(null); }}>
+              <OtherFileIcon path={file.path} className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate font-sans text-[12px]">{file.name}</span>
+            </button>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => props.onReveal(file.path)}>Show in folder</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+  };
+
+  const renderFile = (file: { name: string; path: string; other?: boolean }, depth: number) => {
+    if (file.other) return renderOther(file, depth);
+    const isSelected = selectedNote === file.path && view === 'notes' && !selectedOther;
     const isConfirming = pendingDelete === file.path;
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setPendingDelete(null); }}>
-          <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
+          {/\.csv$/i.test(file.name)
+            ? <Table2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
+            : <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />}
           <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
         </button>
         {isConfirming ? (
@@ -186,26 +226,11 @@ export default function Sidebar(props: SidebarProps) {
     );
   };
 
-  const renderApp = (node: TreeNode, depth: number): React.ReactNode => {
-    const appPath = `${node.path}/index.html`;
-    const isSelected = selectedNote === appPath && view === 'notes';
-    return (
-      <div key={node.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => onSelectNote(appPath)}>
-          <AppWindow className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
-          <span className="truncate text-[12px] font-medium">{node.name}</span>
-          <span className="ml-auto shrink-0 rounded bg-[var(--surface)] px-1 font-sans text-[9px] uppercase tracking-wide text-[var(--ink-muted)]">app</span>
-        </button>
-      </div>
-    );
-  };
-
   const renderFolder = (node: TreeNode, depth: number): React.ReactNode => {
-    if (isAppFolder(node)) return renderApp(node, depth);
     // Search mode force-opens every folder so matches aren't hidden inside a
     // collapsed folder; the explorer respects the collapsed set (default: all).
     const isOpen = mode === 'search' ? true : !collapsed.has(node.path);
-    const files = node.files.filter((f) => !isAppInternal(f.name));
+    const files = [...node.files];
     return (
       <div key={node.path} data-revealed-folder={node.path === props.revealedFolder}>
         <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" style={{ paddingLeft: `${8 + depth * 14}px` }}>
@@ -231,20 +256,36 @@ export default function Sidebar(props: SidebarProps) {
   const noteTree = (
     <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
-      {tree.files.filter((f) => !isAppInternal(f.name)).sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
-      {filtered.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
+      {[...tree.files].sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
+      {filtered.length === 0 && otherFiles.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
     </div>
   );
 
   return (
     <aside aria-label="Workspace sidebar" data-sidebar-collapsed={props.collapsed} className="nav-surface flex h-full w-full shrink-0 select-none flex-col">
-      <ActivityRail view={view} sidebarMode={mode} sidebarOpen tagCount={tags.length} collapsed={props.collapsed} onToggleCollapsed={props.onToggleCollapsed} onSelectMode={props.onSelectMode} onNavigate={props.onNavigate} graphOpen={props.graphOpen} onToggleGraph={props.onToggleGraph} dragHandle={dragHandle} sidebarSide={props.sidebarSide}>
+      <ActivityRail view={view} sidebarMode={mode} sidebarOpen tagCount={tags.length} collapsed={props.collapsed} onToggleCollapsed={props.onToggleCollapsed} onSelectMode={props.onSelectMode} onOpenSettings={props.onOpenSettings} graphOpen={props.graphOpen} onToggleGraph={props.onToggleGraph} dragHandle={dragHandle} sidebarSide={props.sidebarSide}>
       {mode === 'files' && (
         <section aria-label="Explorer" className="flex min-h-0 flex-1 flex-col">
           <div className="flex h-7 shrink-0 items-center justify-between px-2">
             <span className="text-xs text-[var(--ink-muted)]">Files</span>
             <div className="flex shrink-0 items-center gap-0.5">
-              <ToolbarButton label="New note" onClick={() => onRequestCreate()}><FilePlus2 className="h-3.5 w-3.5" /></ToolbarButton>
+              <div className="flex items-center">
+                <ToolbarButton label="New note" onClick={() => onRequestCreate()}><FilePlus2 className="h-3.5 w-3.5" /></ToolbarButton>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" aria-label="New…" title="New…" className="interactive -ml-0.5 grid h-6 w-4 shrink-0 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)]">
+                      <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" onCloseAutoFocus={(event) => { if (keepFocus.current) { keepFocus.current = false; event.preventDefault(); } }}>
+                    <DropdownMenuItem onSelect={() => onRequestCreate()}>Note</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => createKind('database')}>Database</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => createKind('canvas')}>Canvas</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => createKind('table')}>Table</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={onRequestCreateFolder}>Folder</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               <ToolbarButton label="New section" onClick={onRequestCreateFolder}><FolderPlus className="h-3.5 w-3.5" /></ToolbarButton>
               <ToolbarButton label="Refresh explorer" busy={refreshing} onClick={() => void refresh()}>
                 <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
@@ -273,6 +314,7 @@ export default function Sidebar(props: SidebarProps) {
                 <button
                   key={hit.path}
                   onClick={() => onSelectNote(hit.path)}
+                  onDoubleClick={() => props.onKeepNote?.(hit.path)}
                   className={cn(
                     'interactive block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--surface-hover)]',
                     selectedNote === hit.path && 'bg-[var(--surface-hover)]',

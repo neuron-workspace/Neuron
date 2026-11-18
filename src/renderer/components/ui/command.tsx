@@ -16,10 +16,10 @@ const Command = React.forwardRef<
 ));
 Command.displayName = CommandPrimitive.displayName;
 
-function CommandDialog({ children, ...props }: React.ComponentProps<typeof Dialog>) {
+function CommandDialog({ children, onCloseAutoFocus, ...props }: React.ComponentProps<typeof Dialog> & { onCloseAutoFocus?: (event: Event) => void }) {
   return (
     <Dialog {...props}>
-      <DialogContent className="overflow-hidden p-0">
+      <DialogContent className="overflow-hidden p-0" onCloseAutoFocus={onCloseAutoFocus}>
         <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-[var(--ink-muted)] [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-2">
           {children}
         </Command>
@@ -32,7 +32,7 @@ const CommandInput = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Input>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => (
-  <div className="flex items-center border-b border-[var(--divider)] px-3" cmdk-input-wrapper="">
+  <div className="flex items-center px-3" cmdk-input-wrapper="">
     <Search className="mr-2 h-4 w-4 shrink-0 text-[var(--ink-muted)]" />
     <CommandPrimitive.Input
       ref={ref}

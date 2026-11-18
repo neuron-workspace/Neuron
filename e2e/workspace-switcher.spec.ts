@@ -23,8 +23,11 @@ test('the workspace switcher lists each folder once and not the open one', async
   const menu = page.getByRole('menu');
   await expect(menu).toBeVisible();
   const items = menu.getByRole('menuitem');
-  // Open folder, Create workspace, then the two distinct "notes" folders only.
-  await expect(items).toHaveCount(4);
+  // Open folder, Create workspace, the two distinct "notes" folders only, then
+  // Workspace settings and Manage workspaces.
+  await expect(items).toHaveCount(6);
+  await expect(items.nth(4)).toHaveText(/Workspace settings/);
+  await expect(items.last()).toHaveText(/Manage workspaces/);
   await expect(menu.getByRole('menuitem', { name: /^workspace/ })).toHaveCount(0);
   // Same name, different folders: each shows where it lives.
   await expect(menu.getByRole('menuitem', { name: /notes.*one/ })).toHaveCount(1);

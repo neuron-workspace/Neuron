@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, setPluginEnabled } from './fixtures';
 import type { Page } from '@playwright/test';
 import { realpathSync } from 'node:fs';
 
@@ -45,9 +45,7 @@ test('the prompt path is never split, on first open and after a drag of resizes'
   // CI's temp directory is an 8.3 short path (RUNNER~1); the prompt prints the
   // long one, so compare against what the shell will actually show.
   const workspace = realpathSync.native(given);
-  await page.getByRole('button', { name: 'Plugins & integrations', exact: true }).first().click();
-  await page.getByPlaceholder('Search plugins').fill('Workspace Terminal');
-  await page.getByRole('switch', { name: 'Enable Workspace Terminal' }).check();
+  await setPluginEnabled(app, page, 'Workspace Terminal');
   await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
 
   // The plugin's own terminal, not the layout's: it opens with the panel.

@@ -5,7 +5,7 @@ small custom interfaces. Your workspace is an ordinary folder, your content is
 stored in plain files you can keep in Git or a sync folder, and Neuron itself
 does not require an account.
 
-The unusual part is the view platform. Shareable `.html` and folder mini-app
+The unusual part is the view platform. Shareable `.html`
 views run away from Neuron's privileged interface and receive
 only named capabilities and workspace paths. That is a stronger boundary than
 all-or-nothing plugin trust: built-in plugins are reviewed application code,
@@ -27,11 +27,10 @@ The workspace watcher recognises these user-facing document types:
 | `.mdx` | Markdown note with supported components | Markdown/MDX text, optionally with YAML frontmatter |
 | `.canvas` | Spatial board | JSON Canvas document |
 | `.db` | Typed database | JSON schema, view state, and rows |
+| `.csv` | Table | Plain CSV; Neuron writes it only when it manages it (see below) |
 | `.html` | Sandboxed view | HTML with optional htmx attributes, inline CSS, and JavaScript |
-| `index.html` | Folder mini-app entry point | HTML view inside a marked app folder |
-| `neuron.app.json` | Folder mini-app marker and manifest | Capabilities and allowed paths for `index.html` |
 | `.neuron/manifests/*.json` | View manifests | Capabilities and allowed paths for standalone `.html` views |
-| `.neuron/layout.json` | Workspace shell | JSON layout tree |
+| `.neuron/layout.json` | Workspace shell | JSON layout tree; starting sidebar and terminal |
 
 Neuron also watches the view platform's `.neuron` JSON, HTML, and CSS assets,
 plus legacy `neuron.config` and `*.neuron.json` sidecar manifests.
@@ -80,8 +79,8 @@ elements.
 Neuron supports these MDX components:
 
 - `<Badge text="..." type="info|success|warning|error" />`
-- `<Callout type="info|success|warning|error" title="...">...</Callout>`
-- `<DbView path="@Planner.db" view="table|board|card" />`
+- `<Callout type="info|success|warning|error" title="...">...</Callout>` (also `note`, `tip`/`done`, `caution`, `danger`; any other type renders as info)
+- `<DbView path="@Planner.db" view="table|board|gallery" />` (without `view` it uses the mode saved in the file; `card` still means gallery)
 
 `DbView` is a read-only embed of a workspace-root-relative `.db` file. Edit the
 database in its own tab. Unknown MDX components produce a visible compilation
@@ -240,15 +239,43 @@ edits rows and the schema. Property types are text, number, checkbox, date,
 URL, select, and multi-select; select options carry colors. The surface also
 supports row search, one persisted filter, and ascending/descending sorting.
 
-**Board** groups rows by a select property and lets you drag a card between
-columns. **Cards** is a gallery. Board and Cards show summaries; cell editing
-happens in Table mode. View mode, grouping, sort, and filter state are stored in
-the `.db` file along with the rows. External file changes refresh the surface.
+**Board** groups rows by a select property. Drag a card to another column or
+to a new place in its column, or use its context menu (Shift+F10) to do the
+same from the keyboard. **Gallery** shows the rows as a grid of cards. Cards
+show a title, an optional text preview and the properties you pick under
+**Card properties**; open a card to edit every property of its row. View mode,
+grouping, sort, filter and card settings are stored in the `.db` file along
+with the rows. External file changes refresh the surface.
 Invalid JSON is not repaired automatically, and documents over 2 MB are
 refused. See [File surfaces](custom-views.md) for the format and safe-link
 rules.
 
-## Build a dashboard or folder mini-app
+## Tables (CSV)
+
+A `.csv` file opens as a table, with the same search, sort and filter as a
+database table. The file stays a normal CSV: Neuron never changes its format or
+moves it, and spreadsheets and other programs keep reading it.
+
+A CSV Neuron did not create is shown **read-only**, and opening, sorting or
+closing it never writes it. When you try to edit it, Neuron asks whether to
+convert it into a Neuron table. Say no and nothing changes. Say yes and Neuron
+**manages** the file from then on: it may write the CSV, and it keeps the
+column types (text, number, checkbox, date, URL, select) and the sort and
+filter in `.neuron/tables/<path of the csv>.json`, for example
+`.neuron/tables/data/people.csv.json`. Converting writes only that file; the
+CSV is first written when you make an edit. A table made with **New → Table**
+is managed from the start.
+
+Edits keep the file's own delimiter (comma, semicolon or tab), line endings,
+BOM and quoting. A file whose quoting or line endings are mixed is made
+consistent the first time you edit it, and the conversion question says so.
+Values are always stored as text; a column's type only changes how its cells
+are shown and edited. Renaming or moving the CSV outside Neuron leaves its
+metadata behind and the file is read-only again. Files over 5 MB or 50,000
+rows, and files that are not UTF-8 text, open read-only and cannot be
+converted. Source mode shows a CSV's text but does not edit it.
+
+## Build a dashboard or custom view
 
 Use the command palette or `Ctrl/Cmd+G` to create an `.html` file in the
 current folder. Opening it starts an isolated view tab; use the tab's
@@ -256,15 +283,11 @@ current folder. Opening it starts an isolated view tab; use the tab's
 starter templates and supporting files under `.neuron/` without overwriting
 existing files.
 
-Choose the surface according to the job:
+`.html` accepts htmx attributes, inline CSS, and JavaScript. Workspace apps
+(folders with a `neuron.app.json`) were removed in favour of HTML views; an old
+app folder is now an ordinary folder.
 
-- `.html` accepts htmx attributes, inline CSS, and JavaScript. Neuron always
-  supplies htmx and its themed component stylesheet.
-- A non-root folder containing `index.html` and `neuron.app.json` becomes a
-  folder mini-app. The Explorer shows the folder as one app entry instead of
-  exposing its internal files.
-
-Both forms use a sandboxed webview with no Node or preload bridge. Each open tab
+A view uses a sandboxed webview with no Node or preload bridge. Each open tab
 gets an isolated session. The API exposes specific operations for files,
 directories, note metadata, tags, search, typed variables, and reusable HTML
 fragments. There is no command-execution endpoint or generic filesystem proxy.
@@ -272,14 +295,12 @@ fragments. There is no command-execution endpoint or generic filesystem proxy.
 Without a manifest, an `.html` file renders but receives no capabilities and
 cannot read workspace data. A manifest requests named capabilities and allowed
 paths; every requested capability prompts for one-time or persistent approval
-tied to the exact manifest content. Folder mini-apps always use their adjacent
-manifest, and a manifest with no permissions grants nothing. Network policy is
+tied to the exact manifest content. A manifest with no permissions grants nothing. Network policy is
 always `none`: views cannot fetch remote content, navigate away, or open popups.
 
 Follow the full [HTMX view user guide](htmx-views.md#user-guide) for templates,
 manifests, routes, variables, limits, and examples. The demo workspace contains
-`Custom dashboard.html`, and `Snake/` as a folder
-mini-app.
+`Custom dashboard.html` and `Snake.html`, a small game.
 
 ### Dashboard path: list your notes
 
@@ -345,6 +366,41 @@ JSON shell layout in `.neuron/layout.json`; open the command palette and choose
 **Use workspace layout**. See [File surfaces](custom-views.md) for the layout
 surface and [Design system](design-system.md) for the visual tokens.
 
+### Starting sidebar and terminal
+
+`.neuron/layout.json` can also say how the sidebar and the terminal start when
+the workspace opens. Both keys are optional, sit at the top level of the file,
+and can be the only thing in it (the main area then keeps its normal notes
+view). Each takes a state on its own:
+
+```json
+{ "sidebar": "open", "terminal": "closed" }
+```
+
+or an object with a state and a position:
+
+```json
+{
+  "sidebar":  { "state": "open",   "position": "right" },
+  "terminal": { "state": "closed", "position": "bottom" }
+}
+```
+
+- `state` is `"open"` or `"closed"`.
+- `sidebar.position` is `"left"` or `"right"`.
+- `terminal.position` is the dock: `"bottom"`, `"left"` or `"right"`.
+
+Values are not case-sensitive. Anything missing or not in these lists is
+ignored and leaves your own arrangement as it is. `"closed"` for the terminal
+closes its dock only when the terminal is the tab showing there, and the
+`terminal` key does nothing while the Terminal plugin is turned off.
+
+These are a starting arrangement, applied when the workspace opens in a window
+and again when you accept **Update view** after the file changes. You can still
+open, close and move everything afterwards, and nothing is written back to the
+file. Neuron asks about a changed file only when its content means something
+different: reformatting it or reordering its keys does not count.
+
 ## Browse a website without leaving a tab
 
 Use the tab bar, command palette, or `Ctrl/Cmd+Shift+O` to open a website tab.
@@ -381,6 +437,7 @@ default configurable shortcuts in version 0.4.3:
 | Toggle sidebar | `Mod+B` |
 | Toggle side panel | `Mod+J` |
 | Toggle bottom panel | `` Mod+` `` |
+| Toggle terminal | `` Mod+Shift+` `` |
 | Toggle zen mode | `Alt+Z` |
 
 Open **Settings → Keyboard shortcuts**, select a binding, and press a new key

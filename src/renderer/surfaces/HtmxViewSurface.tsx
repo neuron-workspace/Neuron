@@ -88,19 +88,14 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
   // Reload the tab (not the app) when this view's source or .neuron config
   // changes on disk. A fresh session re-reads manifest and permissions.
   useEffect(() => {
-    // Plain views use .neuron/manifests; a folder app's co-located marker may
-    // turn its index.html into an app. Reload when any applicable manifest moves.
     const manifestPath = `.neuron/manifests/${path.replace(/\.html$/i, '.json')}`;
     const legacyManifest = path.replace(/\.html$/i, '.neuron.json');
-    const slash = path.lastIndexOf('/');
-    const appManifest = slash >= 0 ? `${path.slice(0, slash)}/neuron.app.json` : null;
     return window.electronAPI.onNotesChanged((_event, changed) => {
       // Not variables.json: views write variables through the API and a reload
       // on every variable change would wipe in-page form state.
       const mine = changed === path
         || changed === manifestPath
         || changed === legacyManifest
-        || changed === appManifest
         || /^\.neuron\/(fragments|styles)(\/|$)/.test(changed)
         || changed === '.neuron'
         || changed === '.neuron/config.json';

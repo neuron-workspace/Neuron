@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Eye } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
+import { dragWidths, MIN_COLUMN, roundWidths } from '../lib/columns';
 
 /**
  * Layout primitives for MDX notes.
@@ -43,11 +44,11 @@ const SPAN = {
 } as const;
 
 const TONE = {
-  plain: 'bg-transparent',
-  surface: 'bg-[var(--surface)]',
-  accent: 'bg-[color-mix(in_oklch,var(--accent)_14%,var(--surface))]',
-  danger: 'bg-[color-mix(in_oklch,var(--danger)_14%,var(--surface))]',
-  positive: 'bg-[color-mix(in_oklch,var(--positive,var(--accent))_14%,var(--surface))]',
+  plain: '',
+  surface: '',
+  accent: 'bg-[var(--accent)]',
+  danger: 'bg-[var(--danger)]',
+  positive: 'bg-[var(--positive)]',
 } as const;
 
 type Gap = keyof typeof GAP;
@@ -73,7 +74,7 @@ interface BoxProps {
 /** Horizontal flex. `<Row gap="md" align="center">` */
 export function Row({ children, gap, align, justify, pad, wrap }: BoxProps) {
   return (
-    <div className={['flex', wrap === 'false' ? 'flex-nowrap' : 'flex-wrap',
+    <div className={['flex min-w-0 max-w-full', wrap === 'false' ? 'flex-nowrap' : 'flex-wrap',
       pick(GAP, gap, 'md'), pick(ALIGN, align, 'stretch'), pick(JUSTIFY, justify, 'start'),
       pick(PAD, pad, 'none')].join(' ')}>
       {children}
@@ -84,7 +85,7 @@ export function Row({ children, gap, align, justify, pad, wrap }: BoxProps) {
 /** Vertical flex. `<Col gap="sm">` */
 export function Col({ children, gap, align, justify, pad }: BoxProps) {
   return (
-    <div className={['flex flex-col', pick(GAP, gap, 'sm'), pick(ALIGN, align, 'stretch'),
+    <div className={['flex min-w-0 max-w-full flex-col', pick(GAP, gap, 'sm'), pick(ALIGN, align, 'stretch'),
       pick(JUSTIFY, justify, 'start'), pick(PAD, pad, 'none')].join(' ')}>
       {children}
     </div>
@@ -102,8 +103,8 @@ export function Grid({ children, cols, gap, pad }: BoxProps & { cols?: Cols }) {
   const explicit = typeof cols === 'string' && cols in COLS;
   return (
     <div
-      className={['grid', explicit ? pick(COLS, cols, '2') : '', pick(GAP, gap, 'md'), pick(PAD, pad, 'none')].join(' ')}
-      style={explicit ? undefined : { gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}
+      className={['grid min-w-0 max-w-full', explicit ? pick(COLS, cols, '2') : '', pick(GAP, gap, 'md'), pick(PAD, pad, 'none')].join(' ')}
+      style={explicit ? undefined : { gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))' }}
     >
       {children}
     </div>
@@ -112,15 +113,16 @@ export function Grid({ children, cols, gap, pad }: BoxProps & { cols?: Cols }) {
 
 /** One grid cell that spans several columns. `<Span cols="2">` */
 export function Cell({ children, cols }: { children?: ReactNode; cols?: Span }) {
-  return <div className={pick(SPAN, cols, '1')}>{children}</div>;
+  return <div className={`min-w-0 break-words ${pick(SPAN, cols, '1')}`}>{children}</div>;
 }
 
 /** A bordered panel. `<Card title="Today" tone="accent">` */
 export function Card({ children, title, tone, pad }: BoxProps & { title?: ReactNode; tone?: Tone }) {
+  const dot = pick(TONE, tone, 'surface');
   return (
-    <section className={['rounded-lg border border-[var(--divider)]', pick(TONE, tone, 'surface'), pick(PAD, pad, 'md')].join(' ')}>
+    <section className={['mdx-card min-w-0 max-w-full break-words rounded-lg border border-[var(--divider)]', tone === 'plain' ? 'bg-transparent' : 'bg-[var(--surface)]', pick(PAD, pad, 'md')].join(' ')}>
       {title && (
-        <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--ink-muted)]">{title}</h3>
+        <h3 className="mb-2 flex items-baseline gap-2 text-[13px] font-semibold text-[var(--ink)]">{dot && <span aria-hidden className={`h-1.5 w-1.5 shrink-0 self-center rounded-full ${dot}`} />}{title}</h3>
       )}
       {children}
     </section>
@@ -128,14 +130,18 @@ export function Card({ children, title, tone, pad }: BoxProps & { title?: ReactN
 }
 
 /** A number with a label, for a metric strip. `<Stat label="Overdue" value="3" tone="danger">` */
-export function Stat({ label, value, tone }: { label?: ReactNode; value?: ReactNode; tone?: Tone }) {
+export function Stat({ label, value, tone, message, busy }: { label?: ReactNode; value?: ReactNode; tone?: Tone; message?: ReactNode; busy?: boolean }) {
+  const dot = pick(TONE, tone, 'surface');
   const ink = tone === 'danger' ? 'text-[var(--danger)]'
     : tone === 'accent' ? 'text-[var(--accent-strong)]'
     : 'text-[var(--ink)]';
   return (
-    <div className={['rounded-lg border border-[var(--divider)] p-3', pick(TONE, tone, 'surface')].join(' ')}>
-      <div className={`text-2xl font-semibold tabular-nums ${ink}`}>{value ?? '—'}</div>
-      {label && <div className="mt-0.5 text-[11px] uppercase tracking-wide text-[var(--ink-muted)]">{label}</div>}
+    <div aria-busy={busy || undefined} className={['mdx-stat min-w-0 break-words rounded-lg border border-[var(--divider)] p-3', tone === 'plain' ? 'bg-transparent' : 'bg-[var(--surface)]'].join(' ')}>
+      {/* A live stat that cannot be computed says why in the number's place. */}
+      {message
+        ? <div className="flex min-h-8 items-center text-xs leading-4 text-[var(--ink-muted)]" data-stat-error>{message}</div>
+        : <div className={`text-2xl font-semibold tabular-nums ${ink}`} data-stat-value>{value ?? '—'}</div>}
+      {label && <div className="mt-0.5 flex items-baseline gap-2 text-[13px] font-semibold text-[var(--ink-secondary)]">{dot && <span aria-hidden className={`h-1.5 w-1.5 shrink-0 self-center rounded-full ${dot}`} />}{label}</div>}
     </div>
   );
 }
@@ -164,24 +170,107 @@ export function Flashcard({ children, front, frontNode }: { children?: ReactNode
     <section className="my-4 rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-4">
       <p className="text-sm font-medium leading-6 text-[var(--ink)]">{prompt}</p>
 
-      {revealed ? (
-        <div className="mt-3 border-t border-[var(--divider)] pt-3 text-sm leading-6 text-[var(--ink-secondary)]">
+      {revealed && (
+        <div className="mdx-flashcard-answer mt-3 border-t border-[var(--divider)] pt-3 text-sm leading-6 text-[var(--ink-secondary)]">
           {children ?? <span className="text-[var(--ink-muted)]">This card has no answer yet.</span>}
         </div>
-      ) : (
-        <button
-          type="button"
-          // Not a toggle. Once you have seen the answer, hiding it again only
-          // helps if you have forgotten it, and by then the card has been
-          // re-rendered anyway -- a second press that undoes the first is a
-          // control that punishes a misclick.
-          onClick={() => setRevealed(true)}
-          className="interactive mt-3 flex min-h-[var(--control-sm)] items-center gap-1.5 rounded-md border border-[var(--divider)] px-2.5 text-xs font-medium text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
-        >
-          <Eye className="h-3.5 w-3.5" /> Show answer
-        </button>
       )}
+      <button
+        type="button"
+        aria-expanded={revealed}
+        onClick={() => setRevealed((shown) => !shown)}
+        className="interactive mt-3 flex min-h-[var(--control-sm)] items-center gap-1.5 rounded-md border border-[var(--divider)] px-2.5 text-xs font-medium text-[var(--ink-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]"
+      >
+        {revealed ? <EyeOff className="h-3.5 w-3.5" aria-hidden /> : <Eye className="h-3.5 w-3.5" aria-hidden />}
+        {revealed ? 'Hide answer' : 'Show answer'}
+      </button>
     </section>
+  );
+}
+
+/**
+ * Side-by-side columns, `<Columns><Column width="40%">…</Column>…</Columns>`.
+ *
+ * The gaps are elements of their own rather than CSS gap, so in Live each one
+ * can be the handle that drags the widths. Widths are flex-grow shares, so the
+ * gaps never push the total past the row. Under 640px of content width the
+ * columns stack (a container query, because a note's width is not the
+ * window's).
+ */
+export function Columns({ widths, children, onResize }: { widths: number[]; children: ReactNode[]; onResize?: (widths: number[]) => void }) {
+  const row = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<number[] | null>(null);
+  const shown = dragging ?? widths;
+
+  const startDrag = (index: number) => (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onResize || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const gaps = Array.from(row.current?.querySelectorAll<HTMLElement>(':scope > [data-column-gap]') ?? []);
+    const available = (row.current?.clientWidth ?? 0) - gaps.reduce((sum, gap) => sum + gap.offsetWidth, 0);
+    if (available <= 0) return;
+    const startX = event.clientX;
+    let latest = widths;
+    const move = (e: PointerEvent) => { latest = dragWidths(widths, index, ((e.clientX - startX) / available) * 100); setDragging(latest); };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      setDragging(null);
+      const next = roundWidths(latest);
+      if (next.some((w, i) => w !== roundWidths(widths)[i])) onResize(next);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  };
+
+  const nudge = (index: number) => (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onResize || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rounded = roundWidths(widths);
+    const next = roundWidths(dragWidths(rounded, index, event.key === 'ArrowLeft' ? -1 : 1));
+    if (next.some((w, i) => w !== rounded[i])) onResize(next);
+  };
+
+  const items: ReactNode[] = [];
+  children.forEach((child, index) => {
+    if (index > 0) {
+      const at = index - 1;
+      items.push(onResize ? (
+        <div
+          key={'gap-' + index}
+          data-column-gap
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize columns ${index} and ${index + 1}`}
+          aria-valuenow={Math.round(shown[at])}
+          aria-valuemin={MIN_COLUMN}
+          aria-valuemax={100 - MIN_COLUMN}
+          tabIndex={0}
+          className="mdx-column-gap group/gap interactive relative flex cursor-col-resize justify-center rounded"
+          onPointerDown={startDrag(at)}
+          onKeyDown={nudge(at)}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <span aria-hidden className={`mdx-column-handle h-full w-0.5 rounded-full bg-[var(--accent)] transition-opacity ${dragging ? 'opacity-100' : 'opacity-0 group-hover/gap:opacity-60 group-focus-visible/gap:opacity-100'}`} />
+        </div>
+      ) : <div key={'gap-' + index} data-column-gap aria-hidden className="mdx-column-gap" />);
+    }
+    items.push(
+      <div key={'column-' + index} data-column className="mdx-column min-w-0 break-words" style={{ flex: `${shown[index] ?? 1} 1 0%` }}>
+        {child}
+      </div>,
+    );
+  });
+
+  return (
+    <div className="mdx-columns my-4 min-w-0 max-w-full">
+      <div ref={row} className="mdx-columns-row flex min-w-0" data-columns={children.length}>{items}</div>
+    </div>
   );
 }
 
@@ -190,7 +279,7 @@ export function Divider({ label }: { label?: ReactNode }) {
   if (!label) return <hr className="my-4 border-[var(--divider)]" />;
   return (
     <div className="my-4 flex items-center gap-3">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ink-muted)]">{label}</span>
+      <span className="text-xs text-[var(--ink-muted)]">{label}</span>
       <hr className="flex-1 border-[var(--divider)]" />
     </div>
   );

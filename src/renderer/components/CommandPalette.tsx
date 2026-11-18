@@ -1,10 +1,12 @@
-import { Blocks, Chrome, FileCode2, FolderOpen, FolderPlus, Focus, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2 } from 'lucide-react';
+import { useRef } from 'react';
+import { Blocks, Chrome, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, Table2, TerminalSquare } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
 import { parentFolder, sharedName } from './TitleBar';
 import { formatChord, type Bindings } from '../lib/keybindings';
+import { useTerminalToggle } from '../lib/useTerminalToggle';
 
 /**
  * The chord for a command, shown on the right of its row.
@@ -46,6 +48,7 @@ interface CommandPaletteProps {
   onOpenSettings: () => void;
   onCreate: () => void;
   onCreateSurface: () => void;
+  onCreateKind: (kind: 'database' | 'canvas' | 'table') => void;
   onOpenWebsite: () => void;
   onOpenGallery: () => void;
   onToggleShell: () => void;
@@ -57,18 +60,27 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onCreateKind, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
+  const terminal = useTerminalToggle(layout, onLayoutChange, onOpenMarketplace);
   const close = () => onOpenChange(false);
+  // A new file takes focus itself (a new table opens with its first cell
+  // focused). Focus returned to the palette's trigger after that would take
+  // the first keystrokes typed into it.
+  const keepFocus = useRef(false);
+  const createKind = (kind: 'database' | 'canvas' | 'table') => { keepFocus.current = true; onCreateKind(kind); close(); };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={onOpenChange} onCloseAutoFocus={(event) => { if (keepFocus.current) { keepFocus.current = false; event.preventDefault(); } }}>
       <CommandInput placeholder="Search notes or run a command…" />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
 
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section<Shortcut chord={bindings['new-note']} /></CommandItem>
+          <CommandItem onSelect={() => createKind('database')}><Database /> New database</CommandItem>
+          <CommandItem onSelect={() => createKind('canvas')}><Frame /> New canvas</CommandItem>
+          <CommandItem onSelect={() => createKind('table')}><Table2 /> New table</CommandItem>
           <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder<Shortcut chord={bindings['new-view']} /></CommandItem>
           <CommandItem onSelect={() => { onToggleShell(); close(); }}><PanelsTopLeft /> {shellActive ? 'Hide workspace layout' : 'Use workspace layout (.neuron/layout.json)'}</CommandItem>
           <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}<Shortcut chord={bindings['toggle-graph']} /></CommandItem>
@@ -95,6 +107,7 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
           <CommandItem onSelect={() => { onLayoutChange({ statusBar: !layout.statusBar }); close(); }}><PanelsTopLeft /> {layout.statusBar ? 'Hide' : 'Show'} status bar</CommandItem>
           <CommandItem onSelect={() => { close(); void window.electronAPI.windowControls.toggleFullScreen(); }}><Focus /> Toggle full screen<Shortcut chord={bindings['toggle-fullscreen']} /></CommandItem>
           <CommandItem onSelect={() => { onLayoutChange({ zen: !layout.zen }); close(); }}><Focus /> {layout.zen ? 'Exit zen mode' : 'Zen mode'}<Shortcut chord={bindings['toggle-zen']} /></CommandItem>
+          <CommandItem onSelect={() => { terminal.toggle(); close(); }}><TerminalSquare /> Toggle terminal<Shortcut chord={bindings['toggle-terminal']} /></CommandItem>
           {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
             <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
               <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}

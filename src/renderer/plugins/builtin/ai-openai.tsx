@@ -10,6 +10,7 @@ const aiOpenai: PluginModule = {
     author: 'Neuron',
     description: 'Chat with OpenAI GPT models about the note you are editing. Calls the OpenAI API through the desktop app.',
     category: 'ai',
+    connector: { id: 'openai', name: 'OpenAI', description: 'OpenAI GPT models, with your API key.' },
     configSchema: [
       { key: 'apiKey', label: 'OpenAI API key', type: 'password', placeholder: 'sk-proj-…', description: 'Stored in the main process. It is never readable by the app UI or by any plugin, including this one.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'gpt-4o', description: 'Optional. Defaults to gpt-4o.' },
@@ -22,11 +23,10 @@ const aiOpenai: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
-          pluginId="ai-openai"
           host={runtime}
           provider="openai"
           defaultModel="gpt-4o"
-          emptyHint="Ask OpenAI to summarize, rewrite, or expand the note you have open. Add your API key in plugin settings first."
+          emptyHint="Ask OpenAI to summarize, rewrite, or expand the note you have open. Set up OpenAI in Settings › Connectors first."
         />
       ),
     });

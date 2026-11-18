@@ -3,6 +3,9 @@
 
 export const MAX_DB_BYTES = 2 * 1024 * 1024;
 
+/** Colors a select option cycles through, in the database and in CSV tables. */
+export const OPTION_COLORS = ['#8b8b8b', '#a27763', '#e28f44', '#d9b23c', '#5aa06c', '#528fd1', '#9a6dd7', '#d15796', '#dd5c5c'];
+
 export type PropType = 'text' | 'number' | 'checkbox' | 'date' | 'url' | 'select' | 'multiselect';
 
 export interface DbOption {
@@ -25,13 +28,19 @@ export interface DbRow {
   [key: string]: unknown;
 }
 
+export type DbViewMode = 'table' | 'board' | 'gallery';
+
 export interface DbViewState {
-  mode?: 'table' | 'board' | 'gallery';
+  mode?: DbViewMode;
   groupBy?: string | null;
   sortBy?: string | null;
   sortDir?: 'asc' | 'desc';
   filterProp?: string | null;
   filterValue?: string;
+  /** Properties shown on a board or gallery card, in order. */
+  cardProps?: string[];
+  /** Text property shown as the card preview; null turns the preview off. */
+  previewProp?: string | null;
   [key: string]: unknown;
 }
 
@@ -226,6 +235,162 @@ export function addDbTable(db: DbFile, name: string): { db: DbFile; tableId: str
     },
     tableId,
   };
+}
+
+// --- Views -------------------------------------------------------------------
+// The stored view is read through resolveView and never rewritten on parse: an
+// unknown mode or a key naming a deleted property is ignored here but stays in
+// the file, so a newer version of the app still finds what it wrote.
+
+/** Board and gallery draw at most this many cards; the table is virtualised instead. */
+export const MAX_CARDS = 300;
+
+export interface ResolvedView {
+  mode: DbViewMode;
+  groupBy: string | null;
+  sortBy: string | null;
+  sortDir: 'asc' | 'desc';
+  filterProp: string | null;
+  filterValue: string;
+  titleProp: string | null;
+  cardProps: string[];
+  previewProp: string | null;
+}
+
+export interface BoardColumn {
+  /** Option id, or '' for the column of rows with no value. */
+  id: string;
+  option: DbOption | null;
+  rows: DbRow[];
+}
+
+const hasProp = (table: DbTable, id: unknown): id is string =>
+  typeof id === 'string' && Object.prototype.hasOwnProperty.call(table.schema.properties, id);
+
+/** Text shown for a cell, used for search, filter and sort. */
+export function displayValue(prop: DbProperty, value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (prop.type === 'select') return prop.options?.find((o) => o.id === value)?.name ?? '';
+  if (prop.type === 'multiselect') {
+    const ids = Array.isArray(value) ? value : [];
+    return ids.map((id) => prop.options?.find((o) => o.id === id)?.name ?? '').join(' ');
+  }
+  return String(value);
+}
+
+/** A card's title is the first text property in column order. */
+export function titleProp(table: DbTable): string | null {
+  return table.schema.order.find((id) => table.schema.properties[id].type === 'text') ?? null;
+}
+
+function defaultPreviewProp(table: DbTable, title: string | null): string | null {
+  const { order, properties } = table.schema;
+  for (const id of order) {
+    if (id === title || properties[id].type !== 'text') continue;
+    const values = table.rows.map((row) => row.values[id]).filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+    if (values.length && values.reduce((sum, v) => sum + v.length, 0) / values.length > 40) return id;
+  }
+  return null;
+}
+
+export function resolveView(table: DbTable): ResolvedView {
+  const { order, properties } = table.schema;
+  const view = table.view;
+  const title = titleProp(table);
+  const isSelect = (id: unknown): id is string => hasProp(table, id) && properties[id].type === 'select';
+  const groupBy = isSelect(view.groupBy) ? view.groupBy : order.find((id) => properties[id].type === 'select') ?? null;
+  const previewProp = view.previewProp === null ? null
+    : hasProp(table, view.previewProp) && view.previewProp !== title && properties[view.previewProp].type === 'text' ? view.previewProp
+    : defaultPreviewProp(table, title);
+  const cardProps = Array.isArray(view.cardProps)
+    ? view.cardProps.filter((id, index, all): id is string => hasProp(table, id) && id !== title && all.indexOf(id) === index)
+    : order.filter((id) => id !== title && id !== groupBy && id !== previewProp).slice(0, 3);
+  return {
+    mode: view.mode === 'board' || view.mode === 'gallery' ? view.mode : 'table',
+    groupBy,
+    sortBy: hasProp(table, view.sortBy) ? view.sortBy : null,
+    sortDir: view.sortDir === 'desc' ? 'desc' : 'asc',
+    filterProp: hasProp(table, view.filterProp) ? view.filterProp : null,
+    filterValue: typeof view.filterValue === 'string' ? view.filterValue : '',
+    titleProp: title,
+    cardProps,
+    previewProp,
+  };
+}
+
+/** Rows after the saved filter and sort, in display order. */
+export function visibleRows(table: DbTable): DbRow[] {
+  const { properties } = table.schema;
+  const { filterProp, filterValue, sortBy, sortDir } = resolveView(table);
+  let rows = table.rows;
+  if (filterProp && filterValue) {
+    const fp = properties[filterProp];
+    rows = rows.filter((r) => {
+      const v = r.values[filterProp];
+      if (fp.type === 'select') return v === filterValue;
+      if (fp.type === 'multiselect') return Array.isArray(v) && v.includes(filterValue);
+      return displayValue(fp, v).toLowerCase().includes(filterValue.toLowerCase());
+    });
+  }
+  if (sortBy) {
+    const sp = properties[sortBy];
+    const dir = sortDir === 'desc' ? -1 : 1;
+    rows = [...rows].sort((a, b) => {
+      const x = displayValue(sp, a.values[sortBy]), y = displayValue(sp, b.values[sortBy]);
+      const nx = Number(x), ny = Number(y);
+      const cmp = x !== '' && y !== '' && !Number.isNaN(nx) && !Number.isNaN(ny) ? nx - ny : x.localeCompare(y);
+      return cmp * dir;
+    });
+  }
+  return rows;
+}
+
+/**
+ * Board columns: first the rows with no value (or a value naming no option),
+ * then one column per option in option order. Empty when nothing can group.
+ */
+export function boardColumns(table: DbTable, rows: DbRow[] = visibleRows(table)): { groupBy: string | null; columns: BoardColumn[] } {
+  const { groupBy } = resolveView(table);
+  if (!groupBy) return { groupBy: null, columns: [] };
+  const options = table.schema.properties[groupBy].options ?? [];
+  const none: BoardColumn = { id: '', option: null, rows: [] };
+  const columns = options.map((option): BoardColumn => ({ id: option.id, option, rows: [] }));
+  const byId = new Map(columns.map((column) => [column.id, column]));
+  for (const row of rows) {
+    const value = row.values[groupBy];
+    ((typeof value === 'string' && byId.get(value)) || none).rows.push(row);
+  }
+  return { groupBy, columns: [none, ...columns] };
+}
+
+/**
+ * Move a row to another board column and/or to just before another row in
+ * `rows`, the file's only ordering. `beforeRowId: null` moves it to the end.
+ * Unknown ids and moves that change nothing return the same table.
+ */
+export function moveRow(table: DbTable, rowId: string, to: { group?: string; beforeRowId?: string | null }): DbTable {
+  const from = table.rows.findIndex((r) => r.id === rowId);
+  if (from < 0) return table;
+  let row = table.rows[from];
+  if (to.group !== undefined) {
+    const { groupBy } = resolveView(table);
+    if (!groupBy) return table;
+    const options = table.schema.properties[groupBy].options ?? [];
+    if (to.group !== '' && !options.some((o) => o.id === to.group)) return table;
+    const value = row.values[groupBy];
+    const current = typeof value === 'string' && options.some((o) => o.id === value) ? value : '';
+    if (current !== to.group) row = { ...row, values: { ...row.values, [groupBy]: to.group } };
+  }
+  const rest = table.rows.filter((r) => r.id !== rowId);
+  let at = from;
+  if (to.beforeRowId === null) at = rest.length;
+  else if (to.beforeRowId !== undefined && to.beforeRowId !== rowId) {
+    at = rest.findIndex((r) => r.id === to.beforeRowId);
+    if (at < 0) return table;
+  }
+  if (at === from && row === table.rows[from]) return table;
+  rest.splice(at, 0, row);
+  return { ...table, rows: rest };
 }
 
 /** Relations valid enough to draw. Targets/properties deliberately need not exist. */

@@ -1,12 +1,8 @@
-import { test, expect } from './fixtures';
-import type { Locator, Page } from '@playwright/test';
+import { test, expect, setPluginEnabled } from './fixtures';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 
-async function openTerminal(page: Page) {
-  await page.getByRole('button', { name: 'Plugins & integrations', exact: true }).first().click();
-  await page.getByPlaceholder('Search plugins').fill('Workspace Terminal');
-  const enabled = page.getByRole('switch', { name: 'Enable Workspace Terminal' });
-  await expect(enabled).toBeVisible();
-  await enabled.check();
+async function openTerminal(app: ElectronApplication, page: Page) {
+  await setPluginEnabled(app, page, 'Workspace Terminal');
   await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
   const terminal = page.getByRole('complementary', { name: 'Bottom plugin peek' }).getByRole('button', { name: 'Terminal', exact: true });
   await expect(terminal).toBeVisible();
@@ -53,14 +49,14 @@ async function expectTerminalOnRight(page: Page) {
   })).toEqual({ dock: 'right', open: true });
 }
 
-test('dragging Terminal to the right dock persists its placement', async ({ page }) => {
-  const terminal = await openTerminal(page);
+test('dragging Terminal to the right dock persists its placement', async ({ app, page }) => {
+  const terminal = await openTerminal(app, page);
   await dragToRight(page, terminal);
   await expectTerminalOnRight(page);
 });
 
-test('Panel options moves Terminal using the keyboard', async ({ page }) => {
-  await openTerminal(page);
+test('Panel options moves Terminal using the keyboard', async ({ app, page }) => {
+  await openTerminal(app, page);
   const options = page.getByRole('complementary', { name: 'Bottom plugin peek' }).getByRole('button', { name: 'Panel options' });
   await options.focus();
   await page.keyboard.press('Enter');

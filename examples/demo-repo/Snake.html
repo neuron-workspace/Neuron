@@ -1,7 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snake</title>
 <style>
-  /* Own palette, own type. The served kit styles unclassed elements only, so a
-     classed root like this one is left alone -- which is the whole reason a
-     mini-app can look like itself rather than like a settings page. */
+  /* A plain HTML view with its own palette and type. It asks for nothing, so it
+     has no manifest and no access to the workspace. */
+  html, body { margin: 0; background: #0f1412; }
   .sn {
     --bg: #0f1412;
     --grid: #161d1a;
@@ -96,7 +102,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--muted);
   }
   .sn-keys { display: flex; gap: .3rem; }
@@ -110,13 +116,14 @@
     background: var(--bg);
   }
 </style>
-
+</head>
+<body>
 <div class="sn">
   <div class="sn-head">
     <h1 class="sn-title">Snake</h1>
     <div class="sn-scores">
       <div class="sn-score"><b id="score">0</b><span>Score</span></div>
-      <div class="sn-score"><b id="best">—</b><span>Best</span></div>
+      <div class="sn-score"><b id="best">0</b><span>Best</span></div>
     </div>
   </div>
 
@@ -134,18 +141,15 @@
       <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd>
       <kbd>WASD</kbd><kbd>Space</kbd>
     </div>
-    <span id="status">Local · no network</span>
+    <span id="status">Best score lasts until you close this tab</span>
   </div>
 </div>
 
 <script>
-  // A folder mini-app: this whole folder renders as one app because it holds a
-  // neuron.app.json. The manifest asks for two capabilities and nothing else --
-  // no file access at all -- so the only thing this can touch in the workspace
-  // is the one variable it saves a high score to.
+  // A plain HTML view: no manifest, no permissions, no network, no workspace
+  // access. Everything here lives in this page and goes when the tab closes.
   const CELLS = 24;              // board is CELLS x CELLS
   const SPEED_MS = 92;           // step interval; the whole game clock
-  const HIGH_SCORE_VAR = 'snakeHighScore';
 
   const canvas = document.getElementById('board');
   const ctx = canvas.getContext('2d');
@@ -154,7 +158,7 @@
   const el = (id) => document.getElementById(id);
   const overlay = el('overlay');
 
-  let snake, dir, queued, food, score, best = null, timer = null, state = 'ready';
+  let snake, dir, queued, food, score, best = 0, timer = null, state = 'ready';
 
   const styles = getComputedStyle(document.querySelector('.sn'));
   const color = (name) => styles.getPropertyValue(name).trim();
@@ -250,11 +254,14 @@
   function end() {
     clearInterval(timer);
     state = 'ready';
-    const record = best !== null && score > best;
-    if (record) saveBest(score);
+    const record = score > best;
+    if (record) {
+      best = score;
+      el('best').textContent = String(best);
+    }
     show(
       record ? 'New best' : 'Game over',
-      `You scored ${score}.` + (record ? ' Saved to the workspace.' : ''),
+      `You scored ${score}.`,
       'Play again',
     );
   }
@@ -265,41 +272,6 @@
     el('start').textContent = button;
     overlay.hidden = false;
     el('start').focus();
-  }
-
-  // --- the only thing this app touches outside itself ------------------------
-  //
-  // Two requests against one declared variable. There is no file capability in
-  // the manifest, so even a bug here cannot reach a note.
-  async function loadBest() {
-    try {
-      const res = await fetch('/api/v1/variables/' + HIGH_SCORE_VAR);
-      if (!res.ok) throw new Error(String(res.status));
-      const body = await res.json();
-      best = Number(body.value) || 0;
-      el('best').textContent = String(best);
-    } catch {
-      // A missing variable is not an error worth interrupting a game for. The
-      // score just stops being persistent, and the footer says so rather than
-      // leaving an em-dash the player cannot interpret.
-      best = null;
-      el('best').textContent = '—';
-      el('status').textContent = 'High score not saved — add snakeHighScore to variables.json';
-    }
-  }
-
-  async function saveBest(value) {
-    best = value;
-    el('best').textContent = String(value);
-    try {
-      await fetch('/api/v1/variables/' + HIGH_SCORE_VAR, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
-      });
-    } catch {
-      el('status').textContent = 'Could not save the high score.';
-    }
   }
 
   // --- input -----------------------------------------------------------------
@@ -326,5 +298,6 @@
 
   reset();
   draw();
-  loadBest();
 </script>
+</body>
+</html>

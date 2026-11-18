@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import Sigma from 'sigma';
-import { LocateFixed, RotateCcw, Search, Settings2, X } from 'lucide-react';
+import { LocateFixed, RotateCcw, Search, Settings2, Share2 } from 'lucide-react';
 import { type GraphNode, type GraphEdge, KnowledgeGraph, GRAPH_DEFAULTS, GRAPH_RANGES, graphPreferences, seedPositions, type GraphPreferences, type Positions } from '../lib/knowledge-graph';
 import { settleLayout } from '../lib/graph-layout';
 import type { GraphCanvasProps } from './GraphCanvas';
 
-const labels = { gravity: 'Centre / gravity', repel: 'Repel', attraction: 'Link attraction', distance: 'Link distance', nodeSize: 'Node size', linkThickness: 'Link thickness', labelThreshold: 'Label fade threshold', depth: 'Local depth' };
+const labels = { gravity: 'Centre / gravity', repel: 'Repel', attraction: 'Link attraction', distance: 'Link distance', nodeSize: 'Node size', linkThickness: 'Link thickness', labelThreshold: 'Label fade threshold', depth: 'Steps from this note' };
 const duration = () => matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 320;
 // Links are the muted ink at low strength: visible as structure, never louder than a node.
 const fade = (hex: string, alpha: number) => {
@@ -15,7 +15,7 @@ const fade = (hex: string, alpha: number) => {
 const readColors = () => {
   const style = getComputedStyle(document.documentElement);
   const get = (key: string) => style.getPropertyValue(key).trim();
-  return { accent: get('--accent'), ink: get('--ink'), label: get('--ink-secondary'), muted: get('--ink-muted'), faint: get('--surface-hover'), edge: fade(get('--ink-muted'), 0.35) };
+  return { accent: get('--accent'), ink: get('--ink'), label: get('--ink-secondary'), muted: get('--ink-muted'), faint: get('--surface-hover'), edge: fade(get('--ink-muted'), 0.55) };
 };
 
 export default function SigmaGraph(props: GraphCanvasProps) {
@@ -55,11 +55,11 @@ export default function SigmaGraph(props: GraphCanvasProps) {
     }).catch(() => setError('Could not save connection settings.'));
   };
   const saveRef = useRef(save); saveRef.current = save;
-  const reheat = (movable?: Set<string>) => {
+  const reheat = (movable?: Set<string>, then?: () => void) => {
     stop.current?.();
     setRunning(true);
     try {
-      stop.current = settleLayout(model.current, pref.current, () => { setRunning(false); saveRef.current(); }, movable);
+      stop.current = settleLayout(model.current, pref.current, () => { setRunning(false); saveRef.current(); then?.(); }, movable);
     } catch {
       setRunning(false);
       setError('Layout could not start. Saved positions are still available.');
@@ -203,9 +203,38 @@ export default function SigmaGraph(props: GraphCanvasProps) {
     if (!running && !userNavigated.current && props.selectedNote) focus(props.selectedNote);
   }, [revision, running]);
 
-  const update = (next: GraphPreferences, physics = false) => {
-    pref.current = next; setPreferences(next); renderer.current?.refresh();
-    if (physics) reheat(); else saveRef.current();
+  const apply = (next: GraphPreferences) => { pref.current = next; setPreferences(next); renderer.current?.refresh(); };
+  const update = (next: GraphPreferences) => { apply(next); saveRef.current(); };
+
+  // A slider shows its value as it moves, but the picture only reacts when the
+  // value is settled (pointer released, or key released). Restarting the layout
+  // on every step made the graph thrash while dragging. A change with no
+  // gesture around it (assistive tech, a script) is settled at once.
+  const gesture = useRef(false);
+  const dirty = useRef<string | null>(null);
+  const settle = () => {
+    gesture.current = false;
+    const name = dirty.current;
+    dirty.current = null;
+    if (!name) return;
+    if (['gravity', 'repel', 'attraction', 'distance'].includes(name)) reheat(); else saveRef.current();
+  };
+  const slide = (name: keyof typeof GRAPH_RANGES, value: number) => {
+    apply({ ...pref.current, [name]: value });
+    dirty.current = name;
+    if (!gesture.current) settle();
+  };
+
+  const resetToDefaults = () => {
+    stop.current?.();
+    apply({ ...GRAPH_DEFAULTS });
+    positions.current = Object.create(null);
+    seedPositions(model.current, positions.current);
+    renderer.current?.setCustomBBox(null);
+    renderer.current?.refresh();
+    saveRef.current();
+    fit();
+    reheat(undefined, fit);
   };
   const fit = () => {
     const sigma = renderer.current;
@@ -219,6 +248,22 @@ export default function SigmaGraph(props: GraphCanvasProps) {
   };
   const matches = model.current.graph.nodes().filter(id => model.current.graph.getNodeAttribute(id, 'kind') !== 'unresolved' && model.current.graph.getNodeAttribute(id, 'label').toLowerCase().includes(query.toLowerCase()));
 
+  // A host can pin the graph to the open note; the switch then shows that, and cannot be changed.
+  const forced = props.scope === 'active';
+  const aroundNote = forced || preferences.local;
+  const emptyAround = aroundNote && !!key && !props.selectedNote;
+  const groupHeading = 'text-[11px] font-medium uppercase tracking-wide text-[var(--ink-muted)]';
+  const slider = (name: keyof typeof GRAPH_RANGES) => {
+    const [min, max, step] = GRAPH_RANGES[name];
+    return <label key={name} className="block">
+      <span className="flex items-baseline justify-between gap-2">{labels[name]}<output className="tabular-nums text-[var(--ink-muted)]">{preferences[name]}</output></span>
+      <input className="mt-1 block w-full accent-[var(--accent)]" type="range" aria-label={labels[name]} min={min} max={max} step={step} value={preferences[name]}
+        onPointerDown={() => { gesture.current = true; }} onKeyDown={() => { gesture.current = true; }}
+        onPointerUp={settle} onKeyUp={settle}
+        onChange={e => slide(name, Number(e.target.value))} />
+    </label>;
+  };
+
   return <div className="relative h-full min-h-0 text-[var(--ink)]" data-graph-root data-layout-running={running}>
     <div ref={host} data-graph-canvas className="absolute inset-0" role="img" aria-label={`${model.current.graph.order} nodes in workspace connections`} />
     <div className="absolute left-1.5 top-1.5 flex gap-0.5">
@@ -231,15 +276,37 @@ export default function SigmaGraph(props: GraphCanvasProps) {
       {matches.slice(0, 30).map(id => <button key={id} className="block w-full truncate rounded p-1 text-left hover:bg-[var(--surface-hover)]" aria-label={`Open ${model.current.graph.getNodeAttribute(id, 'label')}`} onClick={() => { latest.current.onSelectNote(id); focus(id); setSearching(false); setQuery(''); }}>{model.current.graph.getNodeAttribute(id, 'label')}</button>)}
       {!matches.length && <p role="status">No matching notes.</p>}
     </div>}
-    {!model.current.graph.order && key && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">{props.emptyHint ?? 'Add notes and links to see connections.'}</p>}
+    {emptyAround && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">Open a note to see what it links to.</p>}
+    {!emptyAround && !model.current.graph.order && key && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">{props.emptyHint ?? 'Add notes and links to see connections.'}</p>}
     {error && <p role="alert" className="absolute bottom-2 inset-x-2 bg-[var(--surface)] text-xs">{error}</p>}
-    <dialog ref={dialog} aria-label="Connection settings" className="m-auto w-[320px] max-w-[90vw] max-h-[85vh] overflow-auto rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-4 text-xs text-[var(--ink)] backdrop:bg-black/40">
-      <div className="mb-3 flex items-center justify-between"><strong>Connections</strong><button className="tool-button" aria-label="Close connection settings" onClick={() => dialog.current?.close()}><X size={14} /></button></div>
-      <div className="segmented mb-3" role="group" aria-label="Connection scope">{[false, true].map(local => <button key={String(local)} aria-pressed={preferences.local === local} onClick={() => update({ ...preferences, local })}>{local ? 'Local' : 'Global'}</button>)}</div>
-      {(Object.keys(GRAPH_RANGES) as (keyof typeof GRAPH_RANGES)[]).map(name => <label key={name} className="mb-3 block">{labels[name]} <output className="float-right tabular-nums">{preferences[name]}</output><input className="mt-1 block w-full accent-[var(--accent)]" type="range" aria-label={labels[name]} min={GRAPH_RANGES[name][0]} max={GRAPH_RANGES[name][1]} step={GRAPH_RANGES[name][2]} value={preferences[name]} onChange={e => update({ ...preferences, [name]: Number(e.target.value) }, ['gravity', 'repel', 'attraction', 'distance'].includes(name))} /></label>)}
-      {(['arrows', 'orphans', 'unresolved'] as const).map(name => <label key={name} className="mb-2 flex items-center gap-2"><input type="checkbox" checked={preferences[name]} onChange={e => update({ ...preferences, [name]: e.target.checked })} />{{ arrows: 'Show arrows', orphans: 'Show unlinked notes', unresolved: 'Show missing links' }[name]}</label>)}
-      <button className="mt-2 flex items-center gap-2 tool-button !w-auto px-2" onClick={() => { stop.current?.(); positions.current = Object.create(null); seedPositions(model.current, positions.current); renderer.current?.setCustomBBox(null); reheat(); }}><RotateCcw size={14} />Reset layout</button>
-      <p className="mt-3 text-[var(--ink-muted)]">Drag a node to arrange it. Positions save after settling.</p>
+    <dialog ref={dialog} aria-label="Connection settings" className="m-auto w-[320px] max-w-[90vw] max-h-[85vh] flex-col overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-0 text-xs text-[var(--ink)] backdrop:bg-black/40 open:flex">
+      <div className="shrink-0 px-4 pb-1 pt-4"><strong className="flex items-center gap-2"><Share2 className="h-4 w-4 shrink-0 text-[var(--ink-muted)]" aria-hidden="true" />Connections</strong></div>
+      {/* The groups scroll when the window is short; the footer stays in reach. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
+        <h3 className={groupHeading}>Show</h3>
+        <div>
+          <div className="segmented" role="group" aria-label="Show">
+            {([false, true] as const).map(local => <button key={String(local)} disabled={forced} aria-pressed={aroundNote === local} onClick={() => update({ ...preferences, local })}>{local ? 'Around this note' : 'Whole workspace'}</button>)}
+          </div>
+          {forced && <p className="mt-1.5 text-[var(--ink-muted)]">This panel always shows the links around the open note.</p>}
+        </div>
+        {aroundNote && slider('depth')}
+        <div className="flex flex-col gap-2">
+          {(['arrows', 'orphans', 'unresolved'] as const).map(name => <label key={name} className="flex items-center gap-2"><input type="checkbox" checked={preferences[name]} onChange={e => update({ ...preferences, [name]: e.target.checked })} />{{ arrows: 'Show arrows', orphans: 'Show unlinked notes', unresolved: 'Show missing links' }[name]}</label>)}
+        </div>
+
+        <h3 className={groupHeading + ' mt-1'}>Layout</h3>
+        {(['gravity', 'repel', 'attraction', 'distance'] as const).map(slider)}
+
+        <h3 className={groupHeading + ' mt-1'}>Appearance</h3>
+        {(['nodeSize', 'linkThickness', 'labelThreshold'] as const).map(slider)}
+
+        <p className="text-[var(--ink-muted)]">Drag a node to arrange it. Positions save after settling.</p>
+      </div>
+      <div className="flex shrink-0 items-center justify-between border-t border-[var(--divider)] px-4 py-3">
+        <button className="tool-button !flex items-center gap-2 !w-auto px-2" onClick={resetToDefaults}><RotateCcw size={14} />Reset to defaults</button>
+        <button className="tool-button !w-auto px-3" aria-label="Close connection settings" onClick={() => dialog.current?.close()}>Close</button>
+      </div>
     </dialog>
   </div>;
 }

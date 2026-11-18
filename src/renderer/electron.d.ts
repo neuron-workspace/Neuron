@@ -1,3 +1,8 @@
+import type { SettingsSection } from '../main/workspace-windows';
+import type { WorkspaceEntries } from '../main/workspace-walk';
+
+export type { WorkspaceEntries };
+
 export interface RepositoryInfo {
   path: string;
   name: string;
@@ -23,13 +28,11 @@ export interface AiMessage {
 }
 
 export interface AiCompleteRequest {
+  /** A connector id. Main answers with that connector's stored settings; the key itself never crosses IPC. */
   provider: string;
-  /** Identifies whose stored secret to use. The key itself never crosses IPC. */
-  pluginId?: string;
   model?: string;
   system?: string;
   messages: AiMessage[];
-  config?: Record<string, string>;
 }
 
 export interface AiCompleteResult {
@@ -75,6 +78,12 @@ export interface ElectronAPI {
 
   // Notes
   listNotes: () => Promise<string[]>;
+  /** Every file and folder in the workspace, notes or not. */
+  listEntries: () => Promise<WorkspaceEntries>;
+  /** Show a workspace file in the system file manager. Never opens it. */
+  revealInFolder: (relativePath: string) => Promise<{ success: boolean }>;
+  /** A file or folder appeared or went away. */
+  onWorkspaceChanged: (callback: () => void) => () => void;
   readNote: (relativePath: string) => Promise<string>;
   writeNote: (relativePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
   deleteNote: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -110,7 +119,10 @@ export interface ElectronAPI {
   // Window controls
   windowControls: {
     setOverlayColors: (colors: { color: string; symbolColor: string }) => Promise<void>;
-    openPage: (page: 'settings' | 'workspaces') => Promise<{ success: boolean }>;
+    openPage: (section: SettingsSection) => Promise<{ success: boolean }>;
+    /** Settings is already open and another window asked for this section. Validate before use. */
+    onShowSection: (callback: (section: string) => void) => () => void;
+    openerWorkspace: () => Promise<RepositoryInfo | null>;
     onMenuCommand: (callback: (command: string) => void) => () => void;
     chromeState: () => Promise<WindowChromeState>;
     toggleFullScreen: () => Promise<void>;

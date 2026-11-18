@@ -1,3 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workload</title>
+<!-- Neuron's kit sets the page frame (padding, font, the light or dark
+     background around the poster) for a body with class="neuron-view". -->
+<link rel="stylesheet" href="neuron.css">
 <style>
   /* Scoped to this document. Palette is defined once, with a light variant, so
      the poster look survives a theme switch instead of going unreadable — the
@@ -166,6 +175,8 @@
     outline-offset: 2px;
   }
 </style>
+</head>
+<body class="neuron-view">
 
 <div class="pb">
   <div class="pb-grid">
@@ -433,22 +444,22 @@
   }
 
   async function load() {
-    // connect-src is 'self': this reaches Neuron's loopback API and has no
-    // route off the machine.
-    const res = await fetch('/api/v1/db?path=' + encodeURIComponent(DB) + '&table=tasks');
-    if (!res.ok) {
+    // neuron.db goes to Neuron's loopback API; connect-src is 'self', so there
+    // is no route off the machine.
+    let table;
+    try {
+      table = await neuron.db(DB, { table: 'tasks' });
+    } catch (error) {
       // Name the status. "unavailable" sent me looking at the file when the
       // request had never reached the route in the first place.
-      const detail = await res.json().catch(() => null);
-      $('overdue-label').textContent = 'Planner.db: ' + (detail?.error?.code ?? res.status);
+      $('overdue-label').textContent = 'Planner.db: ' + (error.code ?? error.status);
       return;
     }
-    const { rows } = await res.json();
-    render(rows.map((r) => r.values));
+    render(table.rows.map((r) => r.values));
   }
 
   /**
-   * Capture writes the database back whole: read, append a row, PUT.
+   * Capture writes the database back whole: read, append a row, write.
    *
    * `baseHash` is the hash the read returned. If the file moved underneath us —
    * an edit in the app's own table view, a sync, a second dashboard — the write
@@ -457,9 +468,9 @@
    * recoverable from version history.
    */
   async function capture(values) {
-    const read = await fetch('/api/v1/files/content?path=' + encodeURIComponent(DB));
-    if (!read.ok) throw new Error('Could not read Planner.db.');
-    const { content, hash } = await read.json();
+    const { content, hash } = await neuron.read(DB).catch(() => {
+      throw new Error('Could not read Planner.db.');
+    });
 
     const doc = JSON.parse(content);
     const table = doc.tables?.tasks;
@@ -469,16 +480,12 @@
       values: { ...values, status: 'todo', due: '', done: false },
     });
 
-    const put = await fetch('/api/v1/files/content', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: DB, content: JSON.stringify(doc, null, 2) + '\n', baseHash: hash }),
-    });
-    if (!put.ok) {
-      const body = await put.json().catch(() => ({}));
-      throw new Error(body.error?.code === 'conflict'
+    try {
+      await neuron.write(DB, JSON.stringify(doc, null, 2) + '\n', hash);
+    } catch (error) {
+      throw new Error(error.code === 'conflict'
         ? 'Planner.db changed elsewhere — reload and try again.'
-        : body.error?.message || ('Write failed (' + put.status + ').'));
+        : error.message || ('Write failed (' + error.status + ').'));
     }
   }
 
@@ -506,3 +513,5 @@
 
   load();
 </script>
+</body>
+</html>

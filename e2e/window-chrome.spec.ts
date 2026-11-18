@@ -1,4 +1,4 @@
-import { test, expect, openNote } from './fixtures';
+import { test, expect, openNote, setPluginEnabled } from './fixtures';
 import type { ElectronApplication, Page } from '@playwright/test';
 
 const paletteShortcut = process.platform === 'darwin' ? 'Meta+k' : 'Control+k';
@@ -59,6 +59,33 @@ test('tab strip stays 32px on workspace home and when opening a note', async ({ 
   await tabs.getByRole('button', { name: 'Close getting-started' }).click();
   await expect(tabs.getByRole('button', { name: /^Close / })).toHaveCount(0);
   await expect.poll(() => row.evaluate((node) => node.getBoundingClientRect().height)).toBe(32);
+});
+
+test('the palette shows focus on its search row, not an outline that the dialog clips', async ({ page }) => {
+  await expect(page.locator('.note-row').first()).toBeVisible();
+  await waitForShortcuts(page);
+  await page.keyboard.press(paletteShortcut);
+  const dialog = page.getByRole('dialog');
+  const input = dialog.getByRole('combobox');
+  await expect(input).toBeFocused();
+  // The dialog zooms in as it opens; measure once it has settled.
+  await page.waitForTimeout(500);
+  const state = await dialog.locator('[cmdk-input-wrapper]').evaluate((row) => {
+    const probe = document.createElement('div');
+    probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--accent');
+    document.body.appendChild(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(row);
+    const field = getComputedStyle(row.querySelector('input')!);
+    return { accent, color: style.borderBottomColor, width: style.borderBottomWidth, outline: field.outlineStyle, height: row.getBoundingClientRect().height };
+  });
+  expect(state.color).toBe(state.accent);
+  expect(parseFloat(state.width)).toBeGreaterThan(1);
+  expect(state.outline).toBe('none');
+  // The row is the same height with and without focus.
+  await input.evaluate((node) => (node as HTMLInputElement).blur());
+  expect(state.height).toBe(await dialog.locator('[cmdk-input-wrapper]').evaluate((row) => row.getBoundingClientRect().height));
 });
 
 test('native overlay keeps toolbar actions clear of window controls', async ({ page }) => {
@@ -152,9 +179,7 @@ for (const maximized of [false, true]) {
 }
 
 test('the full-screen palette works while the terminal has focus', async ({ app, page }) => {
-  await page.getByRole('button', { name: 'Plugins & integrations', exact: true }).first().click();
-  await page.getByPlaceholder('Search plugins').fill('Workspace Terminal');
-  await page.getByRole('switch', { name: 'Enable Workspace Terminal' }).check();
+  await setPluginEnabled(app, page, 'Workspace Terminal');
   await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
   const terminal = page.locator('.xterm-helper-textarea');
   await expect(terminal).toBeVisible();

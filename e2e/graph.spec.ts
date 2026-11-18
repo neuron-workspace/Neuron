@@ -45,6 +45,11 @@ test('the toolbar opens the graph without touching a shortcut', async ({ page })
   const tabs = await page.locator('nav[aria-label="Open notes"]').boundingBox();
   if (tabs) expect(box!.y).toBeGreaterThanOrEqual(tabs.y + tabs.height - 1);
 
+  // Parked in the bottom-right corner of the editor area, 12px from both edges.
+  const editor = (await page.locator('main').first().boundingBox())!;
+  expect(Math.abs(editor.x + editor.width - (box!.x + box!.width) - 12)).toBeLessThan(2);
+  expect(Math.abs(editor.y + editor.height - (box!.y + box!.height) - 12)).toBeLessThan(2);
+
   // No title bar: the square is all graph, with only the close control on it.
   await expect(graph).not.toContainText('Graph');
   await expect(graph.getByRole('button', { name: 'Hide graph' })).toBeVisible();
@@ -184,8 +189,8 @@ test('local depth and display settings persist without moving shared nodes', asy
   const before = await canvas.evaluate((el: any) => el.sigma.getGraph().export());
   await graph.getByRole('button', { name: 'Connection settings' }).click();
   const settings = page.getByRole('dialog', { name: 'Connection settings' });
-  await settings.getByRole('button', { name: 'Local', exact: true }).click();
-  await settings.getByRole('slider', { name: 'Local depth' }).fill('2');
+  await settings.getByRole('button', { name: 'Around this note', exact: true }).click();
+  await settings.getByRole('slider', { name: 'Steps from this note' }).fill('2');
   await settings.getByLabel('Show arrows').check();
   await settings.getByRole('button', { name: 'Close connection settings' }).click();
   expect(await canvas.evaluate((el: any) => el.sigma.getGraph().export())).toEqual(before);
@@ -194,9 +199,59 @@ test('local depth and display settings persist without moving shared nodes', asy
   await expect(canvas.locator('canvas.sigma-nodes')).toBeVisible();
   await expect.poll(() => canvas.evaluate((el: any) => el.sigma?.getGraph().order ?? 0)).toBeGreaterThan(5);
   await graph.getByRole('button', { name: 'Connection settings' }).click();
-  await expect(settings.getByRole('button', { name: 'Local', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(settings.getByRole('slider', { name: 'Local depth' })).toHaveValue('2');
+  await expect(settings.getByRole('button', { name: 'Around this note', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(settings.getByRole('slider', { name: 'Steps from this note' })).toHaveValue('2');
   await expect(settings.getByLabel('Show arrows')).toBeChecked();
+});
+
+test('Reset to defaults restores every setting and the restored values are saved', async ({ page }) => {
+  const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+  const canvas = graph.locator('[data-graph-canvas]');
+  await expect(canvas.locator('canvas.sigma-nodes')).toBeVisible();
+  await expect.poll(() => canvas.evaluate((el: any) => el.sigma?.getGraph().order ?? 0)).toBeGreaterThan(5);
+  await openNote(page, 'guides/markdown-basics');
+  await graph.getByRole('button', { name: 'Connection settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Connection settings' });
+
+  // The depth slider belongs to "Around this note" only.
+  await expect(settings.getByRole('slider', { name: 'Steps from this note' })).toHaveCount(0);
+  await expect(settings.getByRole('slider', { name: 'Link thickness' })).toHaveValue('1.2');
+
+  await settings.getByRole('slider', { name: 'Repel' }).fill('6');
+  await settings.getByRole('slider', { name: 'Link thickness' }).fill('3');
+  await settings.getByLabel('Show arrows').check();
+  await settings.getByRole('button', { name: 'Around this note', exact: true }).click();
+  await expect(settings.getByRole('slider', { name: 'Repel' })).toHaveValue('6');
+
+  await settings.getByRole('button', { name: 'Reset to defaults', exact: true }).click();
+  const defaults = async () => {
+    await expect(settings.getByRole('slider', { name: 'Repel' })).toHaveValue('3');
+    await expect(settings.getByRole('slider', { name: 'Link thickness' })).toHaveValue('1.2');
+    await expect(settings.getByLabel('Show arrows')).not.toBeChecked();
+    await expect(settings.getByRole('button', { name: 'Whole workspace', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(settings.getByRole('slider', { name: 'Steps from this note' })).toHaveCount(0);
+  };
+  await defaults();
+  await settings.getByRole('button', { name: 'Close connection settings' }).click();
+  await expect(graph.locator('[data-graph-root]')).toHaveAttribute('data-layout-running', 'false');
+  await graph.getByRole('button', { name: 'Hide graph' }).click();
+  await page.getByRole('button', { name: 'Show graph' }).click();
+  await expect(canvas.locator('canvas.sigma-nodes')).toBeVisible();
+  await graph.getByRole('button', { name: 'Connection settings' }).click();
+  await defaults();
+});
+
+test('Around this note with no note open says what to do', async ({ page }) => {
+  const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+  await expect(graph.locator('canvas.sigma-nodes')).toBeVisible();
+  await graph.getByRole('button', { name: 'Connection settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Connection settings' });
+  await expect(graph.getByText('Open a note to see what it links to.')).toHaveCount(0);
+  await settings.getByRole('button', { name: 'Around this note', exact: true }).click();
+  await settings.getByRole('button', { name: 'Close connection settings' }).click();
+  await expect(graph.getByText('Open a note to see what it links to.')).toBeVisible();
+  await openNote(page, 'guides/markdown-basics');
+  await expect(graph.getByText('Open a note to see what it links to.')).toHaveCount(0);
 });
 
 test('nodes can be dragged and the layout stops after reheating', async ({ page }) => {

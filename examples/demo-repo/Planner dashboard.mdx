@@ -1,0 +1,34 @@
+---
+title: Planner dashboard
+type: dashboard
+fullWidth: true
+tags:
+  - planner
+---
+
+# Planner dashboard
+
+<Columns>
+<Column>
+<Stat label="Open" source="Planner.db" table="tasks" where="status != done" count />
+</Column>
+<Column>
+<Stat label="Done" source="Planner.db" table="tasks" where="status = done" count tone="positive" />
+</Column>
+<Column>
+<Stat label="Overdue" source="Planner.db" table="tasks" where="status != done and due < today" count tone="danger" />
+</Column>
+</Columns>
+
+<Columns>
+<Column width="40%">
+<Chart type="pie" label="Tasks by status" source="Planner.db" table="tasks" group="status" count />
+</Column>
+<Column width="60%">
+<Chart type="line" label="Tasks due per week" source="Planner.db" table="tasks" x="due" by="week" count />
+</Column>
+</Columns>
+
+<Form title="Add a task" source="Planner.db" table="tasks" fields="title, status, priority, due, project" submit="Add task" />
+
+<DbView source="Planner.db" table="tasks" view="board" editable />

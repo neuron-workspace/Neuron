@@ -234,6 +234,59 @@ export async function openNote(page: Page, path: string) {
   await expect(dialog).toBeHidden();
 }
 
+/**
+ * Open the Settings window at a section and return its page.
+ *
+ * Settings, Plugins and Workspaces are sections of one separate window. When it
+ * is not open yet, asking opens it; when it is, the same window is told which
+ * section to show. `trigger` is the click to test, if any; by default the
+ * workspace window asks through the bridge, as its sidebar does.
+ */
+export async function openSettings(app: ElectronApplication, page: Page, section: string, trigger?: () => Promise<unknown>): Promise<Page> {
+  const ask = () => (trigger ? trigger() : page.evaluate((s) => (window as unknown as { electronAPI: any }).electronAPI.windowControls.openPage(s), section));
+  let settings = app.windows().find((w) => w.url().includes('window=settings'));
+  if (settings) await ask();
+  else [settings] = await Promise.all([app.waitForEvent('window'), ask()]);
+  await settings.waitForLoadState('domcontentloaded');
+  await expect(settings.locator(`[data-settings-section="${section}"]`)).toBeVisible();
+  return settings;
+}
+
+/**
+ * Open this workspace window's Workspace settings dialog and return it.
+ * Plugins opens through the palette, which is there whatever the sidebar
+ * shows; General through the workspace switcher.
+ */
+export async function openWorkspaceSettings(page: Page, section: 'plugins' | 'general' = 'plugins') {
+  if (section === 'plugins') {
+    await page.getByRole('button', { name: /Search & commands/ }).click();
+    const palette = page.locator('[role="dialog"]');
+    await palette.locator('input').first().fill('Plugins');
+    await palette.getByRole('option', { name: /Plugins & integrations/ }).click();
+  } else {
+    await page.locator('.titlebar').getByRole('button').first().click();
+    await page.getByRole('menuitem', { name: 'Workspace settings…' }).click();
+  }
+  const dialog = page.locator('[data-workspace-settings]');
+  await expect(dialog).toHaveAttribute('data-workspace-settings', section);
+  return dialog;
+}
+
+/**
+ * Switch a built-in plugin on or off for this window's workspace, in its
+ * Workspace settings dialog, then close the dialog. `app` is unused now that
+ * this happens in the workspace window; it stays so callers need not change.
+ */
+export async function setPluginEnabled(_app: ElectronApplication, page: Page, name: string, on = true) {
+  const dialog = await openWorkspaceSettings(page, 'plugins');
+  await dialog.getByPlaceholder('Search plugins').fill(name);
+  const toggle = dialog.getByRole('switch', { name: `Enable ${name}` });
+  await expect(toggle).toBeVisible();
+  await toggle.setChecked(on);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+}
+
 /** URLs the app handed to the OS browser, recorded by the stub above. */
 export function openedExternally(app: ElectronApplication): Promise<string[]> {
   return app.evaluate(() => (globalThis as unknown as { __openExternal?: string[] }).__openExternal ?? []);

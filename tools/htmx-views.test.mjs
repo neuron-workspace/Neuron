@@ -22,6 +22,7 @@ await build({
       export * from './src/main/htmx/sessions';
       export * from './src/main/htmx/html';
       export * from './src/main/htmx/server';
+      export * from './src/main/htmx/neuronJs';
     `,
     resolveDir: root,
     loader: 'ts',
@@ -93,22 +94,17 @@ assert.deepEqual([...noManifestGrants.caps], [], 'an unmanifested view gets no c
 assert.deepEqual(noManifestGrants.readPatterns, [], 'an unmanifested view gets no readable paths');
 assert.ok(!noManifestGrants.needsApproval, 'an unmanifested view renders without an empty prompt');
 
-// --- view + manifest paths (plain files vs folder apps) -----------------------
+// --- view + manifest paths -----------------------------------------------------
 assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
-assert.ok(m.isViewPath('Snake/index.html'), 'a folder app uses index.html');
+assert.ok(m.isViewPath('Snake.html'), 'a plain HTML file is a view');
 assert.ok(!m.isViewPath('notes/readme.md'), 'plain notes are not views');
 assert.ok(!m.isViewPath('notes/readme.htm'), 'only the .html extension is a view');
-assert.equal(m.appManifestPathFor('Snake/index.html'), 'Snake/neuron.app.json');
-assert.equal(m.appManifestPathFor('index.html'), null, 'the workspace root cannot be a folder app');
-assert.equal(m.appManifestPathFor('Snake/report.html'), null, 'only index.html can be a folder app entry');
-// Plain-view manifests mirror their path under .neuron/manifests:
+assert.equal(typeof m.appManifestPathFor, 'undefined', 'folder apps are gone');
+// View manifests mirror their path under .neuron/manifests:
 assert.equal(m.manifestPathFor('projects/tracker.html'), '.neuron/manifests/projects/tracker.json');
 assert.equal(m.manifestPathFor('projects/index.html'), '.neuron/manifests/projects/index.json');
-// A folder app's manifest is the co-located marker, never under .neuron:
-assert.equal(m.manifestPathFor('Snake/index.html', true), 'Snake/neuron.app.json');
 assert.equal(m.legacyManifestPathFor('projects/tracker.html'), 'projects/tracker.neuron.json');
-assert.equal(m.defaultViewName('Snake/index.html', true), 'Snake', 'folder app is named for its folder');
-assert.equal(m.defaultViewName('a/b/Report.html'), 'Report', 'plain view is named for its file');
+assert.equal(m.defaultViewName('a/b/Report.html'), 'Report', 'a view is named for its file');
 
 // --- variables validation ---------------------------------------------------------
 const vars = m.validateVariablesFile({ version: 1, variables: { status: { type: 'string', value: 'active', writable: true } } });
@@ -122,6 +118,104 @@ assert.equal(m.interpolate('Hi {{ params.name }}', { params: { name: '<b>x</b>' 
 assert.equal(m.interpolate('{{ params.__proto__ }}', { params: {} }), '');
 assert.equal(m.interpolate('{{ variables.constructor.name }}', { variables: {} }), '');
 assert.equal(m.interpolate('{{ nope.x }}', { params: {} }), '');
+
+// --- full documents vs fragments -------------------------------------------------
+{
+  const S = m.DOCUMENT_SCRIPTS.neuron + m.DOCUMENT_SCRIPTS.htmx;
+  assert.equal(S, '<script src="neuron.js"></script><script src="htmx.js" defer></script>', 'the exact added bytes');
+
+  // Detection
+  for (const full of [
+    '<!doctype html><html><head></head></html>',
+    '<!DOCTYPE HTML>\n<html>',
+    '<HTML lang="en"><HEAD></HEAD></HTML>',
+    '﻿<!doctype html><html>',
+    '\n  <!-- a comment -->\n<!-- another --> <!doctype html><html>',
+    '<html>',
+  ]) assert.ok(m.isFullDocument(full), `full document: ${JSON.stringify(full)}`);
+  for (const fragment of [
+    '<h1>Hi</h1>',
+    '<style>p{}</style><p>x</p>',
+    '<!-- <html> -->\n<p>x</p>',
+    '<script>const s = "<html>";</script>',
+    '<p><html></p>',
+    '<htmlx>',
+    '<!-- unterminated <html>',
+    '',
+  ]) assert.ok(!m.isFullDocument(fragment), `fragment: ${JSON.stringify(fragment)}`);
+  assert.equal(m.prepareFullDocument('<!-- <html> -->\n<p>x</p>', 'dark'), null, 'a fragment is never prepared as a document');
+
+  // With a head: scripts go right after <head ...>, data-theme onto <html>.
+  assert.equal(
+    m.prepareFullDocument('<!doctype html>\n<html lang="fr">\n<head>\n<title>T</title></head><body></body></html>', 'dark'),
+    `<!doctype html>\n<html lang="fr" data-theme="dark">\n<head>${S}\n<title>T</title></head><body></body></html>`,
+  );
+  // Without a head: one is inserted right after <html ...>.
+  assert.equal(
+    m.prepareFullDocument('<!doctype html><html lang="en"><body><p>x</p></body></html>', 'light'),
+    `<!doctype html><html lang="en" data-theme="light"><head>${S}<body><p>x</p></body></html>`,
+  );
+  // Doctype and a head but no <html> tag: nothing to put data-theme on.
+  assert.equal(m.prepareFullDocument('<!doctype html><head></head><p>x</p>', 'dark'), `<!doctype html><head>${S}</head><p>x</p>`);
+  // Doctype with neither tag is not something to place tags in: a fragment.
+  assert.equal(m.prepareFullDocument('<!doctype html><title>x</title><p>y</p>', 'dark'), null);
+  // A ">" inside a quoted attribute does not end the tag.
+  assert.equal(
+    m.prepareFullDocument('<html data-x="a>b"><head data-note="1 > 0" class=\'x>y\'><title>t</title></head></html>', 'dark'),
+    `<html data-x="a>b" data-theme="dark"><head data-note="1 > 0" class='x>y'>${S}<title>t</title></head></html>`,
+  );
+  // A <head> inside a comment, a script or a style is not the head.
+  assert.equal(
+    m.prepareFullDocument('<html><!-- <head> --><script>"<head>"</script><style>/* <head> */</style><head></head></html>', 'dark'),
+    `<html data-theme="dark"><!-- <head> --><script>"<head>"</script><style>/* <head> */</style><head>${S}</head></html>`,
+  );
+  // <header> is not <head>.
+  assert.equal(
+    m.prepareFullDocument('<html><body><header>x</header></body></html>', 'dark'),
+    `<html data-theme="dark"><head>${S}<body><header>x</header></body></html>`,
+  );
+  // Scripts the document already loads are not added twice; a commented-out one
+  // does not count as loaded.
+  assert.equal(
+    m.prepareFullDocument('<html><head><script src="neuron.js"></script></head></html>', 'dark'),
+    `<html data-theme="dark"><head>${m.DOCUMENT_SCRIPTS.htmx}<script src="neuron.js"></script></head></html>`,
+  );
+  assert.equal(
+    m.prepareFullDocument('<html><head></head><body><script src="./htmx.js?v=2" defer></script><script src=neuron.js></script></body></html>', 'dark'),
+    '<html data-theme="dark"><head></head><body><script src="./htmx.js?v=2" defer></script><script src=neuron.js></script></body></html>',
+  );
+  assert.equal(
+    m.prepareFullDocument('<html><head><!-- <script src="neuron.js"></script> --><script src="my-neuron.js"></script></head></html>', 'dark'),
+    `<html data-theme="dark"><head>${S}<!-- <script src="neuron.js"></script> --><script src="my-neuron.js"></script></head></html>`,
+  );
+  // data-theme only when absent, whatever its value or case.
+  assert.equal(
+    m.prepareFullDocument('<html DATA-THEME="sepia"><head></head></html>', 'dark'),
+    `<html DATA-THEME="sepia"><head>${S}</head></html>`,
+  );
+  // An attribute value that merely contains "data-theme" does not count.
+  assert.equal(
+    m.prepareFullDocument('<html class="data-theme"><head></head></html>', 'light'),
+    `<html class="data-theme" data-theme="light"><head>${S}</head></html>`,
+  );
+  // Everything else is untouched: a leading BOM, comments, meta, title, classes.
+  {
+    const src = '﻿<!-- top -->\n<!doctype html>\n<html lang="fr" class="a">\n<head>\n  <meta charset="utf-8">\n  <meta http-equiv="Content-Security-Policy" content="img-src \'none\'">\n  <title>Mon tableau</title>\n</head>\n<body class="b"><p>x</p></body>\n</html>\n';
+    const out = m.prepareFullDocument(src, 'dark');
+    assert.equal(out.replace(S, '').replace(' data-theme="dark"', ''), src, 'only the two scripts and data-theme are added');
+  }
+
+  // Interpolation behaves the same for both kinds: it runs before either.
+  const doc = m.interpolate('<!doctype html><html><head><title>{{ variables.t }}</title></head></html>', { variables: { t: '<b>' } });
+  assert.ok(m.prepareFullDocument(doc, 'dark').includes('<title>&lt;b&gt;</title>'));
+
+  // Fragments are wrapped as before, now as a valid document with a lang and neuron.js.
+  const wrapped = m.wrapDocument({ body: '<p>hi</p>', title: 'V', sessionId: 'sid', theme: 'dark', styles: [] });
+  assert.ok(wrapped.startsWith('<!doctype html>\n<html lang="en">\n<head>'));
+  assert.ok(wrapped.includes('<link rel="stylesheet" href="/views/sid/neuron.css">'));
+  assert.ok(wrapped.includes('<script src="/views/sid/neuron.js"></script>\n  <script src="/views/sid/htmx.js" defer></script>'));
+  assert.ok(wrapped.includes('<body class="neuron-view theme-dark">\n<p>hi</p>\n</body>'));
+}
 
 // --- sessions -----------------------------------------------------------------
 const sessions = new m.SessionManager();
@@ -209,9 +303,40 @@ assert.equal(unmanifestedRes.status, 200, 'an unmanifested .html file still rend
 assert.equal(unmanifestedRes.headers.get('content-security-policy'), viewCsp, 'all HTML views use the same CSP');
 assert.ok((await unmanifestedRes.text()).includes('Unmanifested report'));
 
+// A full document is served as written: the author's lang and title survive,
+// neuron.js is added once, and the CSP and cookie are the same as for a fragment.
+{
+  writeFileSync(join(ws, 'full.html'), '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<title>Tableau {{ variables.dashboardTitle }}</title>\n</head>\n<body><p>Bonjour</p></body>\n</html>\n');
+  const s = sessions.create({
+    viewPath: 'full.html', root: ws, name: 'Full', theme: 'light',
+    caps: new Set(['variables.read']), readPolicy: [], writePolicy: [],
+  });
+  const res = await fetch(`${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-security-policy'), viewCsp, 'a full document carries the same CSP');
+  assert.match(res.headers.get('set-cookie') ?? '', /^nv=[^;]+; Path=\/; HttpOnly; SameSite=Strict$/, 'and the same session cookie');
+  const html = await res.text();
+  assert.ok(html.startsWith('<!doctype html>\n<html lang="fr" data-theme="light">\n<head><script src="neuron.js"></script><script src="htmx.js" defer></script>\n'));
+  assert.ok(html.includes('<title>Tableau Ops &lt;Dash&gt;</title>'), 'title kept, and interpolated + escaped as before');
+  assert.equal(html.split('neuron.js').length - 1, 1, 'neuron.js is included once');
+  assert.ok(!html.includes('neuron.css'), 'the stylesheet is opt-in for full documents');
+  assert.ok(!html.includes('neuron-view'), 'no wrapper around a full document');
+
+  // neuron.js is guarded like htmx.js: session cookie, own session only.
+  assert.equal((await fetch(`${srv.origin}/views/${s.id}/neuron.js`)).status, 401, 'neuron.js without a cookie -> 401');
+  assert.equal((await api(writer, `/views/${s.id}/neuron.js`)).status, 403, 'cross-view neuron.js -> 403');
+  const js = await api(s, `/views/${s.id}/neuron.js`);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get('content-type') ?? '', /application\/javascript/);
+  assert.equal(js.headers.get('cache-control'), 'no-store', 'same caching as htmx.js');
+  assert.match(await js.text(), /window\.neuron = /);
+  sessions.revoke(s.id);
+}
+
 // Cross-view isolation: writer's cookie cannot pull reader's assets
 assert.equal((await api(writer, `/views/${reader.id}/htmx.js`)).status, 403, 'cross-view asset access -> 403');
 assert.equal((await api(reader, `/views/${reader.id}/htmx.js`)).status, 200);
+assert.equal((await fetch(`${srv.origin}/views/${reader.id}/htmx.js`)).status, 401, 'htmx.js without a cookie -> 401');
 
 // Context + capability enforcement
 const context = await (await api(reader, '/api/v1/context')).json();
@@ -303,6 +428,30 @@ assert.equal((await api(reader, '/api/v1/fragments/..%2F..%2Fetc')).status, 404,
   const v1 = await (await api(reader, '/api/v1/db?path=notes/Old.db')).json();
   assert.equal(v1.rows.length, 1, 'v1 database reads without a table name');
   assert.equal(v1.rows[0].values.a, 'cell-one', 'v1 rows expose their values');
+}
+
+// The neuron.js helper, run against the live server: parsed JSON on success, an
+// Error carrying the server's message and HTTP status on failure, and no access
+// the session does not already have.
+{
+  const s = mkSession(['workspace.files.read'], ['notes/**']);
+  const win = {};
+  const viewFetch = (u, init) => fetch(srv.origin + u, { ...init, headers: { ...init.headers, ...cookie(s) } });
+  new Function('window', 'fetch', m.NEURON_VIEW_JS)(win, viewFetch);
+  const { neuron } = win;
+  assert.equal(neuron.theme, null, 'theme is unknown until context() resolves');
+  const ctx = await neuron.context();
+  assert.equal(ctx.apiVersion, 1);
+  assert.equal(neuron.theme, 'dark', 'theme is cached from context()');
+  const file = await neuron.read('notes/hello.md');
+  assert.ok(file.content.startsWith('# Hello world') && file.hash, 'read returns content and hash');
+  const table = await neuron.db('notes/Plan.db', { table: 'tasks' });
+  assert.equal(table.rows[0].values.status, 'Todo');
+  await assert.rejects(neuron.read('data/out.txt'), (e) => e instanceof Error && e.status === 403 && /allowed read paths/.test(e.message), 'off-policy read rejects with the server message');
+  await assert.rejects(neuron.write('notes/hello.md', 'x'), (e) => e.status === 403 && e.code === 'missing_capability', 'the helper grants nothing');
+  await assert.rejects(neuron.tags(), (e) => e.status === 403);
+  assert.ok(Object.isFrozen(neuron));
+  sessions.revoke(s.id);
 }
 
 // Variables: read, write-protected, writable roundtrip, type checks

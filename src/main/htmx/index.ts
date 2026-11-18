@@ -9,7 +9,7 @@ import { SessionManager, sha256 } from './sessions';
 import { createViewServer, ViewServer } from './server';
 import { compilePolicy, resolveInWorkspace } from './pathPolicy';
 import { validateManifest, effectiveGrants, ViewManifest } from './manifest';
-import { isViewPath, appManifestPathFor, manifestPathFor, legacyManifestPathFor, defaultViewName } from './appPaths';
+import { isViewPath, manifestPathFor, legacyManifestPathFor, defaultViewName } from './appPaths';
 
 interface Deps {
   /** The workspace of the window that sent the request; views are served against that root only. */
@@ -111,25 +111,22 @@ function ensureScaffold(root: string): void {
 
 // --- manifest + approvals -------------------------------------------------------
 
-function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[]; appEntry: boolean; manifestPath: string } {
-  const appMarker = appManifestPathFor(viewRel);
-  const resolvedMarker = appMarker ? resolveInWorkspace(root, appMarker) : null;
-  const appEntry = !!resolvedMarker && fs.existsSync(resolvedMarker.full);
-  const manifestPath = manifestPathFor(viewRel, appEntry);
+function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[]; manifestPath: string } {
+  const manifestPath = manifestPathFor(viewRel);
   const primary = resolveInWorkspace(root, manifestPath);
   const legacy = resolveInWorkspace(root, legacyManifestPathFor(viewRel));
   const resolved = primary && fs.existsSync(primary.full) ? primary
     : legacy && fs.existsSync(legacy.full) ? legacy
     : null;
-  if (!resolved) return { manifest: null, hash: 'none', errors: [], appEntry, manifestPath };
+  if (!resolved) return { manifest: null, hash: 'none', errors: [], manifestPath };
   let raw: string;
-  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'], appEntry, manifestPath }; }
+  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'], manifestPath }; }
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'], appEntry, manifestPath }; }
+  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'], manifestPath }; }
   const result = validateManifest(parsed);
-  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors, appEntry, manifestPath };
+  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors, manifestPath };
   // Approvals bind to the exact manifest content: any edit re-requests consent.
-  return { manifest: result.value!, hash: sha256(raw), errors: [], appEntry, manifestPath };
+  return { manifest: result.value!, hash: sha256(raw), errors: [], manifestPath };
 }
 
 function viewKey(root: string, viewRel: string): string {
@@ -154,11 +151,11 @@ export function initHtmxViews(deps: Deps): void {
 
     try { ensureScaffold(root); } catch { /* read-only workspace: views still work */ }
 
-    const { manifest, hash, errors, appEntry, manifestPath } = loadManifest(root, resolved.rel);
+    const { manifest, hash, errors, manifestPath } = loadManifest(root, resolved.rel);
     if (errors.length) return { status: 'error', message: `Invalid manifest (${manifestPath}): ${errors.join(' ')}` };
 
     const grants = effectiveGrants(manifest);
-    const name = manifest?.name ?? defaultViewName(resolved.rel, appEntry);
+    const name = manifest?.name ?? defaultViewName(resolved.rel);
     if (grants.needsApproval && !isApproved(viewKey(root, resolved.rel), hash)) {
       return {
         status: 'needs-approval',

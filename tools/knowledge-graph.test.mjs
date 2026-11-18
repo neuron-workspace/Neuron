@@ -47,6 +47,11 @@ assert.ok(m.graph.hasDirectedEdge('a.md', 'Missing.md'));
 assert.deepEqual(graphPreferences(null), GRAPH_DEFAULTS);
 assert.equal(graphPreferences({ depth: 99, repel: NaN, arrows: 'yes' }).depth, 5);
 assert.equal(graphPreferences({ repel: NaN }).repel, GRAPH_DEFAULTS.repel);
+// Links default thicker than before so they read on a light theme; what a person saved still wins.
+assert.equal(GRAPH_DEFAULTS.linkThickness, 1.2);
+assert.equal(graphPreferences({ linkThickness: 1 }).linkThickness, 1);
+assert.equal(graphPreferences({ linkThickness: 9 }).linkThickness, 4);
+assert.equal(graphPreferences({ local: true, depth: 3 }).local, true);
 
 for (const [name, content] of [
   ["backtick fence", "```\n[[inside]]\n```"],

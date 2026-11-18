@@ -10,6 +10,7 @@ const aiOpenrouter: PluginModule = {
     author: 'Neuron',
     description: 'Chat with any model hosted on OpenRouter about the note you are editing.',
     category: 'ai',
+    connector: { id: 'openrouter', name: 'OpenRouter', description: 'Models hosted on OpenRouter, with your API key.' },
     configSchema: [
       { key: 'apiKey', label: 'OpenRouter API key', type: 'password', placeholder: 'sk-or-…', description: 'Stored in the main process. It is never readable by the app UI or by any plugin, including this one.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'google/gemini-2.5-flash', description: 'Optional. Defaults to google/gemini-2.5-flash.' },
@@ -22,11 +23,10 @@ const aiOpenrouter: PluginModule = {
       icon: Sparkles,
       render: (runtime) => (
         <AssistantPanel
-          pluginId="ai-openrouter"
           host={runtime}
           provider="openrouter"
           defaultModel="google/gemini-2.5-flash"
-          emptyHint="Ask OpenRouter models to summarize, rewrite, or expand the note you have open. Add your API key in plugin settings first."
+          emptyHint="Ask OpenRouter models to summarize, rewrite, or expand the note you have open. Set up OpenRouter in Settings › Connectors first."
         />
       ),
     });

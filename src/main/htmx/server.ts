@@ -1,6 +1,7 @@
 // The Neuron local view server. Serves HTMX view documents, the bundled htmx
-// runtime, the neuron-view stylesheet, approved workspace styles, fragments,
-// and the /api/v1 routes. Loopback only, ephemeral port, cookie-token auth.
+// runtime, the neuron.js helper, the neuron-view stylesheet, approved workspace
+// styles, fragments, and the /api/v1 routes. Loopback only, ephemeral port,
+// cookie-token auth.
 //
 // Electron-free by design (http/fs/path/crypto only) so integration tests can
 // start it in plain Node.
@@ -12,11 +13,12 @@ import { SessionManager, ViewSession, sha256 } from './sessions';
 import { policyAllows, resolveInWorkspace } from './pathPolicy';
 import { validateVariablesFile, VariableDef } from './manifest';
 import {
-  esc, interpolate, wrapDocument, errorFragment,
+  esc, interpolate, wrapDocument, prepareFullDocument, errorFragment,
   fileListFragment, searchResultsFragment, noteRowsFragment,
   FileRow, SearchRow, NoteRow,
 } from './html';
 import { NEURON_VIEW_CSS } from './theme';
+import { NEURON_VIEW_JS } from './neuronJs';
 import { capturePreImage } from '../journal';
 
 export const API_VERSION = 1;
@@ -306,11 +308,15 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const { vars } = loadVariables(session.root);
       body = interpolate(body, { variables: Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v.value])) });
     }
-    // Workspace styles the document opts into: <link href="styles/x.css"> works
-    // via relative resolution, but we also honor .neuron/styles/<view-name>.css.
-    const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.html$/i, '')}.css`;
-    const styles = fs.existsSync(path.join(session.root, '.neuron', 'styles', autoStyle)) ? [autoStyle] : [];
-    const html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles });
+    // A whole document is served as written, plus two script tags and
+    // data-theme. Anything else is a fragment and gets Neuron's wrapper, which
+    // also honors .neuron/styles/<view-name>.css (a full document links its own).
+    let html = prepareFullDocument(body, session.theme);
+    if (html === null) {
+      const autoStyle = `${session.viewPath.split('/').pop()!.replace(/\.html$/i, '')}.css`;
+      const styles = fs.existsSync(path.join(session.root, '.neuron', 'styles', autoStyle)) ? [autoStyle] : [];
+      html = wrapDocument({ body, title: session.name, sessionId: session.id, theme: session.theme, styles });
+    }
     send(ctx.res, 200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': VIEW_CSP,
@@ -323,6 +329,10 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
   function serveViewAsset(ctx: Ctx, asset: string): void {
     if (asset === 'htmx.js') {
       send(ctx.res, 200, { 'Content-Type': 'application/javascript; charset=utf-8' }, fs.readFileSync(htmxJsPath));
+      return;
+    }
+    if (asset === 'neuron.js') {
+      send(ctx.res, 200, { 'Content-Type': 'application/javascript; charset=utf-8' }, NEURON_VIEW_JS);
       return;
     }
     if (asset === 'neuron.css') {

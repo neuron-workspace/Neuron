@@ -1,5 +1,8 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
-import { ChevronRight, Plus, X, MoreHorizontal, AlertTriangle, Code2, ListTree, Tag, Hash, Type, ToggleLeft, Calendar } from 'lucide-react';
+import { useId, useMemo, useState, useRef, useEffect } from 'react';
+import { ChevronRight, Plus, X, MoreHorizontal, Pencil, Code2, ListTree, Tag, Hash, Type, ToggleLeft, Calendar } from 'lucide-react';
+import { CalloutIcon } from '../mdx-components';
+import { CHIP_CLASS, formatDate, hostOf } from '../db/DbCards';
+import { Checkbox } from '../ui/checkbox';
 import {
   parseFrontmatter,
   serializeFrontmatter,
@@ -76,17 +79,17 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
 
   if (parsed.hasFrontmatter && !parsed.valid) {
     return (
-      <section className="doc-props mx-auto mt-2 w-full rounded-md border border-[var(--danger)] bg-[var(--danger-surface)]" aria-label="Document properties (error)">
-        <div className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--danger)]">
-          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-          <span className="font-medium">Properties can’t be shown — the frontmatter YAML is invalid.</span>
+      <section className="doc-props callout mx-auto w-full px-3.5 py-3" data-callout-kind="error" aria-label="Document properties (error)">
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--ink)]">
+          <CalloutIcon kind="error" />
+          <span className="font-semibold">Properties can’t be shown — the frontmatter YAML is invalid.</span>
           {onViewRaw && (
             <button className="interactive ml-auto rounded px-2 py-0.5 font-medium underline underline-offset-2 hover:bg-[var(--surface-hover)]" onClick={onViewRaw}>
               Edit as YAML
             </button>
           )}
         </div>
-        {parsed.diagnostics[0] && <p className="px-3 pb-2 text-[11px] text-[var(--danger)]">{parsed.diagnostics[0].message}</p>}
+        {parsed.diagnostics[0] && <p className="mt-1 pl-6 text-xs text-[var(--ink-secondary)]">{parsed.diagnostics[0].message}</p>}
       </section>
     );
   }
@@ -95,21 +98,20 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
   const showCollapse = count > 0;
 
   return (
-    <section className="doc-props mx-auto w-full rounded-md border border-[var(--divider)] bg-[var(--surface)]" aria-label="Document properties">
-      <header className="flex items-center gap-1.5 px-2.5 py-1.5">
+    <section className="doc-props mx-auto w-full border-b border-[var(--divider)] pb-2" aria-label="Document properties">
+      <header className="group/header flex min-h-8 items-center gap-1.5">
         <button
           type="button"
-          className="interactive flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
+          className="interactive flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]"
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((c) => !c)}
           disabled={!showCollapse}
         >
           {showCollapse && <ChevronRight className={`h-3.5 w-3.5 transition-transform ${collapsed ? '' : 'rotate-90'}`} aria-hidden />}
-          <ListTree className="h-3.5 w-3.5" aria-hidden />
           <span>Properties{count ? ` · ${count}` : ''}</span>
         </button>
         {!readOnly && (
-          <div className="ml-auto flex items-center gap-0.5">
+          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100">
             <button type="button" aria-label="Add property" title="Add property" className="interactive grid h-6 w-6 place-items-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setAdding(true)}>
               <Plus className="h-3.5 w-3.5" />
             </button>
@@ -129,7 +131,7 @@ export default function DocumentProperties(props: DocumentPropertiesProps) {
       </header>
 
       {!collapsed && (
-        <div className="border-t border-[var(--divider)]">
+        <div>
           {props_.map((p, i) => (
             <PropertyRow
               key={p.key}
@@ -191,11 +193,11 @@ function PropertyRow(p: RowProps) {
   const [editingKey, setEditingKey] = useState(false);
   const [draftKey, setDraftKey] = useState(property.key);
   useEffect(() => setDraftKey(property.key), [property.key]);
-  const inputId = `prop-${property.key}`;
+  const inputId = useId();
 
   return (
-    <div className="group flex items-start gap-2 border-t border-[var(--divider)] px-3 py-1.5 first:border-t-0 hover:bg-[var(--surface-hover)]">
-      <div className="flex w-40 shrink-0 items-center gap-1.5 pt-1.5 text-xs text-[var(--ink-secondary)]">
+    <div className="group flex min-h-8 items-start gap-2 rounded px-1 py-0.5 hover:bg-[var(--surface-hover)]">
+      <div className="flex w-40 shrink-0 items-center gap-1.5 pt-1 text-[13px] text-[var(--ink-secondary)]">
         <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" aria-hidden />
         {editingKey && !readOnly ? (
           <input
@@ -227,7 +229,7 @@ function PropertyRow(p: RowProps) {
       {!readOnly && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button type="button" aria-label={`Actions for ${property.label}`} className="interactive mt-1 grid h-6 w-6 shrink-0 place-items-center rounded text-[var(--ink-muted)] opacity-0 hover:bg-[var(--surface)] hover:text-[var(--ink)] focus-visible:opacity-100 group-hover:opacity-100">
+            <button type="button" aria-label={`Actions for ${property.label}`} className="interactive grid h-6 w-6 shrink-0 place-items-center rounded text-[var(--ink-muted)] opacity-0 hover:bg-[var(--surface)] hover:text-[var(--ink)] group-focus-within:opacity-100 group-hover:opacity-100">
               <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
@@ -256,7 +258,8 @@ interface ValueProps {
   onViewRaw?: () => void;
 }
 
-const INPUT_CLS = 'w-full rounded border border-[var(--divider)] bg-[var(--canvas)] px-2 py-1 text-xs text-[var(--ink)] outline-none focus:border-[var(--accent)] focus:shadow-[0_0_0_1px_var(--accent)]';
+const INPUT_CLS = 'w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 text-[13px] leading-5 text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent)] focus:bg-[var(--canvas)] focus:outline-none';
+const VALUE_CLS = 'block w-full min-w-0 whitespace-pre-wrap break-words rounded px-1 py-0.5 text-left text-[13px] leading-5 text-[var(--ink)]';
 
 function PropertyValueEditor({ property, readOnly, inputId, tagSuggestions, onTagClick, onValue, onViewRaw }: ValueProps) {
   const { type, value } = property;
@@ -264,7 +267,7 @@ function PropertyValueEditor({ property, readOnly, inputId, tagSuggestions, onTa
   if (type === 'unknown' || !property.editable) {
     return (
       <div className="flex items-start gap-2">
-        <pre className="min-w-0 flex-1 overflow-x-auto rounded border border-[var(--divider)] bg-[var(--canvas)] px-2 py-1 font-mono text-[11px] text-[var(--ink-secondary)]">{formatUnknown(value)}</pre>
+        <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words px-1 py-0.5 font-mono text-xs text-[var(--ink-secondary)]">{formatUnknown(value)}</pre>
         {!readOnly && onViewRaw && <button type="button" className="interactive shrink-0 rounded px-1.5 py-1 text-[11px] text-[var(--ink-muted)] hover:text-[var(--ink)]" onClick={onViewRaw}>Edit as YAML</button>}
       </div>
     );
@@ -272,8 +275,8 @@ function PropertyValueEditor({ property, readOnly, inputId, tagSuggestions, onTa
 
   if (type === 'boolean') {
     return (
-      <label className="flex items-center gap-2 py-1 text-xs text-[var(--ink-secondary)]">
-        <input id={inputId} type="checkbox" className="task-checkbox" checked={!!value} disabled={readOnly} onChange={(e) => onValue(e.target.checked)} aria-label={property.label} />
+      <label className="flex items-center gap-2 px-1 py-0.5 text-[13px] text-[var(--ink)]">
+        <Checkbox id={inputId} className="shadow-none" checked={!!value} disabled={readOnly} onCheckedChange={(checked) => onValue(checked === true)} aria-label={property.label} />
         <span>{value ? 'Yes' : 'No'}</span>
       </label>
     );
@@ -291,7 +294,7 @@ function PropertyValueEditor({ property, readOnly, inputId, tagSuggestions, onTa
     const dateStr = typeof value === 'string' ? value : '';
     const valid = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
     if (valid || !dateStr) {
-      return <input id={inputId} type="date" className={INPUT_CLS} value={dateStr} disabled={readOnly} aria-label={property.label} onChange={(e) => onValue(e.target.value)} />;
+      return <TextEditor id={inputId} type="date" value={dateStr} readOnly={readOnly} onChange={onValue} label={property.label} />;
     }
     // Non-ISO date value: fall back to text so we never mangle it.
     return <TextEditor id={inputId} value={dateStr} readOnly={readOnly} onChange={onValue} label={property.label} />;
@@ -311,19 +314,33 @@ function formatUnknown(value: unknown): string {
 }
 
 // Text: local draft, commit on blur / Enter (avoids caret jumps + churn).
-function TextEditor({ id, value, readOnly, onChange, label }: { id: string; value: string; readOnly: boolean; onChange: (v: string) => void; label: string }) {
+function TextEditor({ id, value, readOnly, onChange, label, type = 'text' }: { id: string; value: string; readOnly: boolean; onChange: (v: string) => void; label: string; type?: 'text' | 'date' }) {
   const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
   useEffect(() => setDraft(value), [value]);
+  if (!editing || readOnly) {
+    const display = value ? (type === 'date' ? formatDate(value) : value) : <span className="text-[var(--ink-muted)]">Empty</span>;
+    if (/^https?:\/\//i.test(value)) {
+      return <div className="flex min-w-0 items-start gap-1">
+        <a href={value} target="_blank" rel="noreferrer" title={value} className={`${VALUE_CLS} interactive text-[var(--accent-strong)] underline underline-offset-2`}>{hostOf(value)}</a>
+        {!readOnly && <button type="button" aria-label={label} title={`Edit ${label}`} className="interactive shrink-0 rounded p-1 text-[var(--ink-muted)]" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /></button>}
+      </div>;
+    }
+    return readOnly ? <div className={VALUE_CLS} aria-label={label}>{display}</div>
+      : <button type="button" className={`${VALUE_CLS} interactive`} aria-label={label} onClick={() => setEditing(true)}>{display}</button>;
+  }
   return (
     <input
+      autoFocus
+      type={type}
       id={id}
       className={INPUT_CLS}
       value={draft}
       disabled={readOnly}
       aria-label={label}
       placeholder="Empty"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== value && onChange(draft)}
+      onChange={(e) => { setDraft(e.target.value); if (type === 'date') onChange(e.target.value); }}
+      onBlur={() => { setEditing(false); if (draft !== value) onChange(draft); }}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
     />
   );
@@ -331,17 +348,25 @@ function TextEditor({ id, value, readOnly, onChange, label }: { id: string; valu
 
 function MultilineEditor({ id, value, readOnly, onChange, label }: { id: string; value: string; readOnly: boolean; onChange: (v: string) => void; label: string }) {
   const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
   useEffect(() => setDraft(value), [value]);
+  if (!editing || readOnly) {
+    const display = value || <span className="text-[var(--ink-muted)]">Empty</span>;
+    return readOnly ? <div className={VALUE_CLS} aria-label={label}>{display}</div>
+      : <button type="button" className={`${VALUE_CLS} interactive`} aria-label={label} onClick={() => setEditing(true)}>{display}</button>;
+  }
   return (
     <textarea
+      autoFocus
       id={id}
       rows={Math.min(8, Math.max(2, draft.split('\n').length))}
       className={`${INPUT_CLS} resize-y font-sans leading-5`}
       value={draft}
       disabled={readOnly}
       aria-label={label}
+      placeholder="Empty"
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== value && onChange(draft)}
+      onBlur={() => { setEditing(false); if (draft !== value) onChange(draft); }}
     />
   );
 }
@@ -355,7 +380,7 @@ function NumberEditor({ id, value, readOnly, onChange, label }: { id: string; va
       id={id}
       type="text"
       inputMode="decimal"
-      className={INPUT_CLS}
+      className={`${INPUT_CLS} tabular-nums`}
       value={draft}
       disabled={readOnly}
       aria-label={label}
@@ -378,26 +403,27 @@ function ChipEditor({ id, values, readOnly, suggestions, onTagClick, onChange, l
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {values.map((v) => (
-        <span key={v} className="inline-flex items-center gap-1 rounded border border-[var(--divider)] bg-[var(--canvas)] px-1.5 py-0.5 text-[11px] text-[var(--ink-secondary)]">
+        <span key={v} className={`${CHIP_CLASS} inline-flex max-w-full items-center gap-1 bg-[color-mix(in_srgb,var(--ink-secondary)_18%,transparent)] text-[var(--ink-secondary)]`}>
           {onTagClick ? (
-            <button type="button" className="interactive hover:text-[var(--accent-strong)]" onClick={() => onTagClick(v)} title={`Search #${v}`}>{v}</button>
-          ) : <span>{v}</span>}
+            <button type="button" className="interactive min-w-0 break-words hover:text-[var(--accent-strong)]" onClick={() => onTagClick(v)} title={`Search #${v}`}>{v}</button>
+          ) : <span className="min-w-0 break-words">{v}</span>}
           {!readOnly && (
-            <button type="button" aria-label={`Remove ${v}`} className="interactive text-[var(--ink-muted)] hover:text-[var(--danger)]" onClick={() => onChange(values.filter((x) => x !== v))}>
+            <button type="button" aria-label={`Remove ${v}`} className="interactive shrink-0 text-[var(--ink-muted)] hover:text-[var(--danger)]" onClick={() => onChange(values.filter((x) => x !== v))}>
               <X className="h-3 w-3" />
             </button>
           )}
         </span>
       ))}
+      {readOnly && values.length === 0 && <span className="px-1 py-0.5 text-[13px] text-[var(--ink-muted)]">Empty</span>}
       {!readOnly && (
         <>
           <input
             id={id}
             list={suggestions.length ? listId : undefined}
-            className="min-w-[6rem] flex-1 bg-transparent px-1 py-0.5 text-xs text-[var(--ink)] outline-none placeholder:text-[var(--ink-muted)]"
+            className="interactive min-w-0 basis-24 flex-1 rounded bg-transparent px-1 py-0.5 text-[13px] text-[var(--ink)] placeholder:text-[var(--ink-muted)]"
             value={draft}
             aria-label={`Add to ${label}`}
-            placeholder={values.length ? 'Add…' : 'Add value…'}
+            placeholder={values.length ? 'Add…' : 'Empty'}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(draft); }

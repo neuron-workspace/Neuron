@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter } from 'electron';
 import type { WebContents } from 'electron';
-import { decideOpen, ownsPtyKey, ptyKey, type WindowKind } from './workspace-windows';
+import { decideOpen, settingsSectionOf, ownsPtyKey, ptyKey, type SettingsSection, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -25,6 +25,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { watchWorkspace } from './workspace-watcher';
+import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import { exec } from 'child_process';
 import * as pty from 'node-pty';
 
@@ -46,6 +47,8 @@ interface AppWindow {
 const appWindows = new Map<number, AppWindow>();
 /** The workspace window used last, for things with no sender (a second launch). */
 let lastWorkspaceId: number | null = null;
+/** The workspace of the window that last opened Settings, which its Workspaces section marks. */
+let settingsOpener: string | null = null;
 type Sender = { sender: WebContents };
 const entryOf = (event: Sender): AppWindow | null => appWindows.get(event.sender.id) ?? null;
 const windowOf = (event: Sender): BrowserWindow | null => {
@@ -112,9 +115,9 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 // Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, Mermaid diagrams, folder mini-apps (neuron.app + neuron.app.json), the internal shell
-// config, and .neuron configuration/assets.
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|(^|[\/\\])neuron\.app\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid)$)/;
+// canvases, Mermaid diagrams, CSV tables, the internal shell
+// config, and .neuron configuration/assets (CSV table metadata is .neuron/tables/**.json).
+const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid|csv)$)/;
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent
@@ -314,6 +317,10 @@ function setupWatcher(entry: AppWindow) {
     if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
       entry.window.webContents.send('notes:changed', event, relativePath);
     }
+    // The renderer asks for the full listing again. Not for edits to notes, or
+    // every save while typing would re-walk the folder. Other files count even
+    // on 'change': the native watcher can report a new file as one.
+    if (event !== 'change' || !WORKSPACE_FILE.test(relativePath)) entry.window.webContents.send('workspace:changed');
   });
 }
 
@@ -321,7 +328,7 @@ function setupWatcher(entry: AppWindow) {
 // Window
 // ==========================================================================
 
-function createWindow(kind: WindowKind = 'workspace', repo: string | null = savedRepo()): AppWindow {
+function createWindow(kind: WindowKind = 'workspace', repo: string | null = savedRepo(), section?: SettingsSection): AppWindow {
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
     : path.join(process.cwd(), 'build', 'icon.png');
@@ -358,8 +365,8 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
     backgroundColor: '#f3f4f6',
   });
   if (testInBackground) window.once('ready-to-show', () => { if (!window.isDestroyed()) window.showInactive(); });
-  // Settings and the workspace manager are small windows with no workspace of their own.
-  if (kind !== 'workspace') { window.setMinimumSize(640, 480); window.setSize(980, 720); }
+  // Settings is a smaller window with no workspace of its own.
+  if (kind !== 'workspace') { window.setMinimumSize(760, 520); window.setSize(1000, 720); }
   const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null };
   const id = window.webContents.id;
   appWindows.set(id, entry);
@@ -373,10 +380,11 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   installApplicationMenu(() => BrowserWindow.getFocusedWindow());
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  const query: Record<string, string> | null = kind === 'workspace' ? null : { window: kind, ...(section ? { section } : {}) };
   if (isDev) {
-    void window.loadURL(kind === 'workspace' ? DEV_URL : DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + 'window=' + kind);
+    void window.loadURL(query ? DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + new URLSearchParams(query).toString() : DEV_URL);
   } else {
-    void window.loadFile(path.join(__dirname, '../renderer/index.html'), kind === 'workspace' ? undefined : { query: { window: kind } });
+    void window.loadFile(path.join(__dirname, '../renderer/index.html'), query ? { query } : undefined);
   }
 
   // Full screen hides the toolbar; editors also use these events to remeasure.
@@ -404,6 +412,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
     entry.watcher = null;
     appWindows.delete(id);
     if (lastWorkspaceId === id) lastWorkspaceId = null;
+    if (kind === 'settings') settingsOpener = null;
   });
   // ...and again on the way out, because 'closed' is not on every exit path.
   // A shell that outlives the app is not a test problem: it is a process the
@@ -433,13 +442,26 @@ ipcMain.handle('window:toggle-fullscreen', (event) => {
   const window = windowOf(event);
   window?.setFullScreen(!window.isFullScreen());
 });
-// Pages that are about the app, not one workspace, get a window of their own:
-// one per page, brought forward if it is already open.
-ipcMain.handle('window:open-page', (event, page: unknown) => {
-  if (!entryOf(event) || (page !== 'settings' && page !== 'workspaces')) return { success: false };
-  const open = [...appWindows.values()].find((entry) => entry.kind === page);
-  focusWindow((open ?? createWindow(page, null)).window);
+// Settings, Plugins and Workspaces are about the app, not one workspace, so
+// they are sections of one Settings window, brought forward if already open.
+ipcMain.handle('window:open-page', (event, asked: unknown) => {
+  const from = entryOf(event);
+  const section = settingsSectionOf(asked);
+  if (!from || !section) return { success: false };
+  // Asked from Settings itself, the workspace it describes stays the same.
+  if (from.kind === 'workspace') settingsOpener = from.repo;
+  const open = [...appWindows.values()].find((entry) => entry.kind === 'settings');
+  if (open && !open.window.isDestroyed()) open.window.webContents.send('settings:show-section', section);
+  focusWindow((open ?? createWindow('settings', null, section)).window);
   return { success: true };
+});
+// Only the opener's name and folder cross over, and only while a window still
+// has it open: Settings gets no file access to it.
+ipcMain.handle('window:opener-workspace', (event) => {
+  if (entryOf(event)?.kind !== 'settings' || !settingsOpener) return null;
+  const opener = settingsOpener;
+  const open = [...appWindows.values()].some((entry) => entry.kind === 'workspace' && entry.repo === opener);
+  return open ? repoInfo(opener) : null;
 });
 ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
   const window = windowOf(event);
@@ -661,25 +683,11 @@ function resolveInRepo(event: Sender, relativePath: string): { repo: string; ful
   return { repo, fullPath };
 }
 
+// `.neuron` is walked although other dot-folders are not: `.neuron/layout.json`
+// is the one file in there a person would want to edit by hand, and the watcher
+// already reports it.
 function walkRepoFiles(repo: string): string[] {
-  const files: string[] = [];
-  const scanDir = (dir: string) => {
-    for (const item of fs.readdirSync(dir)) {
-      // Dot-entries are noise -- .git, .obsidian, editor droppings -- with one
-      // exception. `.neuron` is the workspace's own configuration, and
-      // `.neuron/layout.json` is the one file in there a person would want to
-      // edit by hand. The watcher already made this exception; the lister did
-      // not, so the file changed under a watcher that reported it and a list
-      // that had never heard of it.
-      if (item.startsWith('.') && !(dir === repo && item === '.neuron')) continue;
-      const fullPath = path.join(dir, item);
-      const stat = fs.statSync(fullPath);
-      if (stat.isDirectory()) scanDir(fullPath);
-      else files.push(path.relative(repo, fullPath).replace(/\\/g, '/'));
-    }
-  };
-  scanDir(repo);
-  return files;
+  return walkWorkspace(repo).files;
 }
 
 ipcMain.handle('notes:list', async (_event) => {
@@ -691,6 +699,23 @@ ipcMain.handle('notes:list', async (_event) => {
     console.error('Failed to list notes:', err);
   }
   return [];
+});
+
+// Everything in the workspace, for the file tree and the explorer. Separate
+// from notes:list because the renderer reads every listed note into memory.
+ipcMain.handle('workspace:entries', (event): WorkspaceEntries => {
+  const repo = repoOf(event);
+  if (!repo) return { files: [], folders: [], info: {}, skipped: 0, truncated: false };
+  return walkWorkspace(repo, { limit: ENTRY_LIMIT });
+});
+
+// Shows a workspace file in the system file manager. Never opens it: the
+// workspace may be someone else's and hold programs.
+ipcMain.handle('workspace:reveal', (event, relativePath: string) => {
+  const resolved = resolveInRepo(event, relativePath);
+  if (!resolved || !fs.existsSync(resolved.fullPath)) return { success: false };
+  shell.showItemInFolder(resolved.fullPath);
+  return { success: true };
 });
 
 ipcMain.handle('notes:read', async (_event, relativePath: string) => {
@@ -721,7 +746,26 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
     // Atomic write: a crash mid-write must never leave a half-written note or database.
     const tmp = `${resolved.fullPath}.tmp`;
     fs.writeFileSync(tmp, content, 'utf-8');
-    fs.renameSync(tmp, resolved.fullPath);
+    // On Windows a rename over a file another process holds open (the file
+    // watcher, an indexer, antivirus) fails with EPERM/EBUSY/EACCES for a few
+    // milliseconds. Retry briefly instead of dropping the user's edit.
+    for (let attempt = 0; ; attempt++) {
+      try { fs.renameSync(tmp, resolved.fullPath); break; }
+      catch (renameError) {
+        const code = (renameError as NodeJS.ErrnoException).code;
+        if (!['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) {
+          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+          throw renameError;
+        }
+        if (attempt >= 5) {
+          // Still held open: write in place rather than lose the edit.
+          fs.writeFileSync(resolved.fullPath, content, 'utf-8');
+          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+          break;
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * (attempt + 1));
+      }
+    }
     return { success: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1024,72 +1068,108 @@ ipcMain.handle('terminal:kill', (_event, id: number) => {
 
 interface AiMessage { role: 'user' | 'assistant'; content: string }
 
+/** Names for the messages below; the connector ids are the provider names. */
+const CONNECTOR_NAMES: Record<string, string> = { anthropic: 'Claude', openai: 'OpenAI', google: 'Gemini', openrouter: 'OpenRouter', local: 'Local model' };
+
+/** A connector's non-secret settings (endpoint, model), saved by Settings › Connectors. */
+function connectorValues(id: string): Record<string, string> {
+  const all = readSettings().connectors;
+  const values = all && typeof all === 'object' ? (all as Record<string, unknown>)[id] : null;
+  if (!values || typeof values !== 'object') return {};
+  return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}
+
+// Connectors are global and their secrets are filed under the connector id.
+// They used to be filed under each plugin's id; copy those across once, and
+// leave the old entries where they are. Once only, or a Disconnect would be
+// undone by the next launch.
+const LEGACY_SECRET_SCOPES: Record<string, string> = { anthropic: 'ai-claude', openai: 'ai-openai', google: 'ai-gemini', openrouter: 'ai-openrouter', local: 'ai-local' };
+function migrateConnectorSecrets(): void {
+  const settings = readSettings();
+  if (settings.connectorSecretsMigrated === true) return;
+  const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object' ? settings[SECRETS_KEY] : {}) as Record<string, Record<string, unknown>>;
+  const next: Record<string, Record<string, unknown>> = { ...store };
+  for (const [connector, legacy] of Object.entries(LEGACY_SECRET_SCOPES)) {
+    const old = store[legacy];
+    if (!old || typeof old !== 'object') continue;
+    const scoped = { ...(next[connector] ?? {}) };
+    for (const [field, value] of Object.entries(old)) {
+      if (typeof value === 'string' && value && typeof scoped[field] !== 'string') scoped[field] = value;
+    }
+    next[connector] = scoped;
+  }
+  settings[SECRETS_KEY] = next;
+  settings.connectorSecretsMigrated = true;
+  writeSettings(settings);
+}
+
 ipcMain.handle(
   'ai:complete',
   async (
-    _event,
-    request: { provider: string; pluginId?: string; model?: string; system?: string; messages: AiMessage[]; config?: Record<string, string> },
+    event,
+    request: { provider?: unknown; model?: unknown; system?: unknown; messages?: unknown },
   ) => {
-    // Non-secret settings only -- baseUrl, model. An apiKey arriving from the
-    // renderer is destructured off and dropped: trusting one is what let every
-    // plugin read every other plugin's key. The real key is read here, from a
-    // store the renderer cannot see.
-    const { apiKey: _rendererSuppliedKey, ...config } = request.config ?? {};
-    const apiKey = request.pluginId ? readSecret(request.pluginId, 'apiKey') : null;
+    if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+    const provider = typeof request?.provider === 'string' ? request.provider : '';
+    if (!Object.prototype.hasOwnProperty.call(CONNECTOR_NAMES, provider)) return { success: false, error: `Unknown AI provider "${provider}".` };
+    const messages = Array.isArray(request.messages)
+      ? request.messages.filter((m): m is AiMessage => !!m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      : [];
+    if (messages.length === 0) return { success: false, error: 'Nothing to send.' };
+    const system = typeof request.system === 'string' ? request.system : undefined;
+    const requestedModel = typeof request.model === 'string' ? request.model : '';
 
-    const needsKey = (label: string) =>
-      ({ success: false, error: `Add ${label} API key in the plugin settings.` });
+    // Everything comes from the connector's own settings, never from the
+    // request: a key or endpoint supplied by renderer code is not trusted.
+    const values = connectorValues(provider);
+    const apiKey = readSecret(provider, 'apiKey');
+    const endpoint = (values.endpoint ?? '').trim();
+    const configured = provider === 'local' ? endpoint.length > 0 : apiKey !== null;
+    if (!configured) return { success: false, error: `${CONNECTOR_NAMES[provider]} is not set up. Set it up in Settings › Connectors.` };
+    const modelName = requestedModel || values.model || '';
 
     try {
       let model;
-      switch (request.provider) {
-        case 'anthropic': {
-          if (!apiKey) return needsKey('an Anthropic');
-          model = createAnthropic({ apiKey })(request.model || 'claude-opus-4-8');
+      switch (provider) {
+        case 'anthropic':
+          model = createAnthropic({ apiKey: apiKey! })(modelName || 'claude-opus-4-8');
           break;
-        }
-        case 'openai': {
-          if (!apiKey) return needsKey('an OpenAI');
-          model = createOpenAI({ apiKey })(request.model || 'gpt-4o');
+        case 'openai':
+          model = createOpenAI({ apiKey: apiKey! })(modelName || 'gpt-4o');
           break;
-        }
-        case 'google': {
-          if (!apiKey) return needsKey('a Google');
-          model = createGoogleGenerativeAI({ apiKey })(request.model || 'gemini-2.0-flash');
+        case 'google':
+          model = createGoogleGenerativeAI({ apiKey: apiKey! })(modelName || 'gemini-2.0-flash');
           break;
-        }
-        case 'openrouter': {
-          if (!apiKey) return needsKey('an OpenRouter');
-          model = createOpenRouter({ apiKey })(request.model || 'openai/gpt-4o');
+        case 'openrouter':
+          model = createOpenRouter({ apiKey: apiKey! })(modelName || 'openai/gpt-4o');
           break;
-        }
-        case 'local': {
+        default: {
           // A local endpoint is whatever the user is running -- Ollama, LM
-          // Studio, their own box -- so the base URL is theirs to set and a key
-          // is usually absent. Never hardcode a vendor here.
+          // Studio, their own box -- so the URL is theirs to set and a key is
+          // usually absent. The field asks for the chat completions URL; the
+          // client wants the base it hangs that path on.
+          if (!/^https?:\/\//i.test(endpoint)) return { success: false, error: 'The Local model endpoint must be an http(s) URL.' };
           model = createOpenAICompatible({
             name: 'local',
-            baseURL: config.baseUrl || 'http://localhost:11434/v1',
+            baseURL: endpoint.replace(/\/+$/, '').replace(/\/chat\/completions$/i, ''),
             apiKey: apiKey ?? 'local',
-          })(request.model || config.model || 'llama3');
+          })(modelName || 'llama3');
           break;
         }
-        default:
-          return { success: false, error: `Unknown AI provider "${request.provider}".` };
       }
 
       const { text } = await generateText({
         model,
-        system: request.system,
-        messages: request.messages,
+        system,
+        messages,
         maxOutputTokens: 2048,
       });
       return { success: true, text };
     } catch (err: unknown) {
       // Provider errors carry request context and sometimes the key itself.
-      // Surface the message only, never the object.
+      // Surface the message only, never the object, and never the key in it.
       const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: message };
+      return { success: false, error: apiKey ? message.split(apiKey).join('[key]') : message };
     }
   },
 );
@@ -1267,6 +1347,7 @@ app.on('ready', () => {
   });
   configureWriteJournal(app.getPath('userData'));
   ensureDefaultRepo();
+  migrateConnectorSecrets();
   const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);
   if (workspace && usableRepo(workspace)) rememberRepo(workspace);
   createWindow();

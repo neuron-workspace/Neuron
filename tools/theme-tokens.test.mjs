@@ -26,4 +26,33 @@ assert.equal(normalizeAppearance(undefined).preset, 'light');
 for (const id of Object.keys(PRESETS)) assert.equal(normalizeAppearance({ preset: id }).preset, id);
 const css = readFileSync(new URL('../src/renderer/index.css', import.meta.url), 'utf8');
 for (const [key, value] of Object.entries(PRESETS.light.tokens)) assert.ok(css.includes(key + ': ' + value + ';'), key + ' default matches Light');
-console.log('theme tokens: AA contrast, CSS defaults and saved presets pass');
+
+// Callouts: read the mix percentages from the stylesheet itself, so the check
+// follows whatever the CSS ships. srgb mixing is a per-channel blend of the
+// encoded values, which is what `mix` does.
+const calloutRule = /\n\.callout \{([^}]*)\}/.exec(css)?.[1] ?? '';
+const tint = Number(/background: color-mix\(in srgb, var\(--callout-color\) (\d+)%, var\(--canvas\)\)/.exec(calloutRule)?.[1]);
+const edge = Number(/border: 1px solid color-mix\(in srgb, var\(--callout-color\) (\d+)%, var\(--canvas\)\)/.exec(calloutRule)?.[1]);
+assert.ok(tint > 0 && edge > tint, 'callout tint and border percentages found in index.css');
+const mix = (color, base, percent) => '#' + [1, 3, 5].map((i) => {
+  const value = parseInt(color.slice(i, i + 2), 16) * percent / 100 + parseInt(base.slice(i, i + 2), 16) * (100 - percent) / 100;
+  return Math.round(value).toString(16).padStart(2, '0');
+}).join('');
+for (const id of ['light', 'graphite']) {
+  const t = PRESETS[id].tokens;
+  for (const kind of ['--positive', '--info', '--warning', '--danger']) {
+    const background = mix(t[kind], t['--canvas'], tint);
+    assert.ok(contrast(t[kind], background) >= 3, id + ': ' + kind + ' callout icon on its tint');
+    // Title is --ink; body is --md-text, which defaults to --ink-secondary.
+    for (const ink of ['--ink', '--ink-secondary']) {
+      assert.ok(contrast(t[ink], background) >= 4.5, id + ': ' + ink + ' on the ' + kind + ' callout tint');
+    }
+  }
+  for (const kind of ['--positive', '--info', '--warning', '--danger', '--ink-muted']) {
+    const badgeRule = /\n\.mdx-badge \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const foreground = Number(/color: color-mix\(in srgb, var\(--callout-color\) (\d+)%, var\(--ink\)\)/.exec(badgeRule)?.[1]);
+    assert.ok(foreground > 0, 'badge foreground mix found in index.css');
+    assert.ok(contrast(mix(t[kind], t['--ink'], foreground), mix(t[kind], t['--canvas'], tint)) >= 4.5, id + ': ' + kind + ' badge text on its tint');
+  }
+}
+console.log('theme tokens: AA contrast, callout tints, CSS defaults and saved presets pass');
