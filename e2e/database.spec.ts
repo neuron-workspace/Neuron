@@ -1,5 +1,5 @@
 import { test, expect, openNote } from './fixtures';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // A .db view stores its sort and filter in the file. This checks they come back
@@ -50,14 +50,16 @@ test('database keeps a failed edit and saves it when retried', async ({ page, wo
   await expect(cell).toBeVisible();
 
   const dbFile = join(workspace, 'Planner.db');
-  // Saves go through `<file>.tmp` and a rename. A directory in that spot makes
-  // the save fail on every platform; a read-only file would not, because the
-  // rename replaces it.
-  const blocker = `${dbFile}.tmp`;
+  // Saves write a unique temp file and rename it over the target. On Windows a
+  // read-only target makes the rename and the in-place fallback fail with EPERM;
+  // elsewhere a read-only folder stops the temp file from being created.
+  const win = process.platform === 'win32';
+  const block = () => (win ? chmodSync(dbFile, 0o444) : chmodSync(workspace, 0o555));
+  const unblock = () => (win ? chmodSync(dbFile, 0o644) : chmodSync(workspace, 0o755));
   const before = readFileSync(dbFile, 'utf-8');
   const edited = 'Save failure retry regression';
   try {
-    mkdirSync(blocker);
+    block();
     await cell.fill(edited);
     await cell.blur();
 
@@ -66,11 +68,11 @@ test('database keeps a failed edit and saves it when retried', async ({ page, wo
     await expect(cell).toHaveValue(edited);
     expect(readFileSync(dbFile, 'utf-8')).toBe(before);
 
-    rmSync(blocker, { recursive: true, force: true });
+    unblock();
     await errorBar.getByRole('button', { name: 'Retry' }).click();
     await expect(errorBar).toBeHidden();
     await expect.poll(() => readFileSync(dbFile, 'utf-8')).toContain(edited);
   } finally {
-    rmSync(blocker, { recursive: true, force: true });
+    unblock();
   }
 });
