@@ -283,7 +283,7 @@ export async function setPluginEnabled(_app: ElectronApplication, page: Page, na
   const toggle = dialog.getByRole('switch', { name: `Enable ${name}` });
   await expect(toggle).toBeVisible();
   await toggle.setChecked(on);
-  await page.keyboard.press('Escape');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(dialog).toHaveCount(0);
 }
 
