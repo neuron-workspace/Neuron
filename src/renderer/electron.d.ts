@@ -149,7 +149,6 @@ export interface ElectronAPI {
     request: (req: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<NetRequestResult>;
   };
   terminal: {
-    run: (cmd: string) => Promise<{ success: boolean; stdout: string; stderr: string; code: number }>;
     /**
      * Attach to the terminal named by `key`, starting a shell if it has none.
      * The same key returns the same shell; a new key is a new terminal.
@@ -178,7 +177,7 @@ export interface ElectronAPI {
     restore: (entryId: string) => Promise<{ success: boolean; error?: string }>;
   };
   cookies: {
-    importChrome: (domain?: string) => Promise<{ success: boolean; imported?: number; skipped?: number; error?: string }>;
+    importChrome: (domain: string) => Promise<{ success: boolean; imported?: number; skipped?: number; error?: string }>;
   };
 }
 

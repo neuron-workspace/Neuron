@@ -410,7 +410,9 @@ Browser tabs use a persistent browser partition, separate from HTMX view
 sessions.
 
 The command palette can import Chrome cookies into that browser partition so
-compatible websites reuse existing logins. This copies cookies into Neuron's
+compatible websites reuse existing logins. It imports one site at a time: you
+name a hostname such as `github.com`, and only cookies for that host and its
+subdomains are copied. This copies cookies into Neuron's
 browser session; treat it as sensitive account data. It is not a general Chrome
 profile sync and may skip cookies it cannot import.
 

@@ -123,7 +123,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('plugin:net-request', req),
   },
   terminal: {
-    run: (cmd: string) => ipcRenderer.invoke('terminal:run', cmd),
     // `key` names the terminal, not the shell: reattaching with the same key
     // returns the same shell and its scrollback, and a new key is a new
     // terminal with its own.
@@ -154,6 +153,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetApproval: (relativePath: string) => ipcRenderer.invoke('htmx-views:reset-approval', relativePath),
   },
   cookies: {
-    importChrome: (domain?: string) => ipcRenderer.invoke('cookies:import-chrome', domain),
+    importChrome: (domain: string) => ipcRenderer.invoke('cookies:import-chrome', domain),
   },
 });

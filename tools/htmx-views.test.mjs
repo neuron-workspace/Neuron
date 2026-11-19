@@ -312,6 +312,15 @@ const writer = mkSession([...READ_CAPS, 'workspace.files.write', 'workspace.file
 const cookie = (s) => ({ cookie: `nv=${s.id}:${s.cookieToken}` });
 const api = (s, route, init = {}) => fetch(`${srv.origin}${route}`, { ...init, headers: { ...cookie(s), ...(init.headers ?? {}) } });
 
+// Opaque/cross-origin requests are refused even with a valid session cookie.
+for (const origin of ['null', 'https://outside.example', '']) {
+  const result = await api(writer, '/api/v1/context', { method: 'POST', headers: { Origin: origin } });
+  assert.equal(result.status, 403);
+  assert.equal((await result.json()).error.code, 'bad_origin');
+}
+assert.equal((await api(reader, '/api/v1/context', { headers: { Origin: srv.origin } })).status, 200);
+assert.equal((await api(reader, '/api/v1/context')).status, 200, 'normal same-origin GET may omit Origin');
+
 // Unauthenticated and spoofed requests
 assert.equal((await fetch(`${srv.origin}/api/v1/context`)).status, 401, 'no cookie -> 401');
 assert.equal((await fetch(`${srv.origin}/api/v1/context`, { headers: { cookie: `nv=${reader.id}:forged` } })).status, 401, 'forged token -> 401');
@@ -326,6 +335,7 @@ assert.equal((await fetch(`${srv.origin}/api/v1/context`, { headers: { cookie: `
 }
 
 // Document bootstrap: one-time boot token, CSP, cookie issuance
+assert.equal((await fetch(`${srv.origin}/views/${reader.id}/document?boot=${reader.bootToken}`, { headers: { Origin: 'null' } })).status, 403, 'opaque origin cannot consume a boot token');
 const docRes = await fetch(`${srv.origin}/views/${reader.id}/document?boot=${reader.bootToken}`);
 assert.equal(docRes.status, 200);
 const viewCsp = docRes.headers.get('content-security-policy') ?? '';

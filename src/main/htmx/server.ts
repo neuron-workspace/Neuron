@@ -240,6 +240,15 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       return;
     }
 
+    // Views load directly from this HTTP origin in webviews, not opaque-origin
+    // frames. Electron's process sandbox does not change their web origin;
+    // neuron.js and htmx POST here directly, so Origin: null has no valid use.
+    const reqOrigin = req.headers.origin;
+    if (reqOrigin !== undefined && reqOrigin !== origin) {
+      fail({ req, res, requestId }, 403, 'bad_origin', 'Rejected.');
+      return;
+    }
+
     // Bootstrap once; reloads authenticate with this view's partition cookie.
     const docMatch = url.pathname.match(/^\/views\/([\w-]+)\/document$/);
     if (docMatch && req.method === 'GET') {
@@ -254,13 +263,6 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const session = sessions.byCookie(parseCookies(req)['nv']);
     if (!session) { fail({ req, res, requestId }, 401, 'unauthorized', 'Missing or invalid view session.'); return; }
     if (!sessions.allowRequest(session)) { fail({ req, res, requestId }, 429, 'rate_limited', 'Too many requests from this view.'); return; }
-
-    // Cross-origin hardening: browsers set Origin on non-GET; when present it must be us.
-    const reqOrigin = req.headers.origin;
-    if (reqOrigin && reqOrigin !== origin && reqOrigin !== 'null') {
-      fail({ req, res, requestId }, 403, 'bad_origin', 'Rejected.');
-      return;
-    }
 
     const ctx: Ctx = { req, res, url, session, requestId };
 

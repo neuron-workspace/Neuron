@@ -74,5 +74,19 @@ assert.equal(bus.isRunnableCommand('echo \u0007bell'), false, 'control character
   offSecond();
 }
 
+// Automations use the visible terminal and retain order even before it mounts.
+{
+  const written = [];
+  let opened = 0;
+  const close = bus.registerTerminalOpener(() => { opened++; });
+  assert.equal(bus.runAutomationInTerminal(['echo first', 'echo second']), true);
+  assert.equal(opened, 2);
+  const off = bus.registerTerminalWriter((data) => written.push(data));
+  assert.deepEqual(written, ['echo first\r', 'echo second\r']);
+  assert.equal(bus.runAutomationInTerminal(['echo safe', 'hidden\rcommand']), false);
+  assert.equal(written.length, 2, 'an invalid sequence never partially runs');
+  off(); close();
+}
+
 rmSync(out, { recursive: true, force: true });
 console.log('terminal-bus: all checks passed');
