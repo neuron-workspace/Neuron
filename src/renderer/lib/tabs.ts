@@ -146,7 +146,7 @@ export function moveTab(state: GroupsState, from: number, to: number, path: stri
     const tabs = group.tabs.filter((tab) => tab !== path);
     const at = before === null ? tabs.length : tabs.indexOf(before);
     tabs.splice(at < 0 ? tabs.length : at, 0, path);
-    return { tabs, preview: group.preview, selected: path };
+    return { tabs, preview: group.preview === path ? null : group.preview, selected: path };
   };
   const placed = focusGroup(mapGroup(state, to, place), to);
   return from === to ? placed : closeInGroup(placed, from, path);
