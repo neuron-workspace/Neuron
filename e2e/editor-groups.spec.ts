@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, closeMenuByClickingOutside } from './fixtures';
 import type { Locator, Page } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -85,7 +85,7 @@ test('split right from the tab menu, a third group from the palette, and the sid
   await tab(page, 2, 'gamma').click({ button: 'right' });
   await expect(page.getByRole('menuitem', { name: 'Split down', exact: true })).toBeDisabled();
   await expect(page.getByRole('menuitem', { name: 'Split right', exact: true })).toBeEnabled();
-  await page.mouse.click(1, 1);
+  await closeMenuByClickingOutside(page);
   await expect(page.getByRole('menu')).toHaveCount(0);
 
   // Close editor group closes the focused group and its tabs.

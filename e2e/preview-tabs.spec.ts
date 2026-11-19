@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, closeMenuByClickingOutside } from './fixtures';
 import type { Page } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -80,7 +80,7 @@ test('double-clicking the tab or "Keep open" in its menu keeps it', async ({ pag
   await expect(page.getByRole('menuitem', { name: 'Keep open' })).toBeDisabled();
   // Escape does not close menus under xvfb on Linux; a pointer-down outside the
   // menu does on every platform.
-  await page.mouse.click(1, 1);
+  await closeMenuByClickingOutside(page);
   await expect(page.getByRole('menu')).toHaveCount(0);
 
   await row(page, 'gamma').click();
