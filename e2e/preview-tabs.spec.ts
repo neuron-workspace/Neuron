@@ -75,11 +75,14 @@ test('double-clicking the tab or "Keep open" in its menu keeps it', async ({ pag
   await expect(keep).toBeEnabled();
   await keep.click();
   await expectTabs(page, ['alpha', 'beta'], null);
+  // Choosing an item closes the menu. Waiting for that also means the next
+  // right-click opens a fresh menu rather than reviving this one mid-way
+  // through its closing animation.
+  await expect(page.getByRole('menu')).toHaveCount(0);
 
   await tab(page, 'beta').click({ button: 'right' });
   await expect(page.getByRole('menuitem', { name: 'Keep open' })).toBeDisabled();
-  // Escape does not close menus under xvfb on Linux; a pointer-down outside the
-  // menu does on every platform.
+  // Escape does not close menus on the Linux and macOS runners; see the helper.
   await closeMenuByClickingOutside(page);
   await expect(page.getByRole('menu')).toHaveCount(0);
 
