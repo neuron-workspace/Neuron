@@ -161,8 +161,8 @@ export function HtmxViewSurface({ path, colorScheme }: SurfaceProps) {
             )}
             {phase.readPaths.length > 0 && (
               <div className="flex gap-2">
-                <dt className="shrink-0 text-[var(--ink-muted)]">Can read</dt>
-                <dd className="text-[var(--ink-secondary)]">{phase.readPaths.join(', ')}</dd>
+                <dt className="shrink-0 text-[var(--ink-muted)]">Can read:</dt>
+                <dd className="text-[var(--ink-secondary)]">{phase.readPaths.includes('**') ? 'all files in this workspace' : phase.readPaths.join(', ')}</dd>
               </div>
             )}
           </dl>

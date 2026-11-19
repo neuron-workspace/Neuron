@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol } from 'electron';
-import type { WebContents } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol, safeStorage } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { decideOpen, settingsSectionOf, ownsPtyKey, ptyKey, type SettingsSection, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
@@ -8,7 +8,9 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { importChromeCookies } from './chrome-cookies';
+import { importChromeCookies, cleanupChromeCookieCopies } from './chrome-cookies';
+import { requestPublic } from './public-network';
+import { encodeSecret, decodeSecret, migrateSecretSettings, rendererSettingsValue, NO_KEYCHAIN_ERROR, type SecretCodec } from './secret-storage';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
@@ -30,11 +32,16 @@ import { fileKind, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
 import { authorizeFileUrl, FILE_HEADERS, FILE_SCHEME, parseRange } from './file-protocol';
 import { watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
-import { exec } from 'child_process';
 import * as pty from 'node-pty';
 
 
 const RENDERER_ROOT = pathToFileURL(path.join(__dirname, '../renderer') + path.sep).href;
+/**
+ * Unpackaged build: the renderer comes from the dev server. The one switch for
+ * loading DEV_URL and for letting the app frame navigate to it, so a packaged
+ * app never trusts that port, whatever NODE_ENV says.
+ */
+const IS_DEV = !app.isPackaged;
 /**
  * Every window, and the workspace it owns.
  *
@@ -62,8 +69,13 @@ protocol.registerSchemesAsPrivileged([{
 let lastWorkspaceId: number | null = null;
 /** The workspace of the window that last opened Settings, which its Workspaces section marks. */
 let settingsOpener: string | null = null;
-type Sender = { sender: WebContents };
-const entryOf = (event: Sender): AppWindow | null => appWindows.get(event.sender.id) ?? null;
+type Sender = Pick<IpcMainEvent | IpcMainInvokeEvent, 'sender' | 'senderFrame'>;
+const entryOf = (event: Sender): AppWindow | null => {
+  const entry = appWindows.get(event.sender.id);
+  if (!entry || entry.window.isDestroyed()) return null;
+  const contents = entry.window.webContents;
+  return event.sender === contents && event.senderFrame != null && event.senderFrame === contents.mainFrame ? entry : null;
+};
 const windowOf = (event: Sender): BrowserWindow | null => {
   const window = entryOf(event)?.window;
   return window && !window.isDestroyed() ? window : null;
@@ -143,22 +155,12 @@ interface Settings {
   [key: string]: unknown;
 }
 
-const settingsFile = () => {
-  const newPath = path.join(app.getPath('userData'), 'neuron-settings.json');
-  const oldPath = path.join(app.getPath('userData'), 'autonote-settings.json');
-  if (!fs.existsSync(newPath) && fs.existsSync(oldPath)) {
-    try {
-      fs.copyFileSync(oldPath, newPath);
-    } catch (e) {
-      console.error('Failed to migrate settings file:', e);
-    }
-  }
-  return newPath;
-};
+const settingsFile = () => path.join(app.getPath('userData'), 'neuron-settings.json');
+const legacySettingsFile = () => path.join(app.getPath('userData'), 'autonote-settings.json');
 
 function readSettings(): Settings {
   try {
-    const raw = fs.readFileSync(settingsFile(), 'utf-8').trim();
+    const raw = fs.readFileSync(fs.existsSync(settingsFile()) ? settingsFile() : legacySettingsFile(), 'utf-8').trim();
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<Settings>;
       return { repositories: { current: null, recent: [] }, ...parsed } as Settings;
@@ -169,11 +171,23 @@ function readSettings(): Settings {
   return { repositories: { current: null, recent: [] } };
 }
 
-function writeSettings(settings: Settings): void {
+function writeSettingsAtomically(file: string, settings: Record<string, unknown>): void {
+  const temporary = `${file}.${randomBytes(12).toString('hex')}.tmp`;
   try {
-    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2), 'utf-8');
+    fs.writeFileSync(temporary, JSON.stringify(settings, null, 2), { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+    fs.renameSync(temporary, file);
+  } finally {
+    try { fs.unlinkSync(temporary); } catch { /* renamed or never created */ }
+  }
+}
+
+function writeSettings(settings: Settings): boolean {
+  try {
+    writeSettingsAtomically(settingsFile(), settings);
+    return true;
   } catch (err) {
     console.error('Failed to persist settings:', err);
+    return false;
   }
 }
 
@@ -392,9 +406,8 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   if (process.platform !== 'darwin') window.setMenuBarVisibility(false);
   installApplicationMenu(() => BrowserWindow.getFocusedWindow());
 
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   const query: Record<string, string> | null = kind === 'workspace' ? null : { window: kind, ...(section ? { section } : {}) };
-  if (isDev) {
+  if (IS_DEV) {
     void window.loadURL(query ? DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + new URLSearchParams(query).toString() : DEV_URL);
   } else {
     void window.loadFile(path.join(__dirname, '../renderer/index.html'), query ? { query } : undefined);
@@ -479,7 +492,6 @@ ipcMain.handle('window:opener-workspace', (event) => {
 ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
   const window = windowOf(event);
   if ((process.platform !== 'win32' && process.platform !== 'linux') || !window) return;
-  if (event.senderFrame !== window.webContents.mainFrame) return;
   if (typeof colors?.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.color)
     || typeof colors?.symbolColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.symbolColor)) return;
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor });
@@ -497,16 +509,26 @@ ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; s
 // plugins are not sandboxed (risk R3), so one plugin could read another's.
 const SECRETS_KEY = '__secrets';
 
+function secretCodec(): SecretCodec {
+  return {
+    available: safeStorage.isEncryptionAvailable()
+      && !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'),
+    encrypt: (value) => safeStorage.encryptString(value),
+    decrypt: (value) => safeStorage.decryptString(value),
+  };
+}
+
 function readSecret(scope: string, field: string): string | null {
   const store = readSettings()[SECRETS_KEY];
   if (!store || typeof store !== 'object') return null;
   const scoped = (store as Record<string, unknown>)[scope];
   if (!scoped || typeof scoped !== 'object') return null;
   const value = (scoped as Record<string, unknown>)[field];
-  return typeof value === 'string' && value.length > 0 ? value : null;
+  return decodeSecret(value, secretCodec());
 }
 
 ipcMain.handle('settings:get', (_event, key: string) => {
+  if (!entryOf(_event)) return null;
   // The renderer may never read the secret namespace, by any key that resolves
   // to it. Without this the store would be one settings.get('__secrets') away
   // from being exactly as exposed as before.
@@ -514,12 +536,14 @@ ipcMain.handle('settings:get', (_event, key: string) => {
   const settings = readSettings();
   if (key in settings) {
     const value = settings[key];
-    return key === SECRETS_KEY ? null : value;
+    return rendererSettingsValue(key, value);
   }
   return null;
 });
 ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
+  if (!entryOf(event)) return { success: false, error: 'Not available here.' };
   if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
+  if (JSON.stringify(rendererSettingsValue(key, value)) !== JSON.stringify(value)) return { success: false, error: 'Use the secret store for keys.' };
   const settings = readSettings();
   settings[key] = value;
   writeSettings(settings);
@@ -534,22 +558,27 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
 // Write-only from the renderer's side: it can set a secret and ask whether one
 // exists, and it can never read the value back.
 ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, value: string) => {
+  if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
   if (typeof scope !== 'string' || typeof field !== 'string' || !scope || !field) {
     return { success: false, error: 'Invalid secret reference.' };
   }
   const settings = readSettings();
   const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object'
     ? settings[SECRETS_KEY]
-    : {}) as Record<string, Record<string, string>>;
+    : {}) as Record<string, Record<string, unknown>>;
   const scoped = { ...(store[scope] ?? {}) };
-  if (typeof value === 'string' && value.length > 0) scoped[field] = value;
+  if (typeof value === 'string' && value.length > 0) {
+    const codec = secretCodec();
+    if (!codec.available) return { success: false, error: NO_KEYCHAIN_ERROR };
+    try { scoped[field] = encodeSecret(value, codec); }
+    catch { return { success: false, error: 'Could not encrypt the key with the system keychain.' }; }
+  }
   else delete scoped[field];
   settings[SECRETS_KEY] = { ...store, [scope]: scoped };
-  writeSettings(settings);
-  return { success: true };
+  return writeSettings(settings) ? { success: true } : { success: false, error: 'Could not save the key.' };
 });
 
-ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => readSecret(scope, field) !== null);
+ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => !!entryOf(_event) && readSecret(scope, field) !== null);
 
 // ==========================================================================
 // IPC — repository
@@ -563,6 +592,7 @@ ipcMain.handle('repository:get-current', (event) => {
 // The open workspace is not "recent": the switcher already shows it on its
 // button, and listing it again underneath was the name appearing twice.
 ipcMain.handle('repository:list-recent', (event) => {
+  if (!entryOf(event)) return [];
   const recent = readSettings().repositories.recent;
   return uniqueRecents(recent.filter((p) => !isInstallWorkspace(p) && fs.existsSync(p)), repoOf(event)).map(repoInfo);
 });
@@ -583,8 +613,8 @@ ipcMain.handle('repository:create', async (event) => {
   return repoInfo(dir);
 });
 
-ipcMain.handle('templates:list', () =>
-  listTemplates(templatesRoot(app.isPackaged, process.resourcesPath)));
+ipcMain.handle('templates:list', (event) =>
+  entryOf(event) ? listTemplates(templatesRoot(app.isPackaged, process.resourcesPath)) : []);
 
 /**
  * Copy a template into a folder the user picks, then open it.
@@ -652,6 +682,7 @@ ipcMain.handle('repository:switch', (event, dir: string) => {
 });
 
 ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
+  if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
   const settings = readSettings();
   const names = { ...(settings.repositories.names ?? {}) };
   const trimmed = name.trim();
@@ -666,6 +697,7 @@ ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
 });
 
 ipcMain.handle('repository:remove', (event, dir: string) => {
+  if (!entryOf(event)) return { success: false, error: 'Not available here.' };
   const settings = readSettings();
   const key = folderKey(dir);
   settings.repositories.recent = settings.repositories.recent.filter((p) => folderKey(p) !== key);
@@ -683,6 +715,7 @@ ipcMain.handle('repository:remove', (event, dir: string) => {
 });
 
 ipcMain.handle('repository:reveal', (_event, dir: string) => {
+  if (!entryOf(_event)) return { success: false };
   shell.showItemInFolder(dir);
   return { success: true };
 });
@@ -772,7 +805,7 @@ function textGuard(relativePath: string): 'refuse' | 'text' | 'unknown' | 'free'
 // main frame of a workspace window gets it.
 ipcMain.on('workspace:file-base', (event) => {
   const entry = entryOf(event);
-  event.returnValue = entry && entry.kind === 'workspace' && event.senderFrame === entry.window.webContents.mainFrame
+  event.returnValue = entry && entry.kind === 'workspace'
     ? `${FILE_SCHEME}://w/${event.sender.id}/${entry.fileToken}/`
     : null;
 });
@@ -825,6 +858,7 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   const guard = textGuard(relativePath);
   if (guard === 'refuse') return { success: false, error: 'Neuron does not write this kind of file.' };
+  const tmp = `${resolved.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     if (guard === 'text' || guard === 'unknown') {
       // Never write back a file that was opened truncated, or one that is not text.
@@ -836,7 +870,6 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
     // Atomic write: a crash mid-write must never leave a half-written note or database.
-    const tmp = `${resolved.fullPath}.tmp`;
     fs.writeFileSync(tmp, content, 'utf-8');
     // On Windows a rename over a file another process holds open (the file
     // watcher, an indexer, antivirus) fails with EPERM/EBUSY/EACCES for a few
@@ -846,13 +879,11 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
       catch (renameError) {
         const code = (renameError as NodeJS.ErrnoException).code;
         if (!['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) {
-          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
           throw renameError;
         }
         if (attempt >= 5) {
           // Still held open: write in place rather than lose the edit.
           fs.writeFileSync(resolved.fullPath, content, 'utf-8');
-          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
           break;
         }
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * (attempt + 1));
@@ -863,6 +894,8 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Failed to write note ${relativePath}:`, err);
     return { success: false, error: message };
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* renamed or already gone */ }
   }
 });
 
@@ -966,23 +999,10 @@ async function serveWorkspaceFile(request: Request): Promise<Response> {
 
 // Pull Chrome's cookies into the in-app browser's persistent session so the
 // user stays logged in without signing in again.
-ipcMain.handle('cookies:import-chrome', (_event, domain?: string) =>
-  importChromeCookies(session.fromPartition('persist:neuron-browser'), domain),
+ipcMain.handle('cookies:import-chrome', (_event, domain: unknown) =>
+  entryOf(_event) ? importChromeCookies(session.fromPartition('persist:neuron-browser'), domain)
+    : { success: false, error: 'Not available here.' },
 );
-
-ipcMain.handle('terminal:run', async (_event, cmd: string) => {
-  const dir = repoOf(_event) || process.cwd();
-  return new Promise((resolve) => {
-    exec(cmd, { cwd: dir }, (error, stdout, stderr) => {
-      resolve({
-        success: !error,
-        stdout: stdout || '',
-        stderr: stderr || '',
-        code: error?.code ?? 0,
-      });
-    });
-  });
-});
 
 // ==========================================================================
 // IPC — interactive PTY terminals (node-pty). One pty per window;
@@ -1010,7 +1030,7 @@ const TERMINAL_HISTORY_LIMIT = 200 * 1024;
 const ptyByKey = new Map<string, number>();
 /** Which window started each pty. A window may only drive its own shells. */
 const ptyOwner = new Map<number, number>();
-const ownsPty = (event: Sender, id: number) => ptyOwner.get(id) === event.sender.id;
+const ownsPty = (event: Sender, id: number) => !!entryOf(event) && ptyOwner.get(id) === event.sender.id;
 let nextPtyId = 1;
 
 /** The first of these that exists on PATH, or null. */
@@ -1171,7 +1191,8 @@ ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: numbe
 // told it is attached to ConPTY -- which is what split a prompt path across two
 // lines after narrowing the panel. node-pty uses ConPTY on every Windows build
 // Electron 42 supports, so the build number is all the renderer needs.
-ipcMain.handle('terminal:windows-pty', () => {
+ipcMain.handle('terminal:windows-pty', (event) => {
+  if (!entryOf(event)) return null;
   if (process.platform !== 'win32') return null;
   const buildNumber = Number(os.release().split('.')[2]);
   return Number.isFinite(buildNumber) ? { backend: 'conpty' as const, buildNumber } : null;
@@ -1200,28 +1221,20 @@ function connectorValues(id: string): Record<string, string> {
   return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
 }
 
-// Connectors are global and their secrets are filed under the connector id.
-// They used to be filed under each plugin's id; copy those across once, and
-// leave the old entries where they are. Once only, or a Disconnect would be
-// undone by the next launch.
-const LEGACY_SECRET_SCOPES: Record<string, string> = { anthropic: 'ai-claude', openai: 'ai-openai', google: 'ai-gemini', openrouter: 'ai-openrouter', local: 'ai-local' };
 function migrateConnectorSecrets(): void {
-  const settings = readSettings();
-  if (settings.connectorSecretsMigrated === true) return;
-  const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object' ? settings[SECRETS_KEY] : {}) as Record<string, Record<string, unknown>>;
-  const next: Record<string, Record<string, unknown>> = { ...store };
-  for (const [connector, legacy] of Object.entries(LEGACY_SECRET_SCOPES)) {
-    const old = store[legacy];
-    if (!old || typeof old !== 'object') continue;
-    const scoped = { ...(next[connector] ?? {}) };
-    for (const [field, value] of Object.entries(old)) {
-      if (typeof value === 'string' && value && typeof scoped[field] !== 'string') scoped[field] = value;
+  const codec = secretCodec();
+  if (!codec.available) return;
+  // Rewrite both names: the former copy-based migration left a plaintext backup.
+  for (const file of [settingsFile(), legacySettingsFile()]) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      const original = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      const migrated = migrateSecretSettings(original, codec);
+      if (JSON.stringify(migrated) !== JSON.stringify(original)) writeSettingsAtomically(file, migrated);
+    } catch {
+      console.error('Could not migrate saved keys to the system keychain.');
     }
-    next[connector] = scoped;
   }
-  settings[SECRETS_KEY] = next;
-  settings.connectorSecretsMigrated = true;
-  writeSettings(settings);
 }
 
 ipcMain.handle(
@@ -1298,11 +1311,9 @@ ipcMain.handle(
 ipcMain.handle(
   'plugin:net-request',
   async (_event, req: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => {
+    if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
     try {
-      if (!/^https?:\/\//.test(req.url)) return { success: false, error: 'Only http(s) URLs are allowed.' };
-      const res = await fetch(req.url, { method: req.method || 'GET', headers: req.headers, body: req.body });
-      const text = await res.text();
-      return { success: true, status: res.status, body: text };
+      return { success: true, ...await requestPublic(req) };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -1317,6 +1328,7 @@ ipcMain.handle(
 ipcMain.handle(
   'notes:log-error',
   async (_event, errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) => {
+    if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
     const success = await diagnostics.write({
       level: 'error',
       category: `renderer.${errorData.phase || 'unknown'}`,
@@ -1327,7 +1339,8 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('diagnostics:open-logs', async () => {
+ipcMain.handle('diagnostics:open-logs', async (event) => {
+  if (!entryOf(event)) return { success: false, error: 'Not available here.' };
   const error = await shell.openPath(diagnostics.directory);
   return error ? { success: false, error } : { success: true };
 });
@@ -1388,7 +1401,7 @@ app.on('web-contents-created', (_event, contents) => {
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = isAppContent(url, RENDERER_ROOT, process.platform === 'win32');
+    const allowed = isAppContent(url, RENDERER_ROOT, process.platform === 'win32', IS_DEV);
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
@@ -1452,6 +1465,7 @@ function hasCodeSignature(): boolean {
 }
 
 app.on('ready', () => {
+  cleanupChromeCookieCopies();
   void diagnostics.startSession({
     appVersion: app.getVersion(),
     platform: process.platform,
@@ -1467,8 +1481,8 @@ app.on('ready', () => {
     message: `Native crash dumps (local only, never uploaded): ${crashDumps}`,
   });
   configureWriteJournal(app.getPath('userData'));
-  ensureDefaultRepo();
   migrateConnectorSecrets();
+  ensureDefaultRepo();
   const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);
   if (workspace && usableRepo(workspace)) rememberRepo(workspace);
   protocol.handle(FILE_SCHEME, serveWorkspaceFile);

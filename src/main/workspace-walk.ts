@@ -70,6 +70,7 @@ export function walkWorkspace(root: string, options: { fs?: WalkFs; limit?: numb
     // Dot-entries are noise -- .git, .obsidian, editor droppings -- except the
     // workspace's own `.neuron` configuration at the root.
     if (item.startsWith('.') && !(top.dir === root && item === '.neuron')) continue;
+    if (item.endsWith('.tmp')) continue;
     const full = path.join(top.dir, item);
     let stat: fs.Stats;
     try {

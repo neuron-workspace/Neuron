@@ -170,6 +170,24 @@ eq(q.formatNumber(null), '—');
   eq(appended, text + '"Zed, Jr",3,yes,Blue,2026-03-01\r\n');
 }
 
+// A form preserves raw header names and refuses files it cannot round-trip.
+{
+  const text = ',Name,Name\nfirst,Ada,Lin\n';
+  const { csv } = q.readCsvTable(text, null);
+  eq(q.appendCsvRow(csv, null, { 'Column 1': 'second', Name: 'Mo', 'Name (2)': 'Zed' }),
+    text + 'second,Mo,Zed\n', 'empty and duplicate headers keep their raw names');
+  for (const original of ['Name,Score\nAda\n', 'Name,Score\n"Ada",7\n']) {
+    const { csv: uneven } = q.readCsvTable(original, null);
+    const before = structuredClone(uneven);
+    let file = original;
+    assert.throws(() => { file = q.appendCsvRow(uneven, null, { Name: 'Lin', Score: '8' }); },
+      { message: "This table's file can't be added to safely; open it as a table first." });
+    checks++;
+    eq(file, original, 'a refused append leaves the file unchanged');
+    eq(uneven, before, 'a refused append leaves the parsed CSV unchanged');
+  }
+}
+
 // --- appending to a .db ------------------------------------------------------------
 {
   const db = { format: 2, tables: { tasks: table }, relations: [], extra: {}, hadRelations: false };

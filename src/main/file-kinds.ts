@@ -33,10 +33,11 @@ const NAMES = new Map<string, FileKind>([['.env.example', 'text']]);
 
 const nameOf = (path: string) => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1).toLowerCase();
 
-/** Lowercase, no dot; '' for none. A leading dot (".gitignore") is not an extension. */
+/** Lowercase, no dot; '' for none. A leading dot is an extension only for blocked files. */
 export function extensionOf(path: string): string {
   const name = nameOf(path);
   const dot = name.lastIndexOf('.');
+  if (dot === 0 && EXTENSIONS.get(name.slice(1)) === 'blocked') return name.slice(1);
   return dot > 0 ? name.slice(dot + 1) : '';
 }
 

@@ -60,3 +60,10 @@ export function runInTerminal(command: string): void {
   pending.push(command.trim() + '\r');
   flush();
 }
+
+/** Validate the whole sequence before submitting any command. */
+export function runAutomationInTerminal(commands: string[]): boolean {
+  if (!commands.length || !commands.every((command) => typeof command === 'string' && isRunnableCommand(command))) return false;
+  for (const command of commands) runInTerminal(command);
+  return true;
+}

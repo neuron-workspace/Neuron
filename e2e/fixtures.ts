@@ -146,6 +146,14 @@ export const test = base.extend<AppFixture>({
           || (process.env.CI && process.platform !== 'win32')
           ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
           : []),
+        // A real keychain on the Linux runner, which has no desktop session and
+        // so no Secret Service of its own: Chromium would fall back to its
+        // plain-text store there, and Neuron (by design) refuses to keep a key
+        // in that. ci.yml starts an unlocked gnome-keyring on a session bus
+        // before the e2e steps; this points Electron at it. It selects a real
+        // backend -- nothing here fakes encryption -- and is off everywhere
+        // else, where Chromium's own choice is the one users get.
+        ...(process.env.CI && process.platform === 'linux' ? ['--password-store=gnome-libsecret'] : []),
         // Windows marks an off-screen window as occluded and Chromium then stops
         // painting it, which would stall every test waiting on a frame.
         ...(background ? ['--disable-features=CalculateNativeWinOcclusion'] : []),
@@ -194,11 +202,19 @@ export const test = base.extend<AppFixture>({
 
   page: async ({ app }, use) => {
     const page = await app.firstWindow();
+    page.on('console', (message) => {
+      if (/Content Security Policy|\[CSP\]/i.test(message.text())) console.warn(message.text());
+    });
+    const watchCsp = () => document.addEventListener('securitypolicyviolation', (event) => {
+      console.error(`[CSP] ${event.effectiveDirective}: ${event.blockedURI}`);
+    });
+    await page.addInitScript(watchCsp);
     // Generous, because this is Electron cold-starting against a Vite dev server
     // that compiles on first request. On a loaded CI runner individual tests were
     // taking 15-20s just to reach this point, and the 30s default tipped two of
     // them over -- a slow machine, not a broken app.
     await page.waitForLoadState('domcontentloaded', { timeout: 90_000 });
+    await page.evaluate(watchCsp);
     await use(page);
   },
 });
@@ -288,18 +304,31 @@ export async function setPluginEnabled(_app: ElectronApplication, page: Page, na
 }
 
 /**
- * Close an open menu with a pointer click outside it.
+ * Close the open menu the way a press outside it does.
  *
- * Escape does not close menus under xvfb on Linux or on the macOS runner, and
- * clicking (1, 1) is no good either: on macOS the top-left corner is the
- * title-bar drag region, which never delivers pointer events to the page. So
- * click near the bottom-left of the focused editor group, which is page content,
- * not draggable, and far from a menu opened from a tab.
+ * Every attempt to do this through the window's input has been flaky somewhere:
+ * Escape does not close menus under xvfb on Linux or on the macOS runner,
+ * clicking (1, 1) lands in the macOS title-bar drag region, and a mouse click
+ * inside the focused editor group still left the menu open on the macOS runner
+ * now and then. Each of those depends on where the OS puts an off-screen window
+ * and on what is under one pixel at that moment.
+ *
+ * A Radix menu closes on a `pointerdown` that reaches `document` from outside
+ * its own React tree (DismissableLayer listens there). So dispatch exactly
+ * that, on `document.body`: outside the menu, outside the React root, and
+ * independent of hit-testing and window placement. Then wait for the menu to
+ * report it has closed, so a failure here says "the dismiss did not happen"
+ * rather than surfacing later as a menu that is still in the DOM.
  */
 export async function closeMenuByClickingOutside(page: Page) {
-  const box = await page.locator('[data-editor-group][data-focused="true"]').boundingBox();
-  if (!box) throw new Error('no focused editor group to click in');
-  await page.mouse.click(box.x + 8, box.y + box.height - 8);
+  const open = page.locator('[role="menu"][data-state="open"]');
+  await expect(open).toHaveCount(1);
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1,
+    }));
+  });
+  await expect(open).toHaveCount(0);
 }
 
 /** URLs the app handed to the OS browser, recorded by the stub above. */

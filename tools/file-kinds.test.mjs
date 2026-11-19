@@ -51,6 +51,19 @@ try {
   check('programs stay blocked whatever the case or the folder', () => {
     for (const name of ['tool.exe', 'Tool.EXE', 'deep/dir/run.Bat', 'C:\\x\\setup.MSI', 'a.b.ps1', 'archive.tar.sh']) assert.equal(fileKind(name), 'blocked', name);
   });
+  check('a dot-name is an extension only for blocked files', () => {
+    for (const name of ['.bat', '.BAT', '.CMD', '.ps1', 'sub/.sh']) {
+      assert.equal(fileKind(name), 'blocked', name);
+      assert.equal(needsSniff(name), false, name);
+    }
+    for (const name of ['.gitignore', '.env', '.prettierrc']) {
+      assert.equal(extensionOf(name), '', name);
+      assert.equal(fileKind(name), 'other', name);
+      assert.equal(needsSniff(name), true, name);
+    }
+    assert.equal(fileKind('.env.example'), 'text');
+    assert.equal(needsSniff('.env.example'), false);
+  });
   check('JavaScript is text, never a program', () => assert.equal(fileKind('src/app.js'), 'text'));
   check('the extension is the last one, and a leading dot is not one', () => {
     assert.equal(extensionOf('a/b.tar.gz'), 'gz');

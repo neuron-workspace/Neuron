@@ -13,7 +13,7 @@ import { isViewPath, manifestPathFor, legacyManifestPathFor, defaultViewName } f
 
 interface Deps {
   /** The workspace of the window that sent the request; views are served against that root only. */
-  getRepoRoot: (event: { sender: import('electron').WebContents }) => string | null;
+  getRepoRoot: (event: import('electron').IpcMainInvokeEvent) => string | null;
   getSetting: (key: string) => unknown;
   setSetting: (key: string, value: unknown) => void;
 }
@@ -161,12 +161,10 @@ export function initHtmxViews(deps: Deps): void {
         status: 'needs-approval',
         name,
         description: manifest?.description,
-        permissions: manifest!.permissions,
-        // The prompt promised access was limited to the manifest's paths
-        // without ever showing them, which left the user approving a scope
-        // they could only see by opening a file they do not know exists.
-        readPaths: manifest?.allowedReadPaths ?? [],
-        writePaths: manifest?.allowedWritePaths ?? [],
+        permissions: [...grants.caps],
+        readPaths: ['workspace.files.read', 'workspace.directories.list', 'workspace.search', 'notes.read', 'tags.read']
+          .some((cap) => grants.caps.has(cap)) ? grants.readPatterns : [],
+        writePaths: grants.writePatterns,
       };
     }
 
@@ -211,6 +209,8 @@ export function initHtmxViews(deps: Deps): void {
   });
 
   ipcMain.handle('htmx-views:close', (_event, sessionId: string) => {
+    const root = deps.getRepoRoot(_event);
+    if (!root || sessions.get(sessionId)?.root !== root) return { success: false };
     if (typeof sessionId === 'string') sessions.revoke(sessionId);
     return { success: true };
   });

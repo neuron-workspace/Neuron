@@ -35,6 +35,8 @@ try {
   write(ws, 'pics/photo.png');
   write(ws, 'docs/deep/report.pdf');
   write(ws, 'note.md');
+  write(ws, 'note.md.123.456.abcdef.tmp');
+  write(ws, '.neuron/config.json.123.456.abcdef.tmp');
   write(ws, '.git/config');
   write(ws, '.neuron/layout.json');
   write(ws, 'docs/.hidden/secret.txt');

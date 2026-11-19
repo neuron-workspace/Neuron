@@ -23,10 +23,19 @@ function TextSurface({ path, content, onChangeNote, colorScheme = 'dark', fileSi
     return () => { alive = false; };
   }, [path]);
 
-  const tooLarge = fileSize !== undefined && fileSize > EDIT_LIMIT;
-  const jsonError = React.useMemo(() => {
-    if (extensionOf(path) !== 'json' || !content.trim()) return null;
-    try { JSON.parse(content); return null; } catch (error) { return error instanceof Error ? error.message : String(error); }
+  // The caller waits for loaded content; measure it once per path, not on each edit.
+  const loadedTooLarge = React.useMemo(() => new TextEncoder().encode(content).length >= EDIT_LIMIT, [path]);
+  const tooLarge = loadedTooLarge || (fileSize !== undefined && fileSize > EDIT_LIMIT);
+  const [jsonError, setJsonError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (extensionOf(path) !== 'json' || content.length > 1024 * 1024 || !content.trim()) {
+      setJsonError(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { JSON.parse(content); setJsonError(null); } catch (error) { setJsonError(error instanceof Error ? error.message : String(error)); }
+    }, 300);
+    return () => clearTimeout(timer);
   }, [path, content]);
 
   return (

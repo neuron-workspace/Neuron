@@ -390,6 +390,7 @@ export function appendDbRow(db: DbFile, tableId: string, fields: Record<string, 
  * writes its option's name, and a checkbox the words its column already uses.
  */
 export function appendCsvRow(csv: CsvParseResult, meta: CsvTableMeta | null, fields: Record<string, FieldValue>): string {
+  if (!csv.exact) throw new Error("This table's file can't be added to safely; open it as a table first.");
   const row = csv.headers.map((header, index) => {
     const value = fields[header];
     const column = columnMeta(meta, header);
@@ -401,7 +402,7 @@ export function appendCsvRow(csv: CsvParseResult, meta: CsvTableMeta | null, fie
     if (column.type === 'select') return column.options?.find((o) => o.id === value)?.name ?? value.trim();
     return value.trim();
   });
-  return serializeCsv(csv.headers, [...csv.rows, row], csv.dialect);
+  return serializeCsv(csv.rawHeaders, [...csv.rows, row], csv.dialect);
 }
 
 /** A number as a stat shows it: whole numbers plain, others to two places at most. */

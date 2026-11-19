@@ -120,6 +120,15 @@ eq(moveTab({ ...two, groups: [{ tabs: ['a.md', 'p.md'], preview: 'p.md', selecte
   [{ tabs: ['a.md'], preview: null, selected: 'a.md' }, kept(['c.md', 'p.md'])]);
 assert.equal(moveTab(two, 0, 1, 'b.md', 'b.md'), two); checks++;
 
+// A moved tab already previewed in the target is kept, so the next click cannot replace it.
+{
+  const targetPreview = openInGroup(two, 'b.md', false, 1);
+  const moved = moveTab(targetPreview, 0, 1, 'b.md');
+  eq(moved.groups[1], kept(['c.md', 'b.md']));
+  eq(openInGroup(moved, 'next.md', false).groups[1],
+    { tabs: ['c.md', 'b.md', 'next.md'], preview: 'next.md', selected: 'next.md' });
+}
+
 // Closing a group closes its tabs; the neighbour before it takes focus.
 eq(closeGroup(three, 2), { groups: three.groups.slice(0, 2), direction: 'row', focused: 1 });
 eq(closeGroup({ ...three, focused: 0 }, 0).focused, 0);

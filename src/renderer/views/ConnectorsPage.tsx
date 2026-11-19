@@ -18,13 +18,20 @@ function ConnectorForm({ connector, onDone }: { connector: Connector; onDone: ()
   // the person asks to replace it.
   const [replacing, setReplacing] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const save = async () => {
     setSaving(true);
-    await saveConnector(connector.id, values);
-    // The typed secret does not stay in renderer state once it is stored.
-    setValues({});
-    setSaving(false);
-    onDone();
+    setError('');
+    try {
+      await saveConnector(connector.id, values);
+      // The typed secret does not stay in renderer state once it is stored.
+      setValues({});
+      onDone();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save the connector.');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <form className="mt-3 space-y-3 border-t border-[var(--divider)] pt-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
@@ -53,6 +60,7 @@ function ConnectorForm({ connector, onDone }: { connector: Connector; onDone: ()
           </div>
         );
       })}
+      {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={saving}>Save</Button>
         <Button type="button" size="sm" variant="ghost" onClick={onDone}>Cancel</Button>

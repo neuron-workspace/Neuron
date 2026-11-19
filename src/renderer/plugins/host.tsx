@@ -165,17 +165,7 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
       if (stored == null && !remote) {
         const legacy = await api.settings.get<LegacyPlugins>(LEGACY_KEY);
         const migrated = migrateConnectorValues(legacy?.config, manifests);
-        for (const secret of migrated.secrets) await api.settings.setSecret(secret.connector, secret.field, secret.value);
-        // A key still sitting in that readable record is readable by any
-        // renderer code. It is in the secret store now, so it leaves here.
-        if (migrated.secrets.length > 0 && legacy?.config) {
-          const config: Record<string, Record<string, string>> = {};
-          for (const [id, old] of Object.entries(legacy.config)) {
-            const secretKeys = (manifests.find((m) => m.id === id)?.configSchema ?? []).filter((f) => f.type === 'password').map((f) => f.key);
-            config[id] = Object.fromEntries(Object.entries(old ?? {}).filter(([key]) => !secretKeys.includes(key)));
-          }
-          await api.settings.set(LEGACY_KEY, { ...legacy, config });
-        }
+        // Main migrates and redacts legacy secrets before any window opens.
         stored = migrated.values;
         await api.settings.set(CONNECTORS_KEY, stored);
       }
@@ -238,7 +228,12 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
       const value = input[field.key] ?? '';
       // An empty secret field means "keep what is saved": it is never shown,
       // so leaving it empty cannot be a request to clear it.
-      if (field.type === 'password') { if (value) await api.settings.setSecret(id, field.key, value); }
+      if (field.type === 'password') {
+        if (value) {
+          const result = await api.settings.setSecret(id, field.key, value);
+          if (!result.success) throw new Error(result.error ?? 'Could not save the key.');
+        }
+      }
       else if (value.trim()) plain[field.key] = value.trim();
     }
     const next = { ...valuesRef.current, [id]: plain };
