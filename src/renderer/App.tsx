@@ -16,6 +16,7 @@ import {
 } from './lib/tabs';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
+import ChromeImportDialog from './components/ChromeImportDialog';
 import EditorGroups, { EditorGroupHeader, type GroupContext, type SaveState } from './components/EditorGroup';
 import SettingsWindow from './views/SettingsWindow';
 import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
@@ -174,6 +175,7 @@ export default function App() {
   const [tags, setTags] = useState<string[]>([]);
   const saveState: SaveState = selectedNote && !isUrl(selectedNote) ? saveStates[selectedNote] ?? 'idle' : 'idle';
   const [notice, setNotice] = useState<string | null>(null);
+  const [chromeImportOpen, setChromeImportOpen] = useState(false);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceReady, setAppearanceReady] = useState(false);
 
@@ -863,16 +865,6 @@ export default function App() {
     setView('notes');
   }, [layoutShell, adoptShellConfig]);
 
-  // Pull Chrome's cookies into the in-app browser session (stay logged in).
-  const importChromeLogins = useCallback(async () => {
-    if (!window.electronAPI) return;
-    setNotice('Importing Chrome logins…');
-    const r = await window.electronAPI.cookies.importChrome();
-    setNotice(r.success
-      ? `Imported ${r.imported ?? 0} Chrome cookies${r.skipped ? ` (${r.skipped} skipped)` : ''}. Open a website tab to use them.`
-      : `Chrome import failed: ${r.error ?? 'unknown error'}`);
-  }, []);
-
   // Open a website as a browser tab. The hash keeps each new tab a distinct key;
   // the in-view URL bar lets the user navigate anywhere from there.
   const openWebsite = useCallback(() => {
@@ -1300,6 +1292,7 @@ export default function App() {
           <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 
+        <ChromeImportDialog open={chromeImportOpen} onOpenChange={setChromeImportOpen} onImported={setNotice} />
         <CommandPalette
           recents={recents}
           onOpenRepo={openRepository}
@@ -1320,7 +1313,7 @@ export default function App() {
           shellActive={!!layoutShell}
           onToggleGraph={showOrToggleGraph}
           graphActive={graphOverlayOpen}
-          onImportChromeLogins={importChromeLogins}
+          onImportChromeLogins={() => setChromeImportOpen(true)}
           layout={layout}
           onLayoutChange={patchLayout}
           onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}

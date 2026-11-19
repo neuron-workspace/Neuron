@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Plus, Trash2, Zap } from 'lucide-react';
+import { runAutomationInTerminal } from '../lib/terminal-bus';
 
 interface Automation {
   id: string;
@@ -7,32 +8,20 @@ interface Automation {
   commands: string[];
 }
 
-interface LogLine {
-  type: 'cmd' | 'out' | 'err';
-  text: string;
-}
-
 const STORE_KEY = 'automations';
 
-/**
- * Named command sequences run one-shot in the active repo (via terminal:run).
- * For interactive work use the PTY terminal; automations are for scripted steps.
- */
+/** Named command sequences run in the visible workspace terminal. */
 export default function Automations() {
   const [items, setItems] = useState<Automation[]>([]);
   const [name, setName] = useState('');
   const [body, setBody] = useState('');
-  const [log, setLog] = useState<LogLine[]>([]);
-  const [running, setRunning] = useState<string | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
+  const [notice, setNotice] = useState('Output appears in the workspace terminal.');
 
   useEffect(() => {
     void window.electronAPI?.settings.get<Automation[]>(STORE_KEY).then((saved) => {
       if (Array.isArray(saved)) setItems(saved);
     });
   }, []);
-
-  useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }); }, [log]);
 
   const persist = async (next: Automation[]) => {
     setItems(next);
@@ -49,19 +38,10 @@ export default function Automations() {
 
   const remove = (id: string) => void persist(items.filter((a) => a.id !== id));
 
-  const run = async (automation: Automation) => {
-    if (running || !window.electronAPI) return;
-    setRunning(automation.id);
-    setLog([{ type: 'cmd', text: `▶ ${automation.name}` }]);
-    for (const cmd of automation.commands) {
-      setLog((prev) => [...prev, { type: 'cmd', text: `$ ${cmd}` }]);
-      const result = await window.electronAPI.terminal.run(cmd);
-      if (result.stdout) setLog((prev) => [...prev, { type: 'out', text: result.stdout.trimEnd() }]);
-      if (result.stderr) setLog((prev) => [...prev, { type: 'err', text: result.stderr.trimEnd() }]);
-      if (!result.success && !result.stderr) setLog((prev) => [...prev, { type: 'err', text: `exit code ${result.code}` }]);
-    }
-    setLog((prev) => [...prev, { type: 'cmd', text: '✓ done' }]);
-    setRunning(null);
+  const run = (automation: Automation) => {
+    setNotice(runAutomationInTerminal(automation.commands)
+      ? `${automation.name} sent to the workspace terminal.`
+      : 'Each command must be a nonempty single line without control characters.');
   };
 
   return (
@@ -78,7 +58,7 @@ export default function Automations() {
             {items.length === 0 && <p className="px-2 py-4 text-center text-xs text-[var(--ink-muted)]">No automations yet. Add one below.</p>}
             {items.map((a) => (
               <div key={a.id} className="note-row group mb-1 flex items-center gap-2 rounded-md px-2 py-1.5">
-                <button disabled={!!running} onClick={() => run(a)} className="interactive grid h-7 w-7 place-items-center rounded text-[var(--accent-strong)] hover:bg-[var(--surface-hover)] disabled:opacity-40" title={`Run ${a.name}`} aria-label={`Run ${a.name}`}>
+                <button onClick={() => run(a)} className="interactive grid h-7 w-7 place-items-center rounded text-[var(--accent-strong)] hover:bg-[var(--surface-hover)]" title={`Run ${a.name}`} aria-label={`Run ${a.name}`}>
                   <Play className="h-3.5 w-3.5" />
                 </button>
                 <div className="min-w-0 flex-1">
@@ -100,12 +80,8 @@ export default function Automations() {
           </div>
         </div>
 
-        {/* Output log */}
-        <div ref={logRef} className="w-1/2 overflow-y-auto bg-[var(--canvas)] p-2 font-mono text-[11px]">
-          {log.length === 0 && <p className="px-2 py-4 text-center text-[var(--ink-muted)]">Run an automation to see output.</p>}
-          {log.map((line, i) => (
-            <div key={i} className={`whitespace-pre-wrap break-all ${line.type === 'cmd' ? 'font-bold text-[var(--ink)]' : line.type === 'err' ? 'text-[var(--danger)]' : 'text-[var(--ink-secondary)]'}`}>{line.text}</div>
-          ))}
+        <div className="w-1/2 overflow-y-auto bg-[var(--canvas)] p-2 text-xs">
+          <p role="status" className="px-2 py-4 text-center text-[var(--ink-muted)]">{notice}</p>
         </div>
       </div>
     </div>
