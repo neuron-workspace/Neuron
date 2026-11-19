@@ -116,7 +116,9 @@ try {
     assert.equal(ok(url(2, windows.get(2).token, 'a.png')).fullPath, path.join(otherWs, 'a.png'));
   });
   check('traversal out of the workspace is refused', () => {
-    for (const rel of ['../ws-secret/x.png', 'sub/../../ws-secret/x.png', '..\\ws-secret\\x.png', '../other/x.png', '..']) assert.equal(ok(url(1, t1, rel)).ok, false, rel);
+    const escapes = ['../ws-secret/x.png', 'sub/../../ws-secret/x.png', '../other/x.png', '..'];
+    if (process.platform === 'win32') escapes.push('..\\ws-secret\\x.png');
+    for (const rel of escapes) assert.equal(ok(url(1, t1, rel)).ok, false, rel);
   });
   check('absolute paths are refused', () => {
     const absolute = [path.join(secret, 'x.png'), path.join(otherWs, 'x.png'), '/etc/x.png', '//server/share/x.png'];
