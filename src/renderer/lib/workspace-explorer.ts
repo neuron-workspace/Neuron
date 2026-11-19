@@ -98,6 +98,16 @@ export function listFolder(paths: readonly string[], folder: string, knownFolder
   };
 }
 
+/** A byte count as a person reads it: "5 bytes", "1.2 KB", "34 MB". */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' bytes';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ' + units[unit];
+}
+
 export interface FolderCounts { notes: number; folders: number; other: number }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;

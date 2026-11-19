@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ChevronDown, Database, FileCode2, FilePlus2, FileText, Folder, FolderPlus, Frame, GitBranch, Image as ImageIcon, Table2 } from 'lucide-react';
-import { breadcrumbs, describeCounts, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
+import { breadcrumbs, describeCounts, formatSize, listFolder, parentFolder, type RecentEntry } from '../lib/workspace-explorer';
+import { fileKind } from '../../main/file-kinds';
 import { nextUntitled } from '../lib/untitled';
 import { NEW_FILE_KINDS, startingCompanions, startingContent, type NewFileKind } from '../lib/new-file';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
@@ -10,14 +11,7 @@ import MDXPreview from '../components/MDXPreview';
 import OtherFileIcon from '../components/OtherFileIcon';
 
 const NONE: string[] = [];
-const formatSize = (bytes: number) => {
-  if (bytes < 1024) return bytes + ' bytes';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
-  return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ' + units[unit];
-};
+const KIND_LABELS: Record<string, string> = { image: 'Image', video: 'Video', audio: 'Audio', text: 'Text file' };
 
 interface WorkspaceExplorerProps {
   repositoryName: string;
@@ -50,12 +44,18 @@ const fileType = (entry: Item) => {
   if (entry.extension === 'canvas') return 'Canvas';
   if (entry.extension === 'csv') return 'Table';
   if (entry.extension === 'html') return 'Web view';
+  const kind = KIND_LABELS[fileKind(entry.path)];
+  if (kind) return kind;
   return entry.extension ? entry.extension.toUpperCase() + ' file' : 'File';
 };
 
-function ItemIcon({ item }: { item: Item }) {
+function ItemIcon({ item, thumbnail = false }: { item: Item; thumbnail?: boolean }) {
   if (item.kind === 'folder') return <Folder className="explorer-folder-icon" fill="currentColor" strokeWidth={1.25} />;
   if (item.other) return <OtherFileIcon path={item.path} strokeWidth={1.5} />;
+  const kind = fileKind(item.path);
+  // Loaded only when the tile scrolls into view, and never for a list row.
+  if (thumbnail && kind === 'image') return <img className="explorer-thumbnail image-checker" src={window.electronAPI.fileUrl(item.path)} alt="" loading="lazy" decoding="async" draggable={false} />;
+  if (kind === 'video' || kind === 'audio' || kind === 'text') return <OtherFileIcon path={item.path} strokeWidth={1.5} />;
   const Icon = ({ db: Database, canvas: Frame, csv: Table2, html: FileCode2, mmd: GitBranch,
     mermaid: GitBranch, png: ImageIcon, jpg: ImageIcon, jpeg: ImageIcon, gif: ImageIcon, svg: ImageIcon, webp: ImageIcon }[item.extension] ?? FileText);
   return <Icon strokeWidth={1.5} />;
@@ -68,7 +68,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
   const toItems = React.useCallback((listing: ReturnType<typeof listFolder>): Item[] => [
     ...listing.folders.map(entry => ({ ...entry, kind: 'folder' as const, extension: '' })),
     ...listing.files.map(entry => ({ ...entry, kind: 'file' as const, other: others.has(entry.path) }))], [others]);
-  const [view, setView] = React.useState<'list' | 'grid'>('list');
+  const [view, setView] = React.useState<'list' | 'grid'>('grid');
   const viewChanged = React.useRef(false);
   const [selection, setSelection] = React.useState<{ folder: string; path: string } | null>(null);
   const [draft, setDraft] = React.useState<{ kind: Item['kind']; fileKind: NewFileKind; name: string } | null>(null);
@@ -236,7 +236,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
           </React.Fragment>)}
         </nav>
         <div className="explorer-tools">{createButtons}<Segmented label="Explorer view" value={view}
-          options={[{ value: 'list', label: 'List' }, { value: 'grid', label: 'Grid' }]}
+          options={[{ value: 'grid', label: 'Grid' }, { value: 'list', label: 'List' }]}
           onChange={next => { viewChanged.current = true; setView(next); void window.electronAPI.settings.set('explorerView', next); }} /></div>
       </header>
       {(skipped > 0 || truncated) && <p className="explorer-notice" role="status">
@@ -265,7 +265,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
                 data-other-file={item.other ? item.path : undefined}
                 className="explorer-item interactive" style={{ order: item.kind === 'folder' ? 0 : 2 }} title={item.name}
                 onClick={() => select(item)} onDoubleClick={() => open(item)} onKeyDown={event => onKeyDown(event, item)}>
-                <ItemIcon item={item} />
+                <ItemIcon item={item} thumbnail={view === 'grid'} />
                 <span className="explorer-item-name">{item.name}</span>
                 <span className="explorer-item-detail">{detail(item)}</span>
                 {item.kind === 'file' && isNote(item.path) && <span className="explorer-word-count">{words.get(item.path) ?? 0} words</span>}
@@ -294,7 +294,9 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
             </p>
             {onReveal && <div className="explorer-tools"><button className="explorer-action interactive" onClick={() => onReveal(preview.path)}>Show in folder</button></div>}
           </> : <>
-            <p className="explorer-metadata">{fileType(preview)}{isNote(preview.path) && ' · ' + (words.get(preview.path) ?? 0) + ' words'}</p>
+            <p className="explorer-metadata">{fileType(preview)}{isNote(preview.path) && ' · ' + (words.get(preview.path) ?? 0) + ' words'}
+              {KIND_LABELS[fileKind(preview.path)] && fileInfo?.[preview.path] && ' · ' + formatSize(fileInfo[preview.path].size)}</p>
+            {fileKind(preview.path) === 'image' && <img key={preview.path} className="explorer-preview-image image-checker" src={window.electronAPI.fileUrl(preview.path)} alt={preview.name} draggable={false} />}
             {tags.length > 0 && <p className="explorer-metadata" aria-label="Tags">{tags.map(tag => '#' + tag).join(' ')}</p>}
             <div className="explorer-tools"><button className="explorer-action interactive" onClick={() => open(preview)}>Open</button>
               {isNote(preview.path) && onOpenToSide && <button className="explorer-action interactive" onClick={() => onOpenToSide(preview.path)}>Open to the side</button>}</div>

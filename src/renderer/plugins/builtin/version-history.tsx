@@ -62,8 +62,8 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--divider)] px-3 py-2.5">
-        <div className="truncate text-sm font-medium text-[var(--ink)]" title={note}>
+      <div className="min-w-0 border-b border-[var(--divider)] px-3 py-2.5">
+        <div className="min-w-0 truncate text-sm font-medium text-[var(--ink)]" title={note}>
           {note.split('/').pop()}
         </div>
         <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
@@ -82,7 +82,9 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
         </p>
       )}
 
-      <ScrollArea className="min-h-0 flex-1">
+      {/* Radix wraps the content in a display:table box that grows to fit its
+          widest line, which stops `truncate` from ever applying. */}
+      <ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
         {entries !== null && entries.length === 0 && (
           <div className="px-4 py-8 text-center">
             <p className="text-xs leading-5 text-[var(--ink-secondary)]">
@@ -108,12 +110,10 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                   isConfirming ? 'bg-[var(--surface)]' : 'hover:bg-[var(--surface-hover)]',
                 )}
               >
-                <div className="flex items-baseline gap-2">
+                <div className="flex min-w-0 items-baseline gap-2" title={`${new Date(entry.createdAt).toLocaleString()} · ${note}`}>
                   <Icon className="h-3 w-3 shrink-0 translate-y-0.5 text-[var(--ink-muted)]" aria-hidden />
-                  <span
-                    className="text-xs font-medium text-[var(--ink)]"
-                    title={new Date(entry.createdAt).toLocaleString()}
-                  >
+                  {/* The time is what tells entries apart, so it never gives way. */}
+                  <span className="shrink-0 whitespace-nowrap text-xs font-medium text-[var(--ink)]">
                     {relativeTime(entry.createdAt)}
                   </span>
                   <span className="ml-auto shrink-0 text-[10px] tabular-nums text-[var(--ink-muted)]">
@@ -122,7 +122,10 @@ function VersionHistoryPanel({ host }: { host: HostRuntime }) {
                 </div>
 
                 {/* The word carries the state, not just an icon colour. */}
-                <p className="mt-0.5 pl-5 text-[11px] text-[var(--ink-muted)]">
+                <p
+                  className="mt-0.5 min-w-0 truncate pl-5 text-[11px] text-[var(--ink-muted)]"
+                  title={entry.operation === 'delete' ? 'Before it was deleted' : 'Before it was overwritten'}
+                >
                   {entry.operation === 'delete' ? 'Before it was deleted' : 'Before it was overwritten'}
                 </p>
 

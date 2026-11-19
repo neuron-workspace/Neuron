@@ -10,11 +10,11 @@ import ConnectorsPage from './ConnectorsPage';
 import RepositoriesPage from './RepositoriesPage';
 
 const APP_SECTIONS: { id: SettingsSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'workspaces', label: 'Workspaces', icon: FolderGit2 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'keyboard', label: 'Keyboard', icon: Keyboard },
   { id: 'editor', label: 'Editor', icon: PencilLine },
   { id: 'connectors', label: 'Connectors', icon: Plug },
-  { id: 'workspaces', label: 'Workspaces', icon: FolderGit2 },
   { id: 'about', label: 'About', icon: Info },
 ];
 
@@ -51,8 +51,6 @@ interface SettingsWindowProps {
   properties: PropertiesSettings;
   onPropertiesChange: (properties: PropertiesSettings) => void;
   recents: RepositoryInfo[];
-  onCreateRepo: () => void;
-  onOpenRepo: () => void;
   onSwitchRepo: (dir: string) => void;
   /** Stable across renders: the window's listeners are set up once with it. */
   onReloadRepos: () => void;
@@ -94,7 +92,7 @@ export default function SettingsWindow(props: SettingsWindowProps) {
     case 'keyboard': content = <KeyboardSettings bindings={props.bindings} onBindingsChange={props.onBindingsChange} />; break;
     case 'editor': content = <EditorSettings properties={props.properties} onPropertiesChange={props.onPropertiesChange} />; break;
     case 'connectors': content = <ConnectorsPage />; break;
-    case 'workspaces': content = <RepositoriesPage opener={opener} recents={props.recents} onCreate={props.onCreateRepo} onOpen={props.onOpenRepo} onSwitch={props.onSwitchRepo} onReload={reload} />; break;
+    case 'workspaces': content = <RepositoriesPage opener={opener} recents={props.recents} onSwitch={props.onSwitchRepo} onReload={reload} />; break;
     case 'about': content = <AboutSettings />; break;
   }
 

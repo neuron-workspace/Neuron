@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, GripVertical } from 'lucide-react';
 import { dragWidths, MIN_COLUMN, roundWidths } from '../lib/columns';
 
 /**
@@ -197,10 +197,38 @@ export function Flashcard({ children, front, frontNode }: { children?: ReactNode
  * columns stack (a container query, because a note's width is not the
  * window's).
  */
-export function Columns({ widths, children, onResize }: { widths: number[]; children: ReactNode[]; onResize?: (widths: number[]) => void }) {
+export function Columns({ widths, children, onResize, onMove }: {
+  widths: number[]; children: ReactNode[]; onResize?: (widths: number[]) => void; onMove?: (from: number, to: number) => void;
+}) {
   const row = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<number[] | null>(null);
+  const reorder = useRef<{ from: number; x: number; y: number; pointerId: number; moved: boolean } | null>(null);
+  const [insertion, setInsertion] = useState<number | null>(null);
+  const [announcement, setAnnouncement] = useState('');
   const shown = dragging ?? widths;
+
+  const moveColumn = (from: number, to: number) => {
+    if (!onMove || from === to || to < 0 || to >= children.length) return;
+    onMove(from, to);
+    row.current?.querySelectorAll<HTMLButtonElement>(':scope > [data-column] > [data-column-move]')[to]?.focus();
+    setAnnouncement(`Moved to position ${to + 1} of ${children.length}`);
+  };
+
+  const dropPosition = (event: React.PointerEvent<HTMLButtonElement>): number | null => {
+    const element = row.current;
+    if (!element) return null;
+    const bounds = element.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) return null;
+    const stacked = getComputedStyle(element).flexDirection === 'column';
+    const columns = Array.from(element.querySelectorAll<HTMLElement>(':scope > [data-column]'));
+    const before = columns.findIndex((column) => {
+      const rect = column.getBoundingClientRect();
+      return stacked ? event.clientY < rect.top + rect.height / 2 : event.clientX < rect.left + rect.width / 2;
+    });
+    return before < 0 ? columns.length : before;
+  };
+
+  const cancelMove = () => { reorder.current = null; setInsertion(null); };
 
   const startDrag = (index: number) => (event: React.PointerEvent<HTMLDivElement>) => {
     if (!onResize || event.button !== 0) return;
@@ -261,8 +289,48 @@ export function Columns({ widths, children, onResize }: { widths: number[]; chil
       ) : <div key={'gap-' + index} data-column-gap aria-hidden className="mdx-column-gap" />);
     }
     items.push(
-      <div key={'column-' + index} data-column className="mdx-column min-w-0 break-words" style={{ flex: `${shown[index] ?? 1} 1 0%` }}>
+      <div key={'column-' + index} data-column className={`mdx-column relative min-w-0 break-words${onMove ? ' mdx-column-movable' : ''}`} style={{ flex: `${shown[index] ?? 1} 1 0%` }}>
+        {onMove && <button
+          type="button"
+          aria-label="Move column"
+          title="Drag to move; use Left or Right arrow keys"
+          data-column-move
+          className="mdx-column-move interactive absolute left-0 top-0 flex h-6 w-6 touch-none items-center justify-center rounded text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelMove(); }
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault(); event.stopPropagation();
+            moveColumn(index, index + (event.key === 'ArrowLeft' ? -1 : 1));
+          }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault(); event.stopPropagation();
+            event.currentTarget.focus();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            reorder.current = { from: index, x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false };
+          }}
+          onPointerMove={(event) => {
+            const drag = reorder.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4 && !drag.moved) return;
+            drag.moved = true;
+            setInsertion(dropPosition(event));
+          }}
+          onPointerUp={(event) => {
+            const drag = reorder.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            const position = dropPosition(event);
+            cancelMove();
+            if (drag.moved && position !== null) moveColumn(drag.from, position > drag.from ? position - 1 : position);
+          }}
+          onPointerCancel={cancelMove}
+          onLostPointerCapture={cancelMove}
+        ><GripVertical size={14} aria-hidden /></button>}
         {child}
+        {(insertion === index || (insertion === children.length && index === children.length - 1)) && (
+          <span aria-hidden data-column-insertion className="mdx-column-insertion" data-end={insertion === children.length || undefined} />
+        )}
       </div>,
     );
   });
@@ -270,6 +338,7 @@ export function Columns({ widths, children, onResize }: { widths: number[]; chil
   return (
     <div className="mdx-columns my-4 min-w-0 max-w-full">
       <div ref={row} className="mdx-columns-row flex min-w-0" data-columns={children.length}>{items}</div>
+      {onMove && <span className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</span>}
     </div>
   );
 }

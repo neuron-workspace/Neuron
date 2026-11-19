@@ -1,30 +1,28 @@
 import { useRef, useState } from 'react';
-import { AlertCircle, Check, Cloud, FolderGit2, FolderOpen, FolderPlus, MoreHorizontal, Sparkles, X } from 'lucide-react';
+import { Check, Cloud, FolderGit2, MoreHorizontal, X } from 'lucide-react';
 import type { RepositoryInfo } from '../electron.d';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
-import { useWorkspaceTemplates } from '../lib/useWorkspaceTemplates';
+
+const ADD_HINT = 'Add a workspace from the workspace menu in the top-left of a window.';
 
 interface RepositoriesPageProps {
   /** The workspace whose window opened Settings: the one workspace known to be on screen. */
   opener: RepositoryInfo | null;
   recents: RepositoryInfo[];
-  onCreate: () => void;
-  onOpen: () => void;
   onSwitch: (dir: string) => void;
   onReload: () => void;
 }
 
 /** The Workspaces section of the Settings window. */
-export default function RepositoriesPage({ opener, recents, onCreate, onOpen, onSwitch, onReload }: RepositoriesPageProps) {
+export default function RepositoriesPage({ opener, recents, onSwitch, onReload }: RepositoriesPageProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const keepFocus = useRef(false);
-  const { templates, busy, error, start } = useWorkspaceTemplates();
 
   // Merge the opener into the list in case it isn't in recents yet.
   const repos = opener && !recents.some((r) => r.path === opener.path) ? [opener, ...recents] : recents;
@@ -44,47 +42,8 @@ export default function RepositoriesPage({ opener, recents, onCreate, onOpen, on
 
   return (
     <div>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" onClick={onOpen}><FolderOpen className="h-3.5 w-3.5" /> Open folder…</Button>
-        <Button size="sm" variant="outline" onClick={onCreate}><FolderPlus className="h-3.5 w-3.5" /> Create workspace…</Button>
-      </div>
-
-      {templates.length > 0 && (
-        <div className="mt-5">
-          <h2 className="mb-2 flex items-center gap-1.5 text-xs font-medium text-[var(--ink-muted)]">
-            <Sparkles className="h-3 w-3" /> Start from a template
-          </h2>
-          <div className="overflow-hidden rounded-md border border-[var(--divider)]">
-            {templates.map((template, index) => (
-              <button
-                key={template.id}
-                onClick={() => void start(template)}
-                disabled={busy !== null}
-                className={`interactive flex min-h-[36px] w-full items-center gap-3 px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60 ${index > 0 ? 'border-t border-[var(--divider)]' : ''}`}
-              >
-                <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink)]">
-                  {template.name}
-                  <span className="ml-2 text-xs text-[var(--ink-muted)]">
-                    {template.description || `${template.noteCount} note${template.noteCount === 1 ? '' : 's'} to start from`}
-                  </span>
-                </span>
-                <span className="shrink-0 text-xs text-[var(--ink-muted)]">{busy === template.id ? 'Creating…' : 'Choose folder'}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div role="alert" className="mt-4 flex items-start gap-2 rounded-md border border-[var(--danger)] px-3 py-2 text-xs text-[var(--ink)]">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--danger)]" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <h2 className="mb-2 mt-7 text-xs font-medium text-[var(--ink-muted)]">Known workspaces</h2>
       {repos.length === 0 ? (
-        <p className="text-sm text-[var(--ink-secondary)]">No workspaces yet. Open a folder of notes or create a workspace to begin.</p>
+        <p className="text-sm text-[var(--ink-secondary)]">{ADD_HINT}</p>
       ) : (
         <ul aria-label="Known workspaces" className="divide-y divide-[var(--divider)] overflow-hidden rounded-md border border-[var(--divider)]">
           {repos.map((repo) => {
@@ -104,7 +63,7 @@ export default function RepositoriesPage({ opener, recents, onCreate, onOpen, on
                     </div>
                   ) : (
                     <div className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--ink)]">
-                      <span className="truncate">{repo.name}</span>
+                      <button type="button" onClick={() => onSwitch(repo.path)} className="interactive min-w-0 truncate rounded-sm text-left hover:underline">{repo.name}</button>
                       {repo.cloud && <Cloud aria-label="In a synced folder" className="h-3 w-3 shrink-0 text-[var(--ink-muted)]" />}
                     </div>
                   )}
@@ -140,7 +99,7 @@ export default function RepositoriesPage({ opener, recents, onCreate, onOpen, on
           })}
         </ul>
       )}
-      <p className="mt-3 text-xs text-[var(--ink-muted)]">Remove only forgets a workspace from this list — its folder and notes stay on disk.</p>
+      {repos.length > 0 && <p className="mt-3 text-xs text-[var(--ink-muted)]">{ADD_HINT}</p>}
     </div>
   );
 }

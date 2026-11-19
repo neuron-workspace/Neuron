@@ -395,13 +395,23 @@ body.platform-darwin .status-bar {
 /* <Columns>. The gap is an element (the drag handle in Live), 24px wide. */
 .mdx-columns { container-type: inline-size; }
 .mdx-column-gap { flex: 0 0 24px; }
-.mdx-column > :first-child { margin-top: 0; }
+.mdx-column > :first-child,
+.mdx-column > [data-column-move] + * { margin-top: 0; }
+.mdx-column-movable { padding-top: 24px; }
+.mdx-column-move { opacity: 0; cursor: grab; }
+.mdx-column-move:active { cursor: grabbing; }
+.mdx-column:hover > .mdx-column-move,
+.mdx-column:focus-within > .mdx-column-move { opacity: 1; }
+.mdx-column-insertion { position: absolute; inset: 0 auto 0 -12px; width: 2px; background: var(--accent); pointer-events: none; }
+.mdx-column-insertion[data-end] { left: auto; right: 0; }
 @container (max-width: 639px) {
   .mdx-columns-row { flex-direction: column; }
   .mdx-columns-row > .mdx-column { flex: 0 0 auto !important; }
   .mdx-columns-row > .mdx-column-gap { flex-basis: 16px; }
   .mdx-columns-row > .mdx-column-gap > * { display: none; }
   .mdx-columns-row > .mdx-column-gap[role="separator"] { pointer-events: none; }
+  .mdx-column-insertion { inset: -8px 0 auto; width: auto; height: 2px; }
+  .mdx-column-insertion[data-end] { inset: auto 0 0; }
 }
 @media (prefers-reduced-motion: reduce) { .mdx-column-handle { transition: none; } }
 
@@ -661,6 +671,10 @@ html[data-theme='light'] .neuron-logo {
 @media (prefers-reduced-motion: reduce) {
   .workbench-drop-zone { transition: none; }
 }
+/* Edge targets on an editor group's content: drop a tab to split the editor. */
+.editor-split-zone { z-index: calc(var(--z-overlay) + 2); }
+.editor-split-zone-right { top: 6px; right: 6px; bottom: 6px; width: calc(50% - 9px); }
+.editor-split-zone-down { left: 6px; right: 6px; bottom: 6px; height: calc(50% - 9px); }
 
 /* The search row is flush with the dialog, which clips overflow, so an outline
    around the bare input is cut off. Focus shows on the row's bottom edge
@@ -711,6 +725,10 @@ html[data-theme='light'] .neuron-logo {
 .explorer-item-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explorer-grid .explorer-item { display: flex; flex-direction: column; gap: 4px; width: 132px; height: auto; min-height: 116px; padding: 12px 6px; text-align: center; }
 .explorer-grid .explorer-item > svg { width: 40px; height: 40px; flex-shrink: 0; margin-bottom: 4px; }
+.explorer-thumbnail { width: 64px; height: 48px; flex-shrink: 0; object-fit: contain; border-radius: 4px; }
+.explorer-preview-image { display: block; max-width: 100%; max-height: 240px; margin-top: 12px; border-radius: 6px; object-fit: contain; }
+/* Behind images, so transparent pixels read as transparent and not as the page. */
+.image-checker { background: repeating-conic-gradient(color-mix(in srgb, var(--ink-muted) 22%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
 .explorer-grid .explorer-item-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; width: 100%; line-height: 16px; }
 .explorer-grid .explorer-item-detail { max-width: 100%; font-size: 11px; }
 .explorer-grid .explorer-word-count { display: none; }

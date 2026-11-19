@@ -283,8 +283,23 @@ export async function setPluginEnabled(_app: ElectronApplication, page: Page, na
   const toggle = dialog.getByRole('switch', { name: `Enable ${name}` });
   await expect(toggle).toBeVisible();
   await toggle.setChecked(on);
-  await page.keyboard.press('Escape');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(dialog).toHaveCount(0);
+}
+
+/**
+ * Close an open menu with a pointer click outside it.
+ *
+ * Escape does not close menus under xvfb on Linux or on the macOS runner, and
+ * clicking (1, 1) is no good either: on macOS the top-left corner is the
+ * title-bar drag region, which never delivers pointer events to the page. So
+ * click near the bottom-left of the focused editor group, which is page content,
+ * not draggable, and far from a menu opened from a tab.
+ */
+export async function closeMenuByClickingOutside(page: Page) {
+  const box = await page.locator('[data-editor-group][data-focused="true"]').boundingBox();
+  if (!box) throw new Error('no focused editor group to click in');
+  await page.mouse.click(box.x + 8, box.y + box.height - 8);
 }
 
 /** URLs the app handed to the OS browser, recorded by the stub above. */

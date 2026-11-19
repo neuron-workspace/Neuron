@@ -5,10 +5,10 @@ import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
 import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard, Columns } from './mdx-layout';
-import { resolveWidths, splitColumns, writeColumnWidths } from '../lib/columns';
+import { moveColumn, resolveWidths, splitColumns, writeColumnWidths } from '../lib/columns';
 import { Chart, DataForm, DataStat } from './mdx-data';
 import InsertMenu, { firstDatabase, snippetFor, type InsertKind } from './InsertMenu';
-import DocumentProperties from './properties/DocumentProperties';
+import DocumentProperties, { FULL_WIDTH_KEY } from './properties/DocumentProperties';
 import { applyFrontmatter, isFullWidth, parseFrontmatter } from '../lib/frontmatter';
 import { sanitizeHtmlToReact } from '../lib/sanitize-html';
 import { safeUrl } from '../lib/view-security';
@@ -496,7 +496,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         return (
           <div key={`Columns-${index}`} className="min-w-0 max-w-full">
             {segments.length > 4 && <p className="text-xs text-[var(--ink-muted)]">Columns holds 2 to 4 columns; showing the first 4.</p>}
-            <Columns widths={widths} onResize={resize}>{columns}</Columns>
+            <Columns widths={widths} onResize={resize}
+              onMove={canEdit ? (from, to) => changeSource(moveColumn(sourceRef.current, index + fmLineOffset, from, to)) : undefined}
+            >{columns}</Columns>
           </div>
         );
       }
@@ -870,7 +872,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       data-live-preview={editable || undefined}
       data-full-width={isFullWidth(fm.data) || undefined}
     >
-      {showProperties && (editable || fm.hasFrontmatter) && (
+      {showProperties && (editable || (fm.hasFrontmatter && (!fm.valid || fm.properties.some((p) => !FULL_WIDTH_KEY.test(p.key))))) && (
         <div className="preview-prose mx-auto mb-4">
           <DocumentProperties doc={mdxContent} tagSuggestions={tagSuggestions} onTagClick={onTagClick} defaultCollapsed={defaultPropertiesCollapsed}
             onChangeDoc={editable ? (next) => changeSource(applyFrontmatter(sourceRef.current, next)) : undefined}

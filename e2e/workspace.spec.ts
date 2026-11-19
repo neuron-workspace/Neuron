@@ -101,7 +101,20 @@ test('properties wrap at 720px, collapse and keep typed value controls', async (
   await expect(props.getByRole('link', { name: 'example.com' })).toBeVisible();
 });
 
-test('invalid YAML uses the error callout and retains its source action', async ({ page, workspace }) => {
+test('a note with fullWidth and one other property shows one row and no header', async ({ page, workspace }) => {
+  writeFileSync(join(workspace, 'one-prop.mdx'), ['---', 'fullWidth: true', 'status: Draft', '---', '', '# One prop'].join('\n'));
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  await openNote(page, 'one-prop.mdx');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  const props = page.getByRole('region', { name: 'Document properties', exact: true });
+  await expect(props.getByLabel('Status', { exact: true })).toHaveText('Draft');
+  await expect(props.getByRole('button', { name: /^Properties ·/ })).toHaveCount(0);
+  await expect(props).not.toContainText(/full\s*width/i);
+  await expect(props.getByLabel('Status', { exact: true })).toHaveCount(1);
+  await expect(props.locator('.group')).toHaveCount(1);
+});
+
+test('invalid YAML uses the error callout and retains its source action',async ({ page, workspace }) => {
   const file = join(workspace, 'properties', 'invalid-yaml.md');
   const before = readFileSync(file);
   await openNote(page, 'properties/invalid-yaml.md');

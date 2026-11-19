@@ -9,6 +9,7 @@ export const areas = [
   [/^(components\/(FloatingGraph|GraphCanvas|SigmaGraph)\.tsx|lib\/(graph-layout|knowledge-graph)\.ts)$/, ['graph']],
   [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels', 'workspace-layout-config']],
   [/^(views\/WorkspaceExplorer\.tsx|lib\/(explorer-state\.tsx|workspace-explorer\.ts))$/, ['workspace-explorer']],
+  [/^(surfaces\/(ImageSurface|MediaSurface|TextSurface)\.tsx|components\/OtherFileIcon\.tsx)$/, ['open-files', 'all-files']],
   [/^(surfaces\/MermaidSurface\.tsx|components\/MermaidDiagram\.tsx|lib\/mermaid\.ts)$/, ['mermaid']],
   [/^components\/(mdx-components|mdx-layout|MDXPreview|LiveEditor)\.tsx$/, ['flashcard', 'mdx-layout', 'rendering', 'mdx-pages']],
   [/^(components\/(mdx-data|InsertMenu|FullWidthToggle)\.tsx|lib\/(data-query|columns)\.ts)$/, ['mdx-pages']],

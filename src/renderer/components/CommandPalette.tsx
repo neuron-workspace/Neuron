@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Blocks, Chrome, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, Table2, TerminalSquare } from 'lucide-react';
+import { Blocks, Chrome, Columns2, Rows2, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, Table2, TerminalSquare } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
@@ -29,10 +29,13 @@ interface CommandPaletteProps {
   savedLayouts?: SavedLayout[];
   /** Full-text search lives in the sidebar; this is its way in now that it has no row there. */
   onSearchNotes?: () => void;
-  sideNoteOpen?: boolean;
-  canOpenToSide?: boolean;
-  onOpenToSide?: () => void;
-  onCloseSide?: () => void;
+  /** How many editor groups there are, and whether the focused group's file can split into a new one. */
+  editorGroups?: number;
+  canSplitRight?: boolean;
+  canSplitDown?: boolean;
+  onSplitEditor?: (direction: 'row' | 'column') => void;
+  onCloseEditorGroup?: () => void;
+  onFocusNextGroup?: () => void;
   onApplySavedLayout?: (id: string) => void;
   onLayoutChange: (patch: Partial<WorkbenchLayout>) => void;
   onResetLayout: () => void;
@@ -60,7 +63,7 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, sideNoteOpen = false, canOpenToSide = false, onOpenToSide, onCloseSide, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onCreateKind, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
+export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, editorGroups = 1, canSplitRight = false, canSplitDown = false, onSplitEditor, onCloseEditorGroup, onFocusNextGroup, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onCreateKind, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
   const { commands, runtimeFor } = usePlugins();
   const terminal = useTerminalToggle(layout, onLayoutChange, onOpenMarketplace);
   const close = () => onOpenChange(false);
@@ -117,8 +120,12 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
           <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
           <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
           <CommandItem onSelect={() => { onSearchNotes?.(); close(); }}><PanelsTopLeft /> Search in notes</CommandItem>
-          <CommandItem disabled={!canOpenToSide} onSelect={() => { onOpenToSide?.(); close(); }}><PanelsTopLeft /> Open current note to the side</CommandItem>
-          {sideNoteOpen && <CommandItem onSelect={() => { onCloseSide?.(); close(); }}><PanelsTopLeft /> Close side pane</CommandItem>}
+          <CommandItem disabled={!canSplitRight} onSelect={() => { onSplitEditor?.('row'); close(); }}><Columns2 /> Split editor right<Shortcut chord={bindings['split-editor-right']} /></CommandItem>
+          <CommandItem disabled={!canSplitDown} onSelect={() => { onSplitEditor?.('column'); close(); }}><Rows2 /> Split editor down</CommandItem>
+          {/* The command this replaced, under its old name. */}
+          <CommandItem disabled={!canSplitRight} onSelect={() => { onSplitEditor?.('row'); close(); }}><Columns2 /> Open current note to the side</CommandItem>
+          <CommandItem disabled={editorGroups < 2} onSelect={() => { onCloseEditorGroup?.(); close(); }}><PanelsTopLeft /> Close editor group</CommandItem>
+          <CommandItem disabled={editorGroups < 2} onSelect={() => { onFocusNextGroup?.(); close(); }}><PanelsTopLeft /> Focus next editor group</CommandItem>
           {savedLayouts.map((saved) => (
             <CommandItem key={saved.id} onSelect={() => { onApplySavedLayout?.(saved.id); close(); }}><PanelsTopLeft /> Layout: switch to {saved.name}</CommandItem>
           ))}

@@ -1,12 +1,14 @@
 // <Columns> and its <Column width="40%"> children: finding the columns in the
-// block's text, turning their widths into numbers, and writing dragged widths
-// back into the tags. Pure, so the rounding can be tested without a window.
+// block's text, moving whole columns, and writing dragged widths back into the
+// tags. Pure, so source changes can be tested without a window.
 
 export interface ColumnSegment {
   /** Offset in the block text of the column's `<Column`. */
   tagStart: number;
   /** Offset in the block text of the first character after the open tag's `>`. */
   contentStart: number;
+  /** Offset after the matching close tag (or self-closing open tag). */
+  tagEnd: number;
   content: string;
   width: string | undefined;
 }
@@ -24,6 +26,7 @@ export function splitColumns(block: string): ColumnSegment[] {
   const first = block.indexOf('>');
   if (first < 0) return segments;
   let depth = 0;
+  let columnDepth = 0;
   let current: { tagStart: number; contentStart: number; width: string | undefined } | null = null;
   const tag = /<(\/?)(Columns?)\b([^>]*?)(\/?)>/g;
   tag.lastIndex = first + 1;
@@ -36,17 +39,42 @@ export function splitColumns(block: string): ColumnSegment[] {
     }
     if (depth > 0) continue;
     if (!closing) {
-      if (current) continue;
+      if (current) { if (!selfClosing) columnDepth++; continue; }
       const width = /\bwidth="([^"]*)"/.exec(attrs)?.[1];
       const at = { tagStart: match.index, contentStart: match.index + whole.length, width };
-      if (selfClosing) segments.push({ ...at, content: '' });
+      if (selfClosing) segments.push({ ...at, tagEnd: tag.lastIndex, content: '' });
       else current = at;
     } else if (current) {
-      segments.push({ ...current, content: block.slice(current.contentStart, match.index) });
+      if (columnDepth > 0) { columnDepth--; continue; }
+      segments.push({ ...current, tagEnd: tag.lastIndex, content: block.slice(current.contentStart, match.index) });
       current = null;
     }
   }
   return segments;
+}
+
+/** Move a whole column to a final index; the row's line and both indices are zero-based. */
+export function moveColumn(source: string, rowStartLine: number, from: number, to: number): string {
+  if (![rowStartLine, from, to].every((n) => Number.isInteger(n) && n >= 0) || from === to) return source;
+  let offset = 0;
+  for (let line = 0; line < rowStartLine; line++) {
+    const end = source.indexOf('\n', offset);
+    if (end < 0) return source;
+    offset = end + 1;
+  }
+  const block = source.slice(offset);
+  if (!/^[\t ]*<Columns\b/.test(block)) return source;
+  const segments = splitColumns(block);
+  if (from >= segments.length || to >= segments.length) return source;
+  const blocks = segments.map(({ tagStart, tagEnd }) => block.slice(tagStart, tagEnd));
+  blocks.splice(to, 0, blocks.splice(from, 1)[0]);
+  let result = source.slice(0, offset);
+  let cursor = 0;
+  segments.forEach(({ tagStart, tagEnd }, index) => {
+    result += block.slice(cursor, tagStart) + blocks[index];
+    cursor = tagEnd;
+  });
+  return result + block.slice(cursor);
 }
 
 /** A width attribute as a percentage, or undefined when it is not one. */

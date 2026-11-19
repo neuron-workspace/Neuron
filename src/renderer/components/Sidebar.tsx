@@ -38,6 +38,8 @@ interface SidebarProps {
   folders: string[];
   /** Files Neuron does not open: listed, selectable, never opened. */
   otherFiles: string[];
+  /** Images, video, audio and text outside the note listing: they open, but are not searched. */
+  openFiles?: string[];
   onReveal: (path: string) => void;
   revealedFolder: string | null;
   tags: string[];
@@ -137,10 +139,12 @@ export default function Sidebar(props: SidebarProps) {
   );
   const filtered = useMemo(() => (query ? hits.map((hit) => hit.path) : notes), [hits, notes, query]);
   const otherFiles = query ? NONE : props.otherFiles;
+  const openFiles = query ? NONE : props.openFiles ?? NONE;
   const tree = useMemo(
-    () => buildTree([...filtered, ...otherFiles, ...props.folders.map(path => path + '/')], new Set(otherFiles)),
-    [filtered, otherFiles, props.folders],
+    () => buildTree([...filtered, ...openFiles, ...otherFiles, ...props.folders.map(path => path + '/')], new Set(otherFiles)),
+    [filtered, openFiles, otherFiles, props.folders],
   );
+  const openSet = useMemo(() => new Set(openFiles), [openFiles]);
   // An other file is selected here only: it has no tab to be the open one.
   const [selectedOther, setSelectedOther] = useState<string | null>(null);
   useEffect(() => setSelectedOther(null), [selectedNote]);
@@ -208,7 +212,9 @@ export default function Sidebar(props: SidebarProps) {
     return (
       <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
         <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
-          {/\.csv$/i.test(file.name)
+          {openSet.has(file.path)
+            ? <OtherFileIcon path={file.path} className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
+            : /\.csv$/i.test(file.name)
             ? <Table2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
             : <FileCode2 className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />}
           <span className="truncate font-sans text-[12px]">{file.name.replace(/\.(md|mdx)$/, '')}</span>
@@ -257,7 +263,7 @@ export default function Sidebar(props: SidebarProps) {
     <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
       {[...tree.files].sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
-      {filtered.length === 0 && otherFiles.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
+      {filtered.length === 0 && openFiles.length === 0 && otherFiles.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
     </div>
   );
 

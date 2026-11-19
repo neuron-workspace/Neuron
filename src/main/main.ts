@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol } from 'electron';
 import type { WebContents } from 'electron';
 import { decideOpen, settingsSectionOf, ownsPtyKey, ptyKey, type SettingsSection, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
@@ -24,6 +24,10 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { fileKind, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
+import { authorizeFileUrl, FILE_HEADERS, FILE_SCHEME, parseRange } from './file-protocol';
 import { watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import { exec } from 'child_process';
@@ -43,8 +47,17 @@ interface AppWindow {
   kind: WindowKind;
   repo: string | null;
   watcher: { close(): void } | null;
+  /** Random, per window: proves a neuron-file:// request came from this window. */
+  fileToken: string;
 }
 const appWindows = new Map<number, AppWindow>();
+
+// Before `ready`, as Electron requires. Streamed so <video> can seek; no fetch
+// and no CORS, so page script cannot read these files through it.
+protocol.registerSchemesAsPrivileged([{
+  scheme: FILE_SCHEME,
+  privileges: { standard: true, secure: true, stream: true, supportFetchAPI: false, corsEnabled: false },
+}]);
 /** The workspace window used last, for things with no sender (a second launch). */
 let lastWorkspaceId: number | null = null;
 /** The workspace of the window that last opened Settings, which its Workspaces section marks. */
@@ -263,7 +276,7 @@ function bindRepo(entry: AppWindow, dir: string | null): void {
   disposeWindowPtys(entry.window.webContents.id);
   entry.repo = dir;
   setupWatcher(entry);
-  if (dir && !entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', repoInfo(dir));
+  if (!entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', dir ? repoInfo(dir) : null);
 }
 
 /**
@@ -367,7 +380,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   if (testInBackground) window.once('ready-to-show', () => { if (!window.isDestroyed()) window.showInactive(); });
   // Settings is a smaller window with no workspace of its own.
   if (kind !== 'workspace') { window.setMinimumSize(760, 520); window.setSize(1000, 720); }
-  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null };
+  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null, fileToken: randomBytes(32).toString('hex') };
   const id = window.webContents.id;
   appWindows.set(id, entry);
   if (kind === 'workspace') lastWorkspaceId = id;
@@ -654,15 +667,18 @@ ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
 
 ipcMain.handle('repository:remove', (event, dir: string) => {
   const settings = readSettings();
-  settings.repositories.recent = settings.repositories.recent.filter((p) => p !== dir);
-  if (settings.repositories.names) delete settings.repositories.names[dir];
-  if (settings.repositories.current === dir) settings.repositories.current = null;
+  const key = folderKey(dir);
+  settings.repositories.recent = settings.repositories.recent.filter((p) => folderKey(p) !== key);
+  for (const named of Object.keys(settings.repositories.names ?? {})) {
+    if (folderKey(named) === key) delete settings.repositories.names![named];
+  }
+  if (settings.repositories.current && folderKey(settings.repositories.current) === key) settings.repositories.current = null;
   writeSettings(settings);
-  // Forgetting a workspace closes it in the window that asked. Another window
-  // showing it keeps working: its files are still there.
   const entry = entryOf(event);
-  const wasActive = !!entry && entry.repo === dir;
-  if (entry && wasActive) bindRepo(entry, null);
+  const wasActive = !!entry?.repo && folderKey(entry.repo) === key;
+  for (const workspace of appWindows.values()) {
+    if (workspace.kind === 'workspace' && workspace.repo && folderKey(workspace.repo) === key) bindRepo(workspace, null);
+  }
   return { success: true, clearedActive: wasActive };
 });
 
@@ -703,10 +719,62 @@ ipcMain.handle('notes:list', async (_event) => {
 
 // Everything in the workspace, for the file tree and the explorer. Separate
 // from notes:list because the renderer reads every listed note into memory.
-ipcMain.handle('workspace:entries', (event): WorkspaceEntries => {
+ipcMain.handle('workspace:entries', async (event): Promise<WorkspaceEntries> => {
   const repo = repoOf(event);
-  if (!repo) return { files: [], folders: [], info: {}, skipped: 0, truncated: false };
-  return walkWorkspace(repo, { limit: ENTRY_LIMIT });
+  if (!repo) return { files: [], folders: [], info: {}, skipped: 0, truncated: false, text: [] };
+  const listing = walkWorkspace(repo, { limit: ENTRY_LIMIT });
+  // A name the kind table does not know opens as text only if it starts as
+  // text. Bounded: past the cap such files simply stay other files.
+  const unknown = listing.files.filter((file) => fileKind(file) === 'other' && needsSniff(file)).slice(0, SNIFF_FILE_LIMIT);
+  const text: string[] = [];
+  for (let i = 0; i < unknown.length; i += 32) {
+    const batch = unknown.slice(i, i + 32);
+    const results = await Promise.all(batch.map((file) => startsAsText(path.join(repo, file))));
+    batch.forEach((file, index) => { if (results[index]) text.push(file); });
+  }
+  return { ...listing, text };
+});
+
+const SNIFF_FILE_LIMIT = 2000;
+/** Text files over this open read-only, showing only this much. */
+const TEXT_READ_LIMIT = 5 * 1024 * 1024;
+
+/** Whether a file's first SNIFF_BYTES are UTF-8 text with no NUL byte. */
+async function startsAsText(fullPath: string): Promise<boolean> {
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(fullPath, 'r');
+    const sample = Buffer.alloc(SNIFF_BYTES);
+    const { bytesRead } = await handle.read(sample, 0, SNIFF_BYTES, 0);
+    return looksLikeText(sample.subarray(0, bytesRead));
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * What notes:read and notes:write may touch, by kind. Programs and scripts,
+ * known binaries and media never go through them: media is served by
+ * neuron-file:// and the rest is never opened. A name the kind table does not
+ * know is allowed only while its content is text.
+ */
+const READ_WRITE_REFUSED = new Set(['blocked', 'image', 'video', 'audio']);
+function textGuard(relativePath: string): 'refuse' | 'text' | 'unknown' | 'free' {
+  const kind = fileKind(relativePath);
+  if (READ_WRITE_REFUSED.has(kind)) return 'refuse';
+  if (kind === 'other') return needsSniff(relativePath) ? 'unknown' : 'refuse';
+  return kind === 'text' ? 'text' : 'free';
+}
+
+// The base of this window's neuron-file:// URLs, for its preload. Only the
+// main frame of a workspace window gets it.
+ipcMain.on('workspace:file-base', (event) => {
+  const entry = entryOf(event);
+  event.returnValue = entry && entry.kind === 'workspace' && event.senderFrame === entry.window.webContents.mainFrame
+    ? `${FILE_SCHEME}://w/${event.sender.id}/${entry.fileToken}/`
+    : null;
 });
 
 // Shows a workspace file in the system file manager. Never opens it: the
@@ -721,7 +789,23 @@ ipcMain.handle('workspace:reveal', (event, relativePath: string) => {
 ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return 'Error: No workspace is open.';
+  const guard = textGuard(relativePath);
+  if (guard === 'refuse') return 'Error: Neuron does not open this kind of file as text.';
   try {
+    if (guard === 'text' || guard === 'unknown') {
+      // At most TEXT_READ_LIMIT; the renderer opens a larger file read-only.
+      const handle = await fs.promises.open(resolved.fullPath, 'r');
+      try {
+        const size = (await handle.stat()).size;
+        const buffer = Buffer.alloc(Math.min(size, TEXT_READ_LIMIT));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        const bytes = buffer.subarray(0, bytesRead);
+        if (guard === 'unknown' && !looksLikeText(bytes.subarray(0, SNIFF_BYTES))) return 'Error: This file is not text.';
+        return bytes.toString('utf-8');
+      } finally {
+        await handle.close();
+      }
+    }
     // Async: opening a workspace reads every note at once, and synchronous
     // reads hold the main thread -- which in Electron is also the browser's UI
     // thread -- for the whole batch. Opening 5,000 freshly written notes on
@@ -739,7 +823,15 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
 ipcMain.handle('notes:write', async (_event, relativePath: string, content: string) => {
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
+  const guard = textGuard(relativePath);
+  if (guard === 'refuse') return { success: false, error: 'Neuron does not write this kind of file.' };
   try {
+    if (guard === 'text' || guard === 'unknown') {
+      // Never write back a file that was opened truncated, or one that is not text.
+      const size = await fs.promises.stat(resolved.fullPath).then((stat) => stat.size, () => -1);
+      if (size > TEXT_READ_LIMIT) return { success: false, error: 'This file is too large to edit in Neuron.' };
+      if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.fullPath))) return { success: false, error: 'This file is not text.' };
+    }
     const dir = path.dirname(resolved.fullPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
@@ -842,6 +934,35 @@ ipcMain.handle('views:file', (_event, relativePath: string) => {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
+
+/**
+ * neuron-file:// -- workspace images, video and audio for the window that owns
+ * the token in the URL (see ./file-protocol). 404 for a missing file, 403 for
+ * anything refused, 206 for a range.
+ */
+async function serveWorkspaceFile(request: Request): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 403 });
+  const decision = authorizeFileUrl(request.url, (id) => {
+    const entry = appWindows.get(id);
+    return entry && !entry.window.isDestroyed() ? { token: entry.fileToken, repo: entry.repo } : null;
+  });
+  if (!decision.ok) return new Response(null, { status: 403 });
+  let stat: fs.Stats;
+  try { stat = await fs.promises.stat(decision.fullPath); } catch { return new Response(null, { status: 404 }); }
+  if (!stat.isFile()) return new Response(null, { status: 403 });
+  const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
+  const range = parseRange(request.headers.get('range'), stat.size);
+  if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
+  const start = range ? range.start : 0;
+  const end = range ? range.end : stat.size - 1;
+  const length = Math.max(0, end - start + 1);
+  headers['Content-Length'] = String(length);
+  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+  const body = request.method === 'HEAD' || length === 0
+    ? null
+    : Readable.toWeb(fs.createReadStream(decision.fullPath, { start, end })) as unknown as ReadableStream<Uint8Array>;
+  return new Response(body, { status: range ? 206 : 200, headers });
+}
 
 // Pull Chrome's cookies into the in-app browser's persistent session so the
 // user stays logged in without signing in again.
@@ -1350,6 +1471,7 @@ app.on('ready', () => {
   migrateConnectorSecrets();
   const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);
   if (workspace && usableRepo(workspace)) rememberRepo(workspace);
+  protocol.handle(FILE_SCHEME, serveWorkspaceFile);
   createWindow();
   // GitHub-backed in-app updates. What counts as an update, and whether to look
   // at all, lives in ./updater so the rules are testable without Electron --
