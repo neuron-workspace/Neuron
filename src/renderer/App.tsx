@@ -1125,17 +1125,23 @@ export default function App() {
     <EditorGroups ctx={groupContext} state={editor} homeGroup={homeGroup} zen={layout.zen} sizes={groupSizes.current} onSizes={onGroupSizes} />
   );
 
+  // The layout shell holds a split editor in its editor slot, and a single
+  // group's plain note; zen shows one group, so it is single there.
+  const shellGroups = !!layoutShell && editor.groups.length > 1 && !layout.zen;
+  const inShell = view === 'notes' && !!layoutShell && (shellGroups || (!Surface && !browsing));
   let mainContent: React.ReactNode;
   if (view === 'gallery') {
     mainContent = <ComponentGallery colorScheme={colorScheme} />;
-  } else if (layoutShell && !Surface && !browsing) {
-    // Shell handles plain notes in its editor slot, for the focused group; surface
-    // files (.html, .db, .canvas) and browser tabs are full-page documents, so let
-    // them fall through to the groups.
+  } else if (inShell) {
+    // With one group the shell handles plain notes in its editor slot; surface
+    // files (.html, .db, .canvas) and browser tabs are full-page documents, so they
+    // fall through to the plain editor. A split editor goes into the slot whole,
+    // every group rendering its own files as it does without a shell.
     mainContent = (
       <div className="flex h-full w-full flex-col">
         <div className="min-h-0 flex-1">
           <LayoutSurface
+            editorGroups={shellGroups ? notesView : undefined}
             editorHeader={<EditorGroupHeader ctx={groupContext} state={editor} index={editor.focused} showsHome={atHome} inLayout />}
             path={SHELL_CONFIG}
             content={layoutShell}
@@ -1248,7 +1254,7 @@ export default function App() {
               }>
               {/* One card, or one per group when the editor is split, like the docks. */}
               <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden',
-                !(view === 'notes' && layoutShell && !Surface && !browsing) && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
+                !inShell && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
                 {notice && (
                   <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="error" />

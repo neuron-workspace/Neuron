@@ -297,7 +297,11 @@ export default function EditorGroups({ ctx, state, homeGroup, zen, sizes, onSize
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
     if (!dragging) return;
-    const stop = () => setDragging(false);
+    // After the drop has been handled: hiding the zones during it would
+    // unmount the zone being dropped on before its handler runs. Listened for
+    // on the way down, because a drop handler stops the event on the way up,
+    // and a moved tab's own dragend fires on an element no longer there.
+    const stop = () => { setTimeout(() => setDragging(false), 0); };
     window.addEventListener('dragend', stop, true);
     window.addEventListener('drop', stop, true);
     return () => { window.removeEventListener('dragend', stop, true); window.removeEventListener('drop', stop, true); };
