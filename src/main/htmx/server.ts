@@ -10,7 +10,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SessionManager, ViewSession, sha256 } from './sessions';
-import { policyAllows, resolveInWorkspace } from './pathPolicy';
+import { compileGlob, policyAllows, resolveInWorkspace } from './pathPolicy';
 import { validateVariablesFile, VariableDef } from './manifest';
 import {
   esc, interpolate, wrapDocument, prepareFullDocument, errorFragment,
@@ -151,6 +151,7 @@ function walkFiles(root: string, subdir: string): string[] {
     for (const entry of entries) {
       if (++visited > MAX_WALK_ENTRIES) return;
       if (entry.name.startsWith('.') && entry.name !== '.neuron') continue;
+      if (entry.name.endsWith('.tmp')) continue;
       const childRel = rel ? `${rel}/${entry.name}` : entry.name;
       const childFull = path.join(dir, entry.name);
       if (entry.isSymbolicLink()) continue; // symlinks are never followed
@@ -239,11 +240,12 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       return;
     }
 
-    // Document bootstrap: /views/{sid}/document?boot={one-time-token}
+    // Bootstrap once; reloads authenticate with this view's partition cookie.
     const docMatch = url.pathname.match(/^\/views\/([\w-]+)\/document$/);
     if (docMatch && req.method === 'GET') {
-      const session = sessions.consumeBoot(docMatch[1], url.searchParams.get('boot'));
-      if (!session) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument('This view session is no longer valid. Reload the tab.')); return; }
+      const session = sessions.consumeBoot(docMatch[1], url.searchParams.get('boot'))
+        ?? sessions.byCookie(parseCookies(req)['nv']);
+      if (!session || session.id !== docMatch[1]) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument('This view session is no longer valid. Reload the tab.')); return; }
       serveDocument({ req, res, url, session, requestId });
       return;
     }
@@ -453,6 +455,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!checked.ok) { fail(ctx, 400, 'type_mismatch', `Value does not match declared type "${def.type}".`); return; }
 
     doc.variables[key] = { ...(doc.variables[key] as Record<string, unknown>), value };
+    capturePreImage(ctx.session.root, file, 'overwrite');
     atomicWrite(file, JSON.stringify(doc, null, 2));
     // htmx callers get a small confirmation to swap into a live region; others get JSON.
     if (isHx(ctx.req)) send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, `<p class="neuron-empty">Saved — now “${esc(String(value))}”.</p>`);
@@ -464,8 +467,9 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const dirResolved = resolveInWorkspace(ctx.session.root, ctx.url.searchParams.get('dir') ?? '', { allowRootDir: true });
     if (!dirResolved) { fail(ctx, 400, 'invalid_path', 'Invalid "dir" parameter.'); return; }
     const glob = ctx.url.searchParams.get('glob');
+    if (glob && glob.length > 512) { fail(ctx, 400, 'invalid_glob', 'The "glob" parameter exceeds 512 characters.'); return; }
     const limit = Math.min(MAX_LIST_ENTRIES, Math.max(1, Number(ctx.url.searchParams.get('limit')) || MAX_LIST_ENTRIES));
-    const globRe = glob ? (() => { try { return new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/(?<!\.)\*/g, '[^/]*')}$`, 'i'); } catch { return null; } })() : null;
+    const globRe = glob ? compileGlob(glob) : null;
 
     const rows: FileRow[] = [];
     for (const rel of walkFiles(ctx.session.root, dirResolved.rel)) {

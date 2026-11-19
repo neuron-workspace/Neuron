@@ -4,6 +4,7 @@
 // compared in constant time and never logged or persisted.
 
 import { randomBytes, timingSafeEqual, createHash } from 'crypto';
+import type { GlobMatcher } from './pathPolicy';
 
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -16,8 +17,8 @@ export interface ViewSession {
   name: string;
   theme: 'light' | 'dark';
   caps: ReadonlySet<string>;
-  readPolicy: RegExp[];
-  writePolicy: RegExp[];
+  readPolicy: GlobMatcher[];
+  writePolicy: GlobMatcher[];
   /** One-time token authenticating the initial document request; null once used. */
   bootToken: string | null;
   cookieToken: string;
@@ -62,14 +63,6 @@ export class SessionManager {
     if (!safeEqual(s.bootToken, boot)) return null;
     s.bootToken = null;
     return s;
-  }
-
-  /** Re-arm the boot token so an existing session's document can be reloaded. */
-  rearmBoot(id: string): string | null {
-    const s = this.sessions.get(id);
-    if (!s || Date.now() > s.expiresAt) return null;
-    s.bootToken = token();
-    return s.bootToken;
   }
 
   /** Validate a cookie value of the form `${id}:${cookieToken}`. */

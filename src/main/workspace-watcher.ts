@@ -4,7 +4,7 @@ import chokidar from 'chokidar';
 
 export type WatchEvent = 'add' | 'change' | 'unlink';
 
-const ignored = /(^|[\/\\])\.(?!neuron([\/\\]|$))/;
+const ignored = /(^|[\/\\])\.(?!neuron([\/\\]|$))|\.tmp$/;
 
 export function watchWorkspace(
   workspace: string,

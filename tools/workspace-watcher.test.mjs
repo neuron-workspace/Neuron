@@ -97,6 +97,16 @@ try {
         await delay(600);
         assert.deepEqual(events, []);
       });
+      await check(mode + ': save temp files emit no events', async () => {
+        const file = join(dir, 'note.md.123.456.abcdef.tmp');
+        writeFileSync(file, 'temporary');
+        await delay(600);
+        writeFileSync(file, 'partial');
+        await delay(600);
+        remove(file);
+        await delay(600);
+        assert.deepEqual(events, []);
+      });
       await check(mode + ': .neuron config is watched', async () => {
         mkdirSync(join(dir, '.neuron'));
         writeFileSync(join(dir, '.neuron', 'config.json'), '{}');
