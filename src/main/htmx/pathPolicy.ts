@@ -5,38 +5,81 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import { hasGitSegment } from '../repoPath';
 
 const CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'darwin';
 
-/** Compile a manifest glob (`Projects/**`, `*.md`, `data/?.csv`) to an anchored RegExp. */
-export function compileGlob(pattern: string): RegExp {
-  let out = '';
+/** A compiled glob: the whole path must match. */
+export interface GlobMatcher {
+  test(relPath: string): boolean;
+}
+
+type GlobToken = { kind: 'char'; ch: string } | { kind: 'one' } | { kind: 'star' } | { kind: 'globstar' };
+
+/**
+ * Compile a glob (`Projects/**`, `*.md`, `data/?.csv`) to an anchored matcher.
+ * `**` matches anything, `**\/` also zero folders, `*` any run within one
+ * folder name, `?` one character other than `/`; everything else is literal.
+ *
+ * Not a RegExp: globs also come from a view's own query string, and a
+ * backtracking regex built from one (`a?a?a?...` or `*a*a*a...`) can hold the
+ * main thread for minutes. This runs every possible position at once, so a
+ * test costs at most pattern length x path length steps.
+ */
+export function compileGlob(pattern: string): GlobMatcher {
+  const tokens: GlobToken[] = [];
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i];
     if (c === '*') {
       if (pattern[i + 1] === '*') {
-        out += '.*';
         i++;
         if (pattern[i + 1] === '/') i++; // `**/` also matches zero directories
+        tokens.push({ kind: 'globstar' });
       } else {
-        out += '[^/]*';
+        tokens.push({ kind: 'star' });
       }
     } else if (c === '?') {
-      out += '[^/]';
-    } else if ('\\^$.|+()[]{}'.includes(c)) {
-      out += '\\' + c;
+      tokens.push({ kind: 'one' });
     } else {
-      out += c;
+      tokens.push({ kind: 'char', ch: CASE_INSENSITIVE ? c.toLowerCase() : c });
     }
   }
-  return new RegExp(`^${out}$`, CASE_INSENSITIVE ? 'i' : '');
+  const end = tokens.length;
+  // A star may match nothing, so reaching it also reaches whatever follows it.
+  const close = (states: Uint8Array) => {
+    for (let t = 0; t < end; t++) {
+      if (states[t] && (tokens[t].kind === 'star' || tokens[t].kind === 'globstar')) states[t + 1] = 1;
+    }
+  };
+  return {
+    test(relPath: string): boolean {
+      let states = new Uint8Array(end + 1);
+      states[0] = 1;
+      close(states);
+      for (let i = 0; i < relPath.length; i++) {
+        const ch = CASE_INSENSITIVE ? relPath[i].toLowerCase() : relPath[i];
+        const next = new Uint8Array(end + 1);
+        let alive = false;
+        for (let t = 0; t < end; t++) {
+          if (!states[t]) continue;
+          const token = tokens[t];
+          if (token.kind === 'globstar' || (token.kind === 'star' && ch !== '/')) { next[t] = 1; alive = true; }
+          else if ((token.kind === 'one' && ch !== '/') || (token.kind === 'char' && token.ch === ch)) { next[t + 1] = 1; alive = true; }
+        }
+        if (!alive) return false;
+        close(next);
+        states = next;
+      }
+      return states[end] === 1;
+    },
+  };
 }
 
-export function compilePolicy(patterns: string[]): RegExp[] {
+export function compilePolicy(patterns: string[]): GlobMatcher[] {
   return patterns.map(compileGlob);
 }
 
-export function policyAllows(policy: RegExp[], relPath: string): boolean {
+export function policyAllows(policy: GlobMatcher[], relPath: string): boolean {
   return policy.some((re) => re.test(relPath));
 }
 
@@ -57,7 +100,8 @@ export function normalizeRel(input: unknown): string | null {
     segments.push(seg);
   }
   if (segments.length === 0) return null;
-  return segments.join('/');
+  const rel = segments.join('/');
+  return hasGitSegment(rel) ? null : rel; // never a repository's internals
 }
 
 /** Like normalizeRel but '' (the workspace root) is allowed — for directory listings. */
@@ -100,5 +144,7 @@ export function resolveInWorkspace(root: string, input: unknown, opts: { allowRo
   // require it to still be under the canonical root.
   const real = realExistingAncestor(full);
   if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return null;
+  // Again on the real path: a link or a short name can reach `.git` without spelling it.
+  if (hasGitSegment(path.relative(realRoot, real))) return null;
   return { full, rel };
 }

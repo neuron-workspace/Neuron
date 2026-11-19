@@ -16,9 +16,15 @@ const { isSameOrigin, isAppContent, DEV_URL } = await import(pathToFileURL(tmp))
 rmSync(tmp);
 
 // --- isAppContent: the privileged app frame -------------------------------
-// Allowed: the dev server itself, and packaged file:// content.
-assert.equal(isAppContent(DEV_URL), true);
-assert.equal(isAppContent(DEV_URL + '/index.html'), true);
+// Allowed: the dev server itself (development only), and packaged file:// content.
+assert.equal(isAppContent(DEV_URL, undefined, false, true), true);
+assert.equal(isAppContent(DEV_URL + '/index.html', undefined, false, true), true);
+// A packaged app never loads the dev server: whatever answers on that port is
+// not Neuron. Packaged is the default, so a call site that forgets the flag
+// fails closed.
+assert.equal(isAppContent(DEV_URL), false);
+assert.equal(isAppContent(DEV_URL + '/index.html'), false);
+assert.equal(isAppContent(DEV_URL, 'file:///C:/app/dist/renderer/', true, false), false);
 for (const appRoot of ['file:///C:/app/dist/renderer/', 'file:///home/u/app/dist/renderer/']) {
   for (const suffix of ['index.html', 'index.html?x=1', 'index.html#/route']) {
     assert.equal(isAppContent(appRoot + suffix, appRoot), true);
@@ -57,6 +63,7 @@ for (const bad of [
   '',
 ]) {
   assert.equal(isAppContent(bad), false, `isAppContent must reject ${JSON.stringify(bad)}`);
+  assert.equal(isAppContent(bad, undefined, false, true), false, `isAppContent must reject ${JSON.stringify(bad)} in development`);
 }
 
 // --- isSameOrigin: pinning an HTMX view to its loopback session -----------
@@ -87,7 +94,7 @@ assert.equal(isSameOrigin(origin, ''), false);
 // has drifted away from the bug it exists to prevent.
 for (const bypass of ['http://localhost:5174@evil.com/', 'http://localhost:51740/']) {
   assert.equal(bypass.startsWith(DEV_URL), true, 'test data no longer exercises the prefix bug');
-  assert.equal(isAppContent(bypass), false);
+  assert.equal(isAppContent(bypass, undefined, false, true), false);
 }
 
 console.log('navigation: all checks passed');

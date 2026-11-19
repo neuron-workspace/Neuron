@@ -3,7 +3,7 @@
 // integration pass against the loopback view server. No test framework —
 // bundle with vite's esbuild, then assert. Run: node tools/htmx-views.test.mjs
 import { build } from 'esbuild';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +23,9 @@ await build({
       export * from './src/main/htmx/html';
       export * from './src/main/htmx/server';
       export * from './src/main/htmx/neuronJs';
+      export { configureWriteJournal, listJournalEntries } from './src/main/journal';
+      export { initHtmxViews } from './src/main/htmx/index';
+      export { ipcHandlers } from 'electron';
     `,
     resolveDir: root,
     loader: 'ts',
@@ -31,6 +34,13 @@ await build({
   platform: 'node',
   format: 'esm',
   outfile,
+  plugins: [{ name: 'mock-electron', setup(build) {
+    build.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'mock' }));
+    build.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: `
+      export const ipcHandlers = new Map();
+      export const ipcMain = { handle: (name, fn) => ipcHandlers.set(name, fn) };
+    ` }));
+  } }],
 });
 
 const m = await import(pathToFileURL(outfile));
@@ -46,6 +56,13 @@ assert.ok(m.compileGlob('**/*.md').test('a.md'));
 assert.ok(m.compileGlob('data/?.csv').test('data/a.csv'));
 assert.ok(!m.compileGlob('data/?.csv').test('data/ab.csv'));
 assert.ok(!m.compileGlob('a+b/*').test('axb/x')); // regex specials escaped
+{
+  const started = performance.now();
+  assert.ok(m.compileGlob('?*'.repeat(250)).test('a'.repeat(4096)));
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 100, `500-character glob took ${elapsed.toFixed(1)} ms (limit 100 ms)`);
+  console.log(`htmx glob: 500-character pattern / 4096-character path in ${elapsed.toFixed(1)} ms`);
+}
 
 // --- relative path normalization ----------------------------------------------
 assert.equal(m.normalizeRel('notes/a.md'), 'notes/a.md');
@@ -59,6 +76,7 @@ assert.equal(m.normalizeRelDir('..'), null);
 // --- workspace resolution + symlink escapes ------------------------------------
 const ws = mkdtempSync(join(tmpdir(), 'neuron-htmx-ws-'));
 const outside = mkdtempSync(join(tmpdir(), 'neuron-htmx-out-'));
+m.configureWriteJournal(outside);
 mkdirSync(join(ws, 'notes'), { recursive: true });
 writeFileSync(join(ws, 'notes', 'hello.md'), '# Hello world\n\nA note with #alpha and #beta tags. Searchable needle here.\n');
 writeFileSync(join(ws, 'notes', 'other.md'), '# Other\n\n#alpha only.\n');
@@ -76,6 +94,18 @@ try {
 if (symlinksWork) {
   assert.equal(m.resolveInWorkspace(ws, 'escape/secret.txt'), null, 'symlink escape must be rejected');
 }
+// A view never reaches a repository's internals, however the path is spelled.
+mkdirSync(join(ws, '.git', 'hooks'), { recursive: true });
+for (const bad of ['.git/config', '.git/hooks/pre-commit', 'a/../.git/x', '.GIT\\config', 'sub/.git/x', '.git']) {
+  assert.equal(m.resolveInWorkspace(ws, bad), null, `resolveInWorkspace must refuse ${bad}`);
+  assert.equal(m.normalizeRel(bad), null, `normalizeRel must refuse ${bad}`);
+}
+assert.equal(m.resolveInWorkspace(ws, '.git', { allowRootDir: true }), null, 'not even as a directory to list');
+assert.ok(m.resolveInWorkspace(ws, '.gitignore'), '.gitignore is an ordinary file');
+if (symlinksWork) {
+  symlinkSync(join(ws, '.git'), join(ws, 'gitlink'), 'junction');
+  assert.equal(m.resolveInWorkspace(ws, 'gitlink/config'), null, 'a link into .git is refused by its real path');
+}
 
 // --- manifest validation --------------------------------------------------------
 const good = m.validateManifest({ name: 'Test', permissions: ['workspace.files.read', 'workspace.files.write'], allowedReadPaths: ['notes/**'], allowedWritePaths: ['data/out.json'] });
@@ -89,10 +119,31 @@ assert.ok(grants.needsApproval, 'write permissions require approval');
 const readOnlyManifest = m.validateManifest({ permissions: ['workspace.files.read'], allowedReadPaths: ['notes/**'] });
 assert.ok(readOnlyManifest.ok, readOnlyManifest.errors.join('; '));
 assert.ok(m.effectiveGrants(readOnlyManifest.value).needsApproval, 'every requested capability requires approval');
+for (const allowedReadPaths of [undefined, [], ['notes/**']]) {
+  const manifest = m.validateManifest({ permissions: ['workspace.files.read'], allowedReadPaths }).value;
+  const effective = m.effectiveGrants(manifest);
+  assert.deepEqual(effective.readPatterns, allowedReadPaths?.length ? allowedReadPaths : ['**']);
+  assert.ok(effective.caps.has('workspace.files.read'));
+  assert.ok(effective.needsApproval, 'full-workspace reads must be approved too');
+}
 const noManifestGrants = m.effectiveGrants(null);
 assert.deepEqual([...noManifestGrants.caps], [], 'an unmanifested view gets no capabilities');
 assert.deepEqual(noManifestGrants.readPatterns, [], 'an unmanifested view gets no readable paths');
 assert.ok(!noManifestGrants.needsApproval, 'an unmanifested view renders without an empty prompt');
+
+// The IPC prompt carries the very same effective scope used to create sessions.
+writeFileSync(join(ws, 'approval.html'), '<p>Approval</p>');
+mkdirSync(join(ws, '.neuron', 'manifests'), { recursive: true });
+m.initHtmxViews({ getRepoRoot: (event) => event.trusted ? ws : null, getSetting: () => ({}), setSetting: () => {} });
+for (const allowedReadPaths of [undefined, [], ['notes/**']]) {
+  writeFileSync(join(ws, '.neuron', 'manifests', 'approval.json'), JSON.stringify({ permissions: ['workspace.files.read'], allowedReadPaths }));
+  const result = await m.ipcHandlers.get('htmx-views:open')({ trusted: true }, 'approval.html');
+  assert.equal(result.status, 'needs-approval');
+  assert.deepEqual(result.readPaths, allowedReadPaths?.length ? allowedReadPaths : ['**']);
+}
+assert.equal(m.ipcHandlers.get('htmx-views:close')({ trusted: false }, 'some-session').success, false);
+rmSync(join(ws, 'approval.html'));
+rmSync(join(ws, '.neuron', 'manifests', 'approval.json'));
 
 // --- view + manifest paths -----------------------------------------------------
 assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
@@ -291,6 +342,23 @@ assert.ok(docHtml.includes(`/views/${reader.id}/neuron.css`), 'neuron.css is alw
 assert.ok(docHtml.includes('window.__ok'), 'authored inline scripts are served verbatim');
 assert.equal((await fetch(`${srv.origin}/views/${reader.id}/document?boot=x`)).status, 403, 'boot token replay/forgery -> 403');
 
+// Reload the original URL using only the cookie issued to this view's partition.
+{
+  const s = mkSession(READ_CAPS, ['notes/**']);
+  const url = `${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`;
+  const initial = await fetch(url);
+  assert.equal(initial.status, 200);
+  const headers = { cookie: initial.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await fetch(url, { headers })).status, 200, 'self-reload with consumed boot token -> 200');
+  assert.equal((await fetch(url)).status, 403, 'reload without cookie -> 403');
+  assert.equal((await fetch(url, { headers: cookie(writer) })).status, 403, 'another view cookie cannot reload this document');
+  s.expiresAt = Date.now() - 1;
+  assert.equal((await fetch(url, { headers })).status, 403, 'expired session cannot reload');
+  s.expiresAt = Date.now() + m.SESSION_TTL_MS;
+  sessions.revoke(s.id);
+  assert.equal((await fetch(url, { headers })).status, 403, 'revoked session cannot reload');
+}
+
 // An unmanifested HTML file renders, but its session can read nothing.
 const unmanifested = sessions.create({
   viewPath: 'report.html', root: ws, name: 'Report', theme: 'dark',
@@ -358,6 +426,11 @@ assert.equal((await api(unmanifested, '/api/v1/variables')).status, 403, 'unmani
 assert.equal((await api(unmanifested, '/api/v1/fragments/workspace-summary')).status, 403, 'unmanifested view cannot read the built-in workspace summary');
 
 // Search: JSON + HTML fragment shapes, results are escaped
+assert.equal((await api(reader, `/api/v1/files?glob=${encodeURIComponent('?'.repeat(512))}`)).status, 200, '512-character glob is accepted');
+assert.equal((await api(reader, `/api/v1/files?glob=${encodeURIComponent('?'.repeat(513))}`)).status, 400, 'glob longer than 512 characters is refused');
+writeFileSync(join(ws, 'notes', 'hello.md.123.456.abcdef.tmp'), 'partial save');
+const visibleFiles = await (await api(mkSession(READ_CAPS, ['**']), '/api/v1/files')).json();
+assert.ok(!visibleFiles.files.some((file) => file.path.endsWith('.tmp')), 'view file lists hide save temp files');
 const searchJson = await (await api(reader, '/api/v1/search?query=needle')).json();
 assert.equal(searchJson.results.length, 1);
 assert.equal(searchJson.results[0].path, 'notes/hello.md');
@@ -459,7 +532,11 @@ const dashTitle = await (await api(reader, '/api/v1/variables/dashboardTitle')).
 assert.equal(dashTitle.value, 'Ops <Dash>');
 assert.equal((await api(reader, '/api/v1/variables/projectStatus', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'x' }) })).status, 403, 'variables.write required');
 assert.equal((await api(writer, '/api/v1/variables/dashboardTitle', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'x' }) })).status, 403, 'non-writable variable protected');
+const variablesBefore = readFileSync(join(ws, '.neuron', 'variables.json'), 'utf8');
 assert.equal((await api(writer, '/api/v1/variables/projectStatus', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'paused' }) })).status, 200);
+const variablesPreImage = m.listJournalEntries(ws).find((entry) => entry.relativePath === '.neuron/variables.json');
+assert.equal(variablesPreImage?.operation, 'overwrite');
+assert.equal(variablesPreImage?.sha256, m.sha256(variablesBefore), 'journal preserves variables before the view changed them');
 assert.equal((await (await api(writer, '/api/v1/variables/projectStatus')).json()).value, 'paused');
 // htmx callers get an HTML confirmation to swap in (feedback), not silent JSON.
 {
@@ -473,6 +550,7 @@ assert.equal((await (await api(writer, '/api/v1/variables/projectStatus')).json(
 assert.equal((await api(writer, '/api/v1/files', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'notes/new.md', content: 'x' }) })).status, 403, 'outside write policy -> 403');
 const created = await api(writer, '/api/v1/files', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'hello' }) });
 assert.equal(created.status, 201);
+assert.ok(!m.listJournalEntries(ws).some((entry) => entry.relativePath === 'data/made.txt'), 'a newly created file has no pre-image');
 const { hash } = await created.json();
 assert.equal((await api(writer, '/api/v1/files/content', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'v2', baseHash: 'stale' }) })).status, 409, 'stale baseHash -> 409');
 assert.equal((await api(writer, '/api/v1/files/content', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'v2', baseHash: hash }) })).status, 200);
