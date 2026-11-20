@@ -30,7 +30,9 @@ import LayoutSurface from './surfaces/LayoutSurface';
 import './surfaces/ImageSurface'; // registers the image surface
 import './surfaces/MediaSurface'; // registers the video and audio surface
 import './surfaces/TextSurface'; // registers the plain text surface
-import { fileKind, MEDIA_KINDS, OPENS_AS_FILE, type FileKind } from '../main/file-kinds';
+import { fileKind, isListedFile, MEDIA_KINDS, OPENS_AS_FILE, type FileKind } from '../main/file-kinds';
+import { TOO_LARGE_TO_OPEN, tooLargeToOpen } from '../main/file-limits';
+import { decideExternalChange } from './lib/external-change';
 import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
@@ -163,6 +165,8 @@ export default function App() {
   // The content of every file a group shows, keyed by path: one copy however
   // many groups show it, and one save state.
   const [docs, setDocs] = useState<Record<string, string>>({});
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
   // The groups' sizes as last laid out. Not state: resizing reports every frame.
   const groupSizes = useRef<number[] | null>(null);
@@ -357,6 +361,42 @@ export default function App() {
   // not answer by putting the disk copy back over the user's typing.
   const saveVersions = useRef(new Map<string, number>());
   const savingDocs = useRef(new Set<string>());
+  // Per file, what the watcher may report back without anyone else having
+  // touched the file: the text of each save still in flight, and the last
+  // version known to be on disk (read, adopted or saved). And the files whose
+  // last save failed, so their edit is not on disk either.
+  const inFlight = useRef(new Map<string, string[]>());
+  const onDisk = useRef(new Map<string, string>());
+  const failedSaves = useRef(new Set<string>());
+  // Files that changed outside Neuron while an edit made here was not on disk.
+  // Nothing is written for them until the user picks a version.
+  const [conflicts, setConflicts] = useState<Record<string, true>>({});
+  const conflictsRef = useRef(conflicts);
+  const setConflict = useCallback((path: string, open: boolean) => {
+    const next = { ...conflictsRef.current };
+    if (open) next[path] = true; else delete next[path];
+    conflictsRef.current = next;
+    setConflicts(next);
+  }, []);
+  /**
+   * An open file follows its file on disk, in every group showing it -- notes
+   * and text files alike. It used to keep showing what it was opened with, so
+   * an edit from a sync client, git or another editor stayed invisible, and the
+   * next keystroke here wrote over it. With an edit here not yet on disk, our
+   * own saves echoing back are ignored and anything else asks the user (see
+   * decideExternalChange).
+   */
+  const followDisk = useCallback((path: string, content: string) => {
+    if (!(path in docsRef.current)) return;
+    const pending = savingDocs.current.has(path) || failedSaves.current.has(path) || !!conflictsRef.current[path];
+    const ours = [docsRef.current[path], onDisk.current.get(path), ...(inFlight.current.get(path) ?? [])];
+    const decision = decideExternalChange({ disk: content, pending, ours });
+    if (decision === 'ask') { if (!conflictsRef.current[path]) setConflict(path, true); return; }
+    onDisk.current.set(path, content);
+    if (decision === 'ignore') return;
+    // Checked again as it applies: a keystroke may have started a save since.
+    setDocs(current => !(path in current) || current[path] === content || savingDocs.current.has(path) || conflictsRef.current[path] ? current : { ...current, [path]: content });
+  }, [setConflict]);
   const browserCounter = useRef(0);
 
   // --- Appearance -----------------------------------------------------------
@@ -443,12 +483,15 @@ export default function App() {
       // it so it can be opened; `notesData` -- what the graph, tags, search and
       // link index are all built from -- does not. Nor does a CSV: it is data,
       // not a note, and can be far larger than anything worth holding here.
+      // Nor a note over 25 MB: it is listed, but main will not read it, so it
+      // has no links, tags or search. The listing's size spares asking; when
+      // the listing has none, main's answer says so.
       const data = await Promise.all(
         fileList
-          .filter((path) => !path.startsWith('.neuron/') && !isCsvPath(path))
+          .filter((path) => !path.startsWith('.neuron/') && !isCsvPath(path) && !tooLargeToOpen(listing?.info[path]?.size))
           .map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })),
       );
-      setNotesData(data);
+      setNotesData(data.filter((note) => note.content !== TOO_LARGE_TO_OPEN));
 
     } catch {
       setNotice('Could not load the workspace.');
@@ -479,6 +522,12 @@ export default function App() {
     window.addEventListener('focus', refresh);
     return () => { cancelled = true; clearTimeout(timer); unsubscribe(); window.removeEventListener('focus', refresh); };
   }, [repository, loadEntries]);
+
+  // Main sends this once per workspace in this window, when the watcher stops
+  // for want of folder watches (Linux) or file handles.
+  useEffect(() => window.electronAPI?.onWatchLimit?.(() => setNotice(
+    'Neuron can\'t watch every folder in this workspace, so changes made outside Neuron may not appear until you reopen the file. On Linux, raise fs.inotify.max_user_watches.',
+  )), []);
 
   // A preview belongs to the workspace it was opened in. Keyed on the path,
   // because the same workspace re-reported is a new object.
@@ -569,22 +618,29 @@ export default function App() {
         setNotesData(current => current.filter(n => !removed(n.path)));
         setEditor(current => removeMissingAll(current, n => !removed(n)));
       } else {
+        // A text file (JSON, YAML, ...) is not a note: it never joins the notes
+        // or what the graph and search read, and it is read only when open.
+        const listed = isListedFile(path);
+        if (!listed && !(path in docsRef.current)) return;
         void window.electronAPI.readNote(path).then(content => {
-          if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
-          setNotes(current => current.includes(path) ? current : [...current, path].sort());
-          if (!path.startsWith('.neuron/') && !isCsvPath(path)) setNotesData(current => {
-            const existing = current.find(n => n.path === path);
-            if (existing?.content === content) return current;
-            return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
-          });
-          // An open file follows its file, in every group showing it. It used to
-          // keep showing what it was opened with, so an edit from a sync client,
-          // git or another editor stayed invisible -- and the next keystroke here
-          // wrote over it. Our own saves come back through the watcher too, so
-          // wait while one is in flight: adopting the disk copy then could undo
-          // the user's last few characters. When that write lands, the disk is
-          // what they typed.
-          setDocs(current => !(path in current) || current[path] === content || savingDocs.current.has(path) ? current : { ...current, [path]: content });
+          if (cancelled || versions.get(path) !== version) return;
+          if (content === TOO_LARGE_TO_OPEN) {
+            // Past 25 MB: listed, never read.
+            if (listed) setNotes(current => current.includes(path) ? current : [...current, path].sort());
+            setNotesData(current => current.some(n => n.path === path) ? current.filter(n => n.path !== path) : current);
+            setDocs(current => path in current && current[path] !== content ? { ...current, [path]: content } : current);
+            return;
+          }
+          if (content.startsWith('Error:')) return;
+          if (listed) {
+            setNotes(current => current.includes(path) ? current : [...current, path].sort());
+            if (!path.startsWith('.neuron/') && !isCsvPath(path)) setNotesData(current => {
+              const existing = current.find(n => n.path === path);
+              if (existing?.content === content) return current;
+              return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
+            });
+          }
+          followDisk(path, content);
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
@@ -606,14 +662,12 @@ export default function App() {
       }, 250);
     });
     return () => { cancelled = true; clearTimeout(shellConfigTimer); unsubscribe(); };
-  }, [repository, adoptShellConfig, offerShellConfig]);
+  }, [repository, adoptShellConfig, offerShellConfig, followDisk]);
 
   // Read each file a group shows, once however many show it, and forget the
   // ones no group shows any more. Keyed on the list, not the groups, so moving
   // tabs about reads nothing.
   const shownKey = [...new Set(editor.groups.map((group) => group.selected).filter((path): path is string => !!path && !isUrl(path)))].sort().join('\n');
-  const docsRef = useRef(docs);
-  docsRef.current = docs;
   useEffect(() => {
     const shown = shownKey ? shownKey.split('\n') : [];
     const keep = <T,>(current: Record<string, T>) => {
@@ -622,10 +676,15 @@ export default function App() {
     };
     setDocs(keep);
     setSaveStates(keep);
+    // A file no group shows has no edit pending here any more.
+    for (const path of Object.keys(conflictsRef.current)) if (!shown.includes(path)) setConflict(path, false);
+    for (const path of failedSaves.current) if (!shown.includes(path)) failedSaves.current.delete(path);
+    for (const path of onDisk.current.keys()) if (!shown.includes(path)) onDisk.current.delete(path);
     let cancelled = false;
     for (const path of shown) {
       if (path in docsRef.current) continue;
       const adopt = (content: string) => {
+        if (!onDisk.current.has(path)) onDisk.current.set(path, content);
         setDocs((current) => (path in current ? current : { ...current, [path]: content }));
         setSaveStates((current) => ({ ...current, [path]: 'saved' }));
       };
@@ -796,19 +855,51 @@ export default function App() {
     // an unsaved edit and the next single click cannot replace a tab mid-save.
     setEditor((current) => keepEverywhere(current, path));
     setDocs((current) => (current[path] === value ? current : { ...current, [path]: value }));
+    docsRef.current = { ...docsRef.current, [path]: value };
     if (!window.electronAPI) return;
+    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
+    // Changed outside Neuron while this edit was pending: nothing is written
+    // until the user picks a version.
+    if (conflictsRef.current[path]) return;
     const version = (saveVersions.current.get(path) ?? 0) + 1;
     saveVersions.current.set(path, version);
     setSaveStates((current) => ({ ...current, [path]: 'saving' }));
     savingDocs.current.add(path);
-    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
-    const result = await window.electronAPI.writeNote(path, value);
+    inFlight.current.set(path, [...(inFlight.current.get(path) ?? []), value]);
+    let result: { success: boolean; error?: string };
+    try { result = await window.electronAPI.writeNote(path, value); } catch (error) { result = { success: false, error: String(error) }; }
     if (version !== saveVersions.current.get(path)) return;
     savingDocs.current.delete(path);
+    // Saves of one file land in order (main queues them), so after the latest
+    // only its text is on disk -- or, if it failed, what was there before.
+    inFlight.current.delete(path);
+    if (result.success) { onDisk.current.set(path, value); failedSaves.current.delete(path); } else failedSaves.current.add(path);
     setSaveStates((current) => (path in current ? { ...current, [path]: result.success ? 'saved' : 'error' } : current));
     if (result.success && path === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${path}” could not be saved.`);
   }, [offerShellConfig]);
+
+  // The two ways out of a conflict (ExternalChangeBar).
+  const keepMyVersion = useCallback((path: string) => {
+    setConflict(path, false);
+    const mine = docsRef.current[path];
+    if (mine !== undefined) void writeDoc(path, mine);
+  }, [setConflict, writeDoc]);
+  const takeDiskVersion = useCallback(async (path: string) => {
+    const content = await window.electronAPI.readNote(path);
+    if (content.startsWith('Error:') && content !== TOO_LARGE_TO_OPEN) { setNotice(`Could not read “${path}”.`); return; }
+    setConflict(path, false);
+    failedSaves.current.delete(path);
+    inFlight.current.delete(path);
+    onDisk.current.set(path, content);
+    // A save still in flight from before can no longer report over this.
+    saveVersions.current.set(path, (saveVersions.current.get(path) ?? 0) + 1);
+    savingDocs.current.delete(path);
+    docsRef.current = { ...docsRef.current, [path]: content };
+    setDocs((current) => (path in current ? { ...current, [path]: content } : current));
+    setSaveStates((current) => (path in current ? { ...current, [path]: 'saved' } : current));
+    if (content !== TOO_LARGE_TO_OPEN) setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content } : note)));
+  }, [setConflict]);
   const handleContentChange = useCallback((value: string) => { if (selectedNote) void writeDoc(selectedNote, value); }, [selectedNote, writeDoc]);
 
   const requestCreate = useCallback(async () => {
@@ -1075,6 +1166,7 @@ export default function App() {
     editorModes, onEditorMode: (path, mode) => setEditorModes((prev) => ({ ...prev, [path]: mode })),
     surfaceSource: surfaceSourceMode, onSurfaceSource: (path, source) => setSurfaceSourceMode((prev) => ({ ...prev, [path]: source })),
     docs, saveStates, onChange: (path, value) => { void writeDoc(path, value); },
+    conflicts, onKeepMine: keepMyVersion, onUseDisk: (path) => { void takeDiskVersion(path); },
     surfaceFor, fileSize: (path) => entries?.info[path]?.size, onTagClick: setSelectedTag,
     home: (
       // What used to be a blank "Choose a note to begin" panel. Nothing selected
@@ -1108,7 +1200,7 @@ export default function App() {
     onSplit: (group, path, direction, move) => splitEditor(direction, group, path, move),
     onMoveTab: moveEditorTab,
   }), [notes, tags, notesData, colorScheme, wide, propsSettings, editorModes, surfaceSourceMode, docs, saveStates, writeDoc, surfaceFor, entries,
-    explorerState, handleSelectNote, closeTab, goHome, focusEditorGroup, openWebsite, splitEditor, moveEditorTab]);
+    conflicts, keepMyVersion, takeDiskVersion, explorerState, handleSelectNote, closeTab, goHome, focusEditorGroup, openWebsite, splitEditor, moveEditorTab]);
 
   // Home wins over a group's file, which is what lets the New tab action show
   // the explorer without closing tabs -- they stay in the strip, and clicking

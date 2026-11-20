@@ -1,4 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
+import * as fs from 'node:fs';
+import { Readable } from 'node:stream';
 import { resolveInside, realpathInside } from './repoPath';
 import { extensionOf, fileKind, MEDIA_KINDS } from './file-kinds';
 
@@ -70,6 +72,34 @@ export function authorizeFileUrl(url: string, lookup: FileWindowLookup, resolve 
 function resolveInRepo(repo: string, relativePath: string): string | null {
   const fullPath = resolveInside(repo, relativePath);
   return fullPath && realpathInside(repo, fullPath) ? fullPath : null;
+}
+
+/**
+ * The answer to a neuron-file:// request: the file streamed from disk, never
+ * read whole, so an image or video of any size costs the main process a
+ * buffer, not the file. 403 for anything refused (wrong method, token, path or
+ * kind), 404 for a missing file, 416 for a range past the end, 206 for a range.
+ * HEAD answers the same headers with no body.
+ */
+export async function respondWithFile(request: Request, lookup: FileWindowLookup): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 403 });
+  const decision = authorizeFileUrl(request.url, lookup);
+  if (!decision.ok) return new Response(null, { status: 403 });
+  let stat: fs.Stats;
+  try { stat = await fs.promises.stat(decision.fullPath); } catch { return new Response(null, { status: 404 }); }
+  if (!stat.isFile()) return new Response(null, { status: 403 });
+  const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
+  const range = parseRange(request.headers.get('range'), stat.size);
+  if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
+  const start = range ? range.start : 0;
+  const end = range ? range.end : stat.size - 1;
+  const length = Math.max(0, end - start + 1);
+  headers['Content-Length'] = String(length);
+  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+  const body = request.method === 'HEAD' || length === 0
+    ? null
+    : Readable.toWeb(fs.createReadStream(decision.fullPath, { start, end })) as unknown as ReadableStream<Uint8Array>;
+  return new Response(body, { status: range ? 206 : 200, headers });
 }
 
 /**

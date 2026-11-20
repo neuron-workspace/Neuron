@@ -4,6 +4,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Chip } from '@/components/db/DbCards';
 import type { DbOption } from '@/lib/db';
 import { rowWindow } from '@/lib/row-window';
+import { decideExternalChange } from '@/lib/external-change';
 
 // The pieces of a table surface that the database (.db) and CSV tables share:
 // toolbar styles, the echo-guarded file write, row virtualisation, and the
@@ -22,12 +23,29 @@ export const TOOL_FIELD = `${TOOL_FIELD_BASE} !w-auto px-2`;
  * from disk must never replace what is being saved with older content. So a
  * write in flight, or one that failed, holds off reloads, and text equal to
  * what was last written or is being written is never adopted as a change.
+ *
+ * With `askOnConflict` (a surface that shows ExternalChangeBar), a different
+ * outside version arriving while an edit is in flight or unsaved is not
+ * dropped: `conflict` turns on, nothing is written until `keepMine` or
+ * `takeDisk` is called, and the latter adopts the file on disk.
  */
-export function useFileWriter(path: string, onExternalChange?: (text: string) => void) {
-  const state = useRef({ path, lastWritten: null as string | null, pending: null as string | null, sequence: 0, unsaved: false });
+export function useFileWriter(path: string, onExternalChange?: (text: string) => void, options: { askOnConflict?: boolean } = {}) {
+  // inFlight: every write not yet answered (several when edits come quickly);
+  // onDisk: the last version known to be on disk (adopted or saved); latest:
+  // the last text asked to be written, kept while a conflict holds writes.
+  const state = useRef({
+    path, lastWritten: null as string | null, pending: null as string | null, latest: null as string | null,
+    inFlight: [] as string[], onDisk: null as string | null, sequence: 0, unsaved: false, conflict: false,
+  });
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [conflict, setConflictState] = useState(false);
   const external = useRef(onExternalChange);
   external.current = onExternalChange;
+  const askOnConflict = options.askOnConflict === true;
+  const setConflict = (open: boolean) => {
+    state.current.conflict = open;
+    setConflictState(open);
+  };
 
   /** Call before adopting content: a new path forgets the old file's writes. Returns true when it did. */
   const follow = (next: string): boolean => {
@@ -36,30 +54,46 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
     s.path = next;
     s.lastWritten = null;
     s.pending = null;
+    s.latest = null;
+    s.inFlight = [];
+    s.onDisk = null;
     s.sequence++;
     s.unsaved = false;
+    setConflict(false);
     setSaveError(null);
     return true;
   };
 
-  /** Text that must not be adopted as a change on disk. */
+  /** Text that must not be adopted as a change on disk. Raises the conflict when it is someone else's change to an edit not on disk. */
   const ignores = (text: string) => {
     const s = state.current;
-    return s.unsaved || text === s.pending || text === s.lastWritten;
+    if (text === s.pending || text === s.lastWritten) return true;
+    if (!askOnConflict) return s.unsaved;
+    const decision = decideExternalChange({ disk: text, pending: s.unsaved || s.conflict, ours: [s.latest, s.onDisk, ...s.inFlight] });
+    if (decision === 'ask') { if (!s.conflict) setConflict(true); return true; }
+    s.onDisk = text;
+    return decision === 'ignore';
   };
 
   const write = async (text: string): Promise<boolean> => {
     const s = state.current;
+    s.latest = text;
+    // Changed outside Neuron while an edit was pending: nothing is written
+    // until the user picks a version.
+    if (s.conflict) return false;
     const sequence = ++s.sequence;
     s.unsaved = true;
     // Watcher IPC can beat the write reply; keep its echo separate from confirmed saves.
     s.pending = text;
+    s.inFlight.push(text);
     try {
       const result = await window.electronAPI.writeNote(path, text);
       if (sequence !== s.sequence) return false;
       s.pending = null;
+      s.inFlight = [];
       if (result.success) {
         s.lastWritten = text;
+        s.onDisk = text;
         // Only a write in flight or a failed one holds off reloads from disk.
         s.unsaved = false;
         setSaveError(null);
@@ -69,6 +103,7 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
     } catch (error) {
       if (sequence !== s.sequence) return false;
       s.pending = null;
+      s.inFlight = [];
       setSaveError(error instanceof Error ? error.message : String(error));
     }
     return false;
@@ -88,7 +123,29 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
     });
   }, [path]);
 
-  return { saveError, follow, ignores, write };
+  /** Write the local version over the outside one. */
+  const keepMine = () => {
+    const s = state.current;
+    setConflict(false);
+    if (s.latest !== null) void write(s.latest);
+  };
+  /** Drop the local version and adopt the file on disk. */
+  const takeDisk = async () => {
+    const s = state.current;
+    const text = await window.electronAPI.readNote(path);
+    if (s.path !== path || text.startsWith('Error:')) return;
+    s.sequence++; // a write still in flight can no longer report over this
+    s.pending = null;
+    s.latest = null;
+    s.inFlight = [];
+    s.onDisk = text;
+    s.unsaved = false;
+    setConflict(false);
+    setSaveError(null);
+    external.current?.(text);
+  };
+
+  return { saveError, follow, ignores, write, conflict, keepMine, takeDisk };
 }
 
 export function SaveNotice({ error, path, onRetry }: { error: string | null; path: string; onRetry: () => void }) {

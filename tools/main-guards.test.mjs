@@ -14,12 +14,14 @@ const bundle = await build({ stdin: { contents: `
   export * from './src/main/htmx/pathPolicy';
   export { folderKey } from './src/main/recentRepos';
   export { settingsSectionOf } from './src/main/workspace-windows';
+  export { createSaveQueue, saveKey, writeAtomically } from './src/main/save-file';
+  export { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './src/main/file-limits';
 `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', write: false });
 const policy = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 
 const source = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
-const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'IMAGE_MIME']);
+const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'saveQueue']);
 // Walk every nesting level. A new handler cannot silently fall outside this test.
 function registrations(ast) {
   const found = [];
@@ -65,7 +67,21 @@ const context = vm.createContext({
   appWindows, ptyOwner: new Map([[7, 1]]),
   ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => handlers.set(name, fn) },
   path, process, randomBytes, Object, Date: { now: () => 123 },
-  Atomics: { wait: () => {} },
+  Buffer,
+  createSaveQueue: policy.createSaveQueue, saveKey: policy.saveKey,
+  NOTE_READ_LIMIT: policy.NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN: policy.TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE: policy.TOO_LARGE_TO_SAVE,
+  // The real save helper over this file system, with no waits between renames.
+  writeAtomically: (fullPath, content, tmp) => policy.writeAtomically(fullPath, content, tmp, {
+    writeFile: async (file, text) => {
+      writes.push({ file, content: text });
+      if (failWrite || (failFallback && !file.endsWith('.tmp'))) throw new Error('write failed');
+    },
+    rename: async () => {
+      attempts++;
+      if (renameFailures-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    },
+    unlink: async (file) => { removed.push(file); },
+  }, async () => {}),
   console: { error: () => {} },
   resolveInside: policy.resolveInside,
   realpathInside: (...args) => !checkRealPaths || policy.realpathInside(...args),
@@ -89,18 +105,10 @@ const context = vm.createContext({
   fs: {
     existsSync: () => !missing,
     mkdirSync: effect('mkdir'),
-    promises: { readFile: async (...args) => { effect('read')(...args); return '# Note'; } },
+    promises: { readFile: async (...args) => { effect('read')(...args); return '# Note'; }, stat: async () => stat },
     statSync: () => stat,
     lstatSync: () => { if (lstatError) throw lstatError; return stat; },
     readFileSync: () => { effects.push(['imageRead']); return Buffer.from('image'); },
-    writeFileSync: (file, content) => {
-      writes.push({ file, content });
-      if (failWrite || (failFallback && !file.endsWith('.tmp'))) throw new Error('write failed');
-    },
-    renameSync: () => {
-      attempts++;
-      if (renameFailures-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
-    },
     unlinkSync: (file) => removed.push(file),
   },
 });
@@ -121,7 +129,7 @@ const contracts = {
   'notes:list': [], 'workspace:entries': [], 'workspace:file-base': [], 'workspace:reveal': ['note.md'],
   'notes:read': ['note.md'], 'notes:write': ['note.md', 'content'], 'notes:delete': ['note.md'],
   'journal:list': ['note.md'], 'journal:restore': ['123-entry'], 'notes:create-section': ['folder'], 'notes:get-dir': [],
-  'views:file': ['image.png'], 'cookies:import-chrome': ['example.com'],
+  'cookies:import-chrome': ['example.com'],
   'terminal:spawn': [{ key: 'default', cols: 80, rows: 24 }], 'terminal:history': [7],
   'terminal:write': [7, 'text'], 'terminal:resize': [7, 80, 24], 'terminal:windows-pty': [], 'terminal:kill': [7],
   'ai:complete': [{ provider: 'openai', model: 'test', system: 'test', messages: [{ role: 'user', content: 'hello' }] }],
@@ -232,7 +240,7 @@ for (const key of ['__proto__', 'constructor', 'prototype']) {
 
 // All workspace-relative handlers exercise the real lexical AND realpath policy.
 const pathHandlers = ['workspace:reveal', 'notes:read', 'notes:write', 'notes:delete', 'notes:create-section',
-  'views:file', 'journal:list', 'htmx-views:open', 'htmx-views:approve', 'htmx-views:reset-approval'];
+  'journal:list', 'htmx-views:open', 'htmx-views:approve', 'htmx-views:reset-approval'];
 const temp = realFs.mkdtempSync(path.join(tmpdir(), 'neuron-main-guards-'));
 try {
   const repo = path.join(temp, 'workspace');
@@ -268,18 +276,29 @@ missing = true;
 await rejectArgs('repository:reveal', ['/recent']);
 missing = false;
 
-// Images are statted before reading; exactly 10 MiB is allowed, one byte over is not.
-for (const [size, file] of [[10 * 1024 * 1024 + 1, true], [0, false]]) {
-  stat = { size, isFile: () => file };
-  const before = effects.length;
-  const result = await handlers.get('views:file')(event, 'image.png');
-  assert.equal(result.success, false);
-  assert.equal(result.error, 'This image is too large to show here (over 10 MB).');
-  assert.equal(effects.length, before, 'refused image is not read');
-}
-stat = { size: 10 * 1024 * 1024, isFile: () => true };
-assert.equal((await handlers.get('views:file')(event, 'image.png')).success, true);
-for (const ext of ['constructor', '__proto__', 'toString']) await rejectArgs('views:file', [`image.${ext}`]);
+// Notes and documents are statted before reading: exactly 25 MiB is read, one
+// byte over is refused unread (2A).
+const LIMIT = policy.NOTE_READ_LIMIT;
+assert.equal(LIMIT, 25 * 1024 * 1024);
+stat = { size: LIMIT + 1, isFile: () => true };
+let before = effects.length;
+assert.equal(await handlers.get('notes:read')(event, 'big.md'), policy.TOO_LARGE_TO_OPEN);
+assert.equal(policy.TOO_LARGE_TO_OPEN, 'Error: This file is too large to open in Neuron (over 25 MB).');
+assert.equal(effects.length, before, 'a note over the limit is not read');
+stat = { size: LIMIT, isFile: () => true };
+assert.equal(await handlers.get('notes:read')(event, 'big.md'), '# Note');
+assert.equal(effects.at(-1)[0], 'read');
+// Nothing over the limit is written, and nothing is written over a file past it.
+before = writes.length;
+const huge = 'x'.repeat(LIMIT + 1);
+const refusedSave = (result) => result.success === false && result.error === policy.TOO_LARGE_TO_SAVE;
+assert.ok(refusedSave(await handlers.get('notes:write')(event, 'big.md', huge)));
+assert.ok(refusedSave(await handlers.get('notes:write')(event, 'big.md', 'é'.repeat(LIMIT / 2 + 1))), 'counted in UTF-8 bytes');
+stat = { size: LIMIT + 1, isFile: () => true };
+assert.equal((await handlers.get('notes:write')(event, 'big.md', 'small')).success, false);
+assert.equal(writes.length, before);
+assert.equal(captures, 0, 'a refused save is not journaled');
+stat = { size: 1, isFile: () => true, isDirectory: () => false };
 assert.equal(await handlers.get('settings:get')(event, 'toString'), null, 'inherited settings are not exposed');
 
 // Folder deletion neither journals nor unlinks; missing remains successful.
@@ -330,4 +349,4 @@ failFallback = true;
 assert.equal((await save(event, 'note.md', 'failed fallback')).success, false);
 assert.equal(removed.at(-1), writes.at(-2).file, 'fallback failure cleans temp');
 
-console.log(`main-guards: ${handlers.size} handlers, ${refused} sender refusals, ${badTypes} argument/path refusals; reveal, image, delete and 5 save scenarios passed`);
+console.log(`main-guards: ${handlers.size} handlers, ${refused} sender refusals, ${badTypes} argument/path refusals; reveal, 25 MB limit, delete and 5 save scenarios passed`);

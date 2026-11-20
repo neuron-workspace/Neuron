@@ -86,6 +86,9 @@ export interface ElectronAPI {
   fileUrl: (relativePath: string) => string;
   /** A file or folder appeared or went away. */
   onWorkspaceChanged: (callback: () => void) => () => void;
+  /** The workspace watcher stopped: the system ran out of folder watches or file handles. */
+  onWatchLimit: (callback: () => void) => () => void;
+  /** A file's text, or a message starting "Error:" (TOO_LARGE_TO_OPEN past 25 MB for a note or document). */
   readNote: (relativePath: string) => Promise<string>;
   writeNote: (relativePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
   deleteNote: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -97,6 +100,7 @@ export interface ElectronAPI {
     stack_trace: string;
     remediation_step: string;
   }) => Promise<{ success: boolean; error?: string }>;
+  /** A note or Neuron document changed on disk, or a text file (JSON, YAML, ...), which is not a note; or anything went away. */
   onNotesChanged: (callback: (event: 'add' | 'change' | 'unlink', path: string) => void) => () => void;
 
   // Repository
@@ -162,9 +166,6 @@ export interface ElectronAPI {
     kill: (id: number) => Promise<void>;
     onData: (callback: (id: number, data: string) => void) => () => void;
     onExit: (callback: (id: number, exitCode: number) => void) => () => void;
-  };
-  views: {
-    file: (relativePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
   };
   htmxViews: {
     open: (relativePath: string, theme?: 'light' | 'dark') => Promise<HtmxViewOpenResult>;

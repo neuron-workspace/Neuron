@@ -27,10 +27,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
-import { Readable } from 'node:stream';
-import { fileKind, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
-import { authorizeFileUrl, FILE_HEADERS, FILE_SCHEME, parseRange } from './file-protocol';
-import { watchWorkspace } from './workspace-watcher';
+import { fileKind, isListedFile, isUnlistedText, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
+import { FILE_SCHEME, respondWithFile } from './file-protocol';
+import { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './file-limits';
+import { createSaveQueue, saveKey, writeAtomically } from './save-file';
+import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import * as pty from 'node-pty';
 
@@ -54,6 +55,8 @@ interface AppWindow {
   kind: WindowKind;
   repo: string | null;
   watcher: { close(): void } | null;
+  /** The workspace this window was last told it cannot fully watch, so it is told once. */
+  watchLimitNoticed: string | null;
   /** Random, per window: proves a neuron-file:// request came from this window. */
   fileToken: string;
 }
@@ -139,10 +142,10 @@ app.on('child-process-gone', (_event, details) => {
   });
 });
 
-// Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, Mermaid diagrams, CSV tables, the internal shell
-// config, and .neuron configuration/assets (CSV table metadata is .neuron/tables/**.json).
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid|csv)$)/;
+// Workspace files (isListedFile): Markdown notes, HTMX views (+ their
+// manifests), databases, canvases, Mermaid diagrams, CSV tables, the internal
+// shell config, and .neuron configuration/assets (CSV table metadata is
+// .neuron/tables/**.json). The renderer uses the same test.
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent
@@ -341,13 +344,24 @@ function setupWatcher(entry: AppWindow) {
 
   entry.watcher = watchWorkspace(dir, (event, relativePath) => {
     if (entry.window.isDestroyed()) return;
-    if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
+    // Text files too (JSON, YAML, a README): an open one follows its file on
+    // disk the way a note does. The renderer keeps them out of its notes.
+    if (isListedFile(relativePath) || isUnlistedText(relativePath) || event === 'unlink') {
       entry.window.webContents.send('notes:changed', event, relativePath);
     }
     // The renderer asks for the full listing again. Not for edits to notes, or
     // every save while typing would re-walk the folder. Other files count even
     // on 'change': the native watcher can report a new file as one.
-    if (event !== 'change' || !WORKSPACE_FILE.test(relativePath)) entry.window.webContents.send('workspace:changed');
+    if (event !== 'change' || !isListedFile(relativePath)) entry.window.webContents.send('workspace:changed');
+  }, {
+    // Linux runs out of inotify watches in a large workspace (ENOSPC), and any
+    // system can run out of file handles (EMFILE). Neuron goes on without the
+    // watcher; the window says so once for this workspace.
+    onError: (error) => {
+      if (!isWatchLimitError(error) || entry.window.isDestroyed() || entry.watchLimitNoticed === dir) return;
+      entry.watchLimitNoticed = dir;
+      entry.window.webContents.send('workspace:watch-limit');
+    },
   });
 }
 
@@ -394,7 +408,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   if (testInBackground) window.once('ready-to-show', () => { if (!window.isDestroyed()) window.showInactive(); });
   // Settings is a smaller window with no workspace of its own.
   if (kind !== 'workspace') { window.setMinimumSize(760, 520); window.setSize(1000, 720); }
-  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null, fileToken: randomBytes(32).toString('hex') };
+  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null, watchLimitNoticed: null, fileToken: randomBytes(32).toString('hex') };
   const id = window.webContents.id;
   appWindows.set(id, entry);
   if (kind === 'workspace') lastWorkspaceId = id;
@@ -758,7 +772,7 @@ ipcMain.handle('notes:list', async (_event) => {
   const repo = repoOf(_event);
   if (!repo) return [];
   try {
-    return walkRepoFiles(repo).filter((file) => WORKSPACE_FILE.test(file));
+    return walkRepoFiles(repo).filter(isListedFile);
   } catch (err) {
     console.error('Failed to list notes:', err);
   }
@@ -854,6 +868,10 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
         await handle.close();
       }
     }
+    // Read whole, so never past NOTE_READ_LIMIT: a 500 MB CSV read into a
+    // string would exhaust the main process. The size is checked first and the
+    // file is not opened at all past it.
+    if ((await fs.promises.stat(resolved.fullPath)).size > NOTE_READ_LIMIT) return TOO_LARGE_TO_OPEN;
     // Async: opening a workspace reads every note at once, and synchronous
     // reads hold the main thread -- which in Electron is also the browser's UI
     // thread -- for the whole batch. Opening 5,000 freshly written notes on
@@ -868,51 +886,39 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   }
 });
 
+const saveQueue = createSaveQueue();
 ipcMain.handle('notes:write', async (_event, relativePath: string, content: string) => {
   if (typeof content !== 'string') return { success: false, error: 'Invalid note content.' };
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   const guard = textGuard(relativePath);
   if (guard === 'refuse') return { success: false, error: 'Neuron does not write this kind of file.' };
-  const tmp = `${resolved.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`;
-  try {
-    if (guard === 'text' || guard === 'unknown') {
-      // Never write back a file that was opened truncated, or one that is not text.
+  // Nothing Neuron writes is read back past the limit, so nothing is written past it.
+  if (content.length > NOTE_READ_LIMIT || Buffer.byteLength(content, 'utf-8') > NOTE_READ_LIMIT) return { success: false, error: TOO_LARGE_TO_SAVE };
+  // In call order, one at a time per file: see createSaveQueue.
+  return saveQueue(saveKey(resolved.fullPath), async () => {
+    const tmp = `${resolved.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`;
+    try {
       const size = await fs.promises.stat(resolved.fullPath).then((stat) => stat.size, () => -1);
-      if (size > TEXT_READ_LIMIT) return { success: false, error: 'This file is too large to edit in Neuron.' };
-      if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.fullPath))) return { success: false, error: 'This file is not text.' };
-    }
-    const dir = path.dirname(resolved.fullPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
-    // Atomic write: a crash mid-write must never leave a half-written note or database.
-    fs.writeFileSync(tmp, content, 'utf-8');
-    // On Windows a rename over a file another process holds open (the file
-    // watcher, an indexer, antivirus) fails with EPERM/EBUSY/EACCES for a few
-    // milliseconds. Retry briefly instead of dropping the user's edit.
-    for (let attempt = 0; ; attempt++) {
-      try { fs.renameSync(tmp, resolved.fullPath); break; }
-      catch (renameError) {
-        const code = (renameError as NodeJS.ErrnoException).code;
-        if (!['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) {
-          throw renameError;
-        }
-        if (attempt >= 5) {
-          // Still held open: write in place rather than lose the edit.
-          fs.writeFileSync(resolved.fullPath, content, 'utf-8');
-          break;
-        }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * (attempt + 1));
+      if (guard === 'text' || guard === 'unknown') {
+        // Never write back a file that was opened truncated, or one that is not text.
+        if (size > TEXT_READ_LIMIT) return { success: false, error: 'This file is too large to edit in Neuron.' };
+        if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.fullPath))) return { success: false, error: 'This file is not text.' };
+      } else if (size > NOTE_READ_LIMIT) {
+        // Never opened (notes:read refused it), so nothing here is a version of it.
+        return { success: false, error: 'This file is too large to edit in Neuron (over 25 MB).' };
       }
+      const dir = path.dirname(resolved.fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
+      await writeAtomically(resolved.fullPath, content, tmp);
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to write note ${relativePath}:`, err);
+      return { success: false, error: message };
     }
-    return { success: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Failed to write note ${relativePath}:`, err);
-    return { success: false, error: message };
-  } finally {
-    try { fs.unlinkSync(tmp); } catch { /* renamed or already gone */ }
-  }
+  });
 });
 
 ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
@@ -970,52 +976,16 @@ ipcMain.handle('notes:get-dir', (event) => repoOf(event));
 // IPC — surface file helpers
 // ==========================================================================
 
-// Read a workspace image for .canvas file nodes as a data URL.
-// Bounded for canvas nodes; other media streams through neuron-file://.
-const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
-ipcMain.handle('views:file', (_event, relativePath: string) => {
-  const resolved = resolveInRepo(_event, relativePath);
-  if (!resolved) return { success: false, error: 'No workspace is open.' };
-  try {
-    if (!fs.existsSync(resolved.fullPath)) return { success: false, error: `File not found: ${relativePath}` };
-    const stat = fs.statSync(resolved.fullPath);
-    if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return { success: false, error: 'This image is too large to show here (over 10 MB).' };
-    const extension = path.extname(resolved.fullPath).slice(1).toLowerCase();
-    const mime = Object.hasOwn(IMAGE_MIME, extension) ? IMAGE_MIME[extension] : undefined;
-    if (!mime) return { success: false, error: `Not an image: ${relativePath}` };
-    return { success: true, dataUrl: `data:${mime};base64,${fs.readFileSync(resolved.fullPath).toString('base64')}` };
-  } catch (err: unknown) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
 /**
- * neuron-file:// -- workspace images, video and audio for the window that owns
- * the token in the URL (see ./file-protocol). 404 for a missing file, 403 for
- * anything refused, 206 for a range.
+ * neuron-file:// -- workspace images, video and audio (canvas image cards
+ * included) for the window that owns the token in the URL. See
+ * respondWithFile in ./file-protocol.
  */
-async function serveWorkspaceFile(request: Request): Promise<Response> {
-  if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 403 });
-  const decision = authorizeFileUrl(request.url, (id) => {
+function serveWorkspaceFile(request: Request): Promise<Response> {
+  return respondWithFile(request, (id) => {
     const entry = appWindows.get(id);
     return entry && !entry.window.isDestroyed() ? { token: entry.fileToken, repo: entry.repo } : null;
   });
-  if (!decision.ok) return new Response(null, { status: 403 });
-  let stat: fs.Stats;
-  try { stat = await fs.promises.stat(decision.fullPath); } catch { return new Response(null, { status: 404 }); }
-  if (!stat.isFile()) return new Response(null, { status: 403 });
-  const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
-  const range = parseRange(request.headers.get('range'), stat.size);
-  if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
-  const start = range ? range.start : 0;
-  const end = range ? range.end : stat.size - 1;
-  const length = Math.max(0, end - start + 1);
-  headers['Content-Length'] = String(length);
-  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
-  const body = request.method === 'HEAD' || length === 0
-    ? null
-    : Readable.toWeb(fs.createReadStream(decision.fullPath, { start, end })) as unknown as ReadableStream<Uint8Array>;
-  return new Response(body, { status: range ? 206 : 200, headers });
 }
 
 // Pull Chrome's cookies into the in-app browser's persistent session so the

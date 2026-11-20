@@ -9,6 +9,8 @@ import WorkspaceExplorer from '../views/WorkspaceExplorer';
 import { useExplorer, type ExplorerState } from '../lib/explorer-state';
 import type { SurfaceProps } from './index';
 import type { PanelSpec } from './layout';
+import { TooLargeMessage } from '../components/FileNotices';
+import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
 
 /**
  * Tick or untick the task on one source line.
@@ -137,6 +139,8 @@ function EditorPanel({ surface }: PanelContext) {
     if (explorer && !selectedNote) return <ExplorerPane explorer={explorer} />;
     return <div className="grid h-full place-items-center px-6 text-center text-xs text-[var(--ink-muted)]">Select a note from the sidebar or graph to edit it here.</div>;
   }
+
+  if (noteContent === TOO_LARGE_TO_OPEN) return <TooLargeMessage />;
 
   if (isText) {
     return (

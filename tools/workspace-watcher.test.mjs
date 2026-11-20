@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
 
 const out = mkdtempSync(join(tmpdir(), 'neuron-watcher-test-'));
 const bundle = join(out, 'workspace-watcher.cjs');
@@ -17,7 +19,7 @@ const check = async (what, fn) => {
 const waitFor = async (predicate, message) => {
   const deadline = Date.now() + 3000;
   while (!predicate() && Date.now() < deadline) await delay(25);
-  assert.ok(predicate(), message);
+  assert.ok(predicate(), typeof message === 'function' ? message() : message);
 };
 const remove = (target) => {
   assert.ok(resolve(target).startsWith(resolve(out) + sep));
@@ -26,7 +28,7 @@ const remove = (target) => {
 
 try {
   await build({ entryPoints: ['src/main/workspace-watcher.ts'], outfile: bundle, format: 'cjs', bundle: true, platform: 'node', external: ['fsevents'] });
-  const { watchWorkspace } = (await import(pathToFileURL(bundle).href)).default;
+  const { watchWorkspace, isWatchLimitError } = (await import(pathToFileURL(bundle).href)).default;
   const modes = process.platform === 'win32' || process.platform === 'darwin' ? [true, false] : [false];
   for (const useNative of modes) {
     const mode = useNative ? 'native' : 'chokidar';
@@ -82,6 +84,28 @@ try {
       await check(mode + ': delete file emits unlink', async () => {
         remove(join(dir, 'note.md'));
         await waitFor(() => has('unlink', 'note.md'), 'Missing file unlink');
+      });
+      await settle();
+      await check(mode + ': a renamed file emits unlink for the old name and reports the new', async () => {
+        writeFileSync(join(dir, 'before.md'), 'renamed');
+        await waitFor(() => events.some(e => e.path === 'before.md'), 'Missing event before rename');
+        await settle();
+        renameSync(join(dir, 'before.md'), join(dir, 'after.md'));
+        // Windows may follow the rename with a change for the new name; either
+        // reaches the listing (main asks for it on anything but a note's change).
+        await waitFor(() => has('unlink', 'before.md') && events.some(e => e.path === 'after.md' && e.event !== 'unlink'), () => 'Missing rename events: ' + JSON.stringify(events));
+        assert.equal(events.find(e => e.path === 'after.md').text, 'renamed');
+        remove(join(dir, 'after.md'));
+      });
+      await settle();
+      await check(mode + ': a new file inside a new folder is reported, whole', async () => {
+        mkdirSync(join(dir, 'fresh'));
+        writeFileSync(join(dir, 'fresh', 'new.md'), 'new');
+        // Native may report a new file with content as a change; either reaches the listing.
+        await waitFor(() => events.some(e => e.path === 'fresh/new.md' && e.event !== 'unlink' && e.text === 'new'), () => 'Missing nested file: ' + JSON.stringify(events));
+        await delay(300);
+        assert.ok(events.every(e => e.event !== 'unlink'), JSON.stringify(events));
+        remove(join(dir, 'fresh'));
       });
       await settle();
       await check(mode + ': copied folder emits add for both files', async () => {
@@ -141,6 +165,40 @@ try {
       watcher.close();
     }
   }
+
+  // Running out of watches (Linux inotify, ENOSPC) or file handles (EMFILE)
+  // stops the watcher and says so, so the window can tell the user (2E).
+  await check('watch-limit errors are recognised by their code', async () => {
+    assert.equal(isWatchLimitError(Object.assign(new Error('x'), { code: 'ENOSPC' })), true);
+    assert.equal(isWatchLimitError(Object.assign(new Error('x'), { code: 'EMFILE' })), true);
+    for (const other of [Object.assign(new Error('x'), { code: 'EPERM' }), new Error('x'), null, undefined, 'ENOSPC']) assert.equal(isWatchLimitError(other), false);
+  });
+  await check('native: a watcher that runs out of watches stops and reports the error once', async () => {
+    const realFs = createRequire(import.meta.url)('fs');
+    const original = realFs.watch;
+    let closed = 0;
+    realFs.watch = () => {
+      const emitter = new EventEmitter();
+      emitter.close = () => { closed++; };
+      setTimeout(() => emitter.emit('error', Object.assign(new Error('ENOSPC: System limit for number of file watchers reached'), { code: 'ENOSPC' })), 20);
+      return emitter;
+    };
+    try {
+      const errors = [];
+      const dir = join(out, 'limit');
+      mkdirSync(dir);
+      const watcher = watchWorkspace(dir, () => {}, { useNative: true, onError: (error) => errors.push(error) });
+      await waitFor(() => errors.length > 0, 'Missing onError');
+      await delay(100);
+      assert.equal(errors.length, 1);
+      assert.equal(isWatchLimitError(errors[0]), true);
+      assert.equal(closed, 1, 'the failed watcher is closed');
+      watcher.close();
+      assert.equal(closed, 1, 'closing again does nothing');
+    } finally {
+      realFs.watch = original;
+    }
+  });
   console.log(`\nworkspace-watcher: ${checks} checks passed`);
 } finally {
   assert.ok(resolve(out).startsWith(resolve(tmpdir()) + sep));

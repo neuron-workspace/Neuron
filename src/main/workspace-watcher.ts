@@ -6,10 +6,25 @@ export type WatchEvent = 'add' | 'change' | 'unlink';
 
 const ignored = /(^|[\/\\])\.(?!neuron([\/\\]|$))|\.tmp$/;
 
+/**
+ * The system ran out of what watching needs: inotify watches on Linux
+ * (ENOSPC, in a large workspace), or file handles (EMFILE).
+ */
+export function isWatchLimitError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOSPC' || code === 'EMFILE';
+}
+
+/**
+ * Report files added, changed and removed under `workspace`, debounced.
+ *
+ * On an error the watcher stops (and says so through `onError`); the app goes
+ * on without it.
+ */
 export function watchWorkspace(
   workspace: string,
   onEvent: (event: WatchEvent, relativePath: string) => void,
-  options: { debounceMs?: number; useNative?: boolean } = {},
+  options: { debounceMs?: number; useNative?: boolean; onError?: (error: Error) => void } = {},
 ): { close(): void } {
   // Given a path with an 8.3 short name in it (C:\Users\RUNNER~1\...), the
   // recursive watcher in Electron's Node reports names relative to the long
@@ -35,6 +50,7 @@ export function watchWorkspace(
     if (closed) return;
     console.warn('Workspace watcher stopped:', error);
     close();
+    try { options.onError?.(error); } catch { /* a listener's failure must not escape the watcher */ }
   };
 
   const walk = async (relativePath: string): Promise<void> => {

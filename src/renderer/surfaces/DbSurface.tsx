@@ -9,6 +9,7 @@ import { BoardColumnHeader, CardLimitNote, Chip, DbCard, cardTitle, columnLabel 
 import { addDbTable, boardColumns, displayValue, drawableRelations, MAX_CARDS, moveRow, OPTION_COLORS as PALETTE, parseDb, resolveView, serializeDb, updateDbTable, visibleRows as savedViewRows, type BoardColumn, type DbFile, type DbOption, type DbProperty, type DbRow, type DbTable, type DbViewMode, type PropType } from '@/lib/db';
 import { HEADER_BUTTON, OptionListEditor, SaveNotice, SelectCell, TOOL_FIELD, TOOL_FIELD_BASE, UrlCell, useFileWriter, useRowVirtualizer } from '@/components/db/table-kit';
 import { Segmented } from '@/components/ui/segmented';
+import { ExternalChangeBar } from '@/components/FileNotices';
 import { registerSurface, type SurfaceProps } from './index';
 
 // ===========================================================================
@@ -142,7 +143,7 @@ export function DbSurface({ path, content }: SurfaceProps) {
   const writer = useFileWriter(path, (text) => {
     const parsed = parseDb(text, title);
     adopt(parsed.db, parsed.error);
-  });
+  }, { askOnConflict: true });
   const { saveError } = writer;
   const dbRef = useRef<DbFile | null>(null);
   const selectedTableRef = useRef<string | null>(null);
@@ -383,7 +384,12 @@ export function DbSurface({ path, content }: SurfaceProps) {
   }
 
   // --- Empty / invalid states -------------------------------------------------
-  const saveNotice = <SaveNotice error={saveError} path={path} onRetry={() => { if (dbRef.current) void writeDb(dbRef.current); }} />;
+  const saveNotice = (
+    <>
+      {writer.conflict && <ExternalChangeBar path={path} onKeepMine={writer.keepMine} onUseDisk={() => { void writer.takeDisk(); }} />}
+      <SaveNotice error={saveError} path={path} onRetry={() => { if (dbRef.current) void writeDb(dbRef.current); }} />
+    </>
+  );
 
   if (error) {
     return (

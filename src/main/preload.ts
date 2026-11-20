@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('workspace:changed', listener);
     return () => ipcRenderer.removeListener('workspace:changed', listener);
   },
+  // The watcher stopped because the system ran out of watches or file handles.
+  onWatchLimit: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('workspace:watch-limit', listener);
+    return () => ipcRenderer.removeListener('workspace:watch-limit', listener);
+  },
   readNote: (relativePath: string) => ipcRenderer.invoke('notes:read', relativePath),
   writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
@@ -142,9 +148,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('terminal:exit', listener);
       return () => ipcRenderer.removeListener('terminal:exit', listener);
     },
-  },
-  views: {
-    file: (relativePath: string) => ipcRenderer.invoke('views:file', relativePath),
   },
   htmxViews: {
     open: (relativePath: string, theme?: 'light' | 'dark') => ipcRenderer.invoke('htmx-views:open', relativePath, theme),

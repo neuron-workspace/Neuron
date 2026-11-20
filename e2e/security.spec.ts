@@ -20,9 +20,12 @@ test('the preload bridge exposes an allowlist, not ipcRenderer', async ({ page }
   const bridge = await page.evaluate(() => ({
     hasApi: typeof (window as unknown as Record<string, unknown>).electronAPI,
     hasIpc: typeof (window as unknown as Record<string, unknown>).ipcRenderer,
+    // Canvas images stream through neuron-file://; the base64 image read is gone.
+    hasViewFile: typeof (window as unknown as { electronAPI: Record<string, unknown> }).electronAPI.views,
   }));
   expect(bridge.hasApi).toBe('object');
   expect(bridge.hasIpc).toBe('undefined');
+  expect(bridge.hasViewFile).toBe('undefined');
 });
 
 test('wrong bridge argument types fail cleanly and the workspace stays usable', async ({ page }) => {
@@ -33,7 +36,7 @@ test('wrong bridge argument types fail cleanly and the workspace stays usable', 
     const failures = await Promise.all([
       api.repository.setName(bad, 'Name'), api.repository.setName(before!.path, bad),
       api.repository.reveal(bad), api.repository.remove(bad), api.settings.set(bad, 'value'),
-      api.writeNote('must-not-exist.md', bad), api.deleteNote(bad), api.views.file(bad),
+      api.writeNote('must-not-exist.md', bad), api.deleteNote(bad), api.readNote(bad).then((text) => ({ success: !text.startsWith('Error:') })),
       api.logError(null as never), api.htmxViews.approve('view.html', null as never),
     ]);
     let terminalError = '';
@@ -53,17 +56,20 @@ test('wrong bridge argument types fail cleanly and the workspace stays usable', 
   await expect(page.locator('.note-row', { hasText: 'security-check' }).first()).toBeVisible();
 });
 
-test.describe('canvas image limits', () => {
+// Canvas images stream through neuron-file:// (7A), so size is no limit any
+// more (files-on-disk.spec.ts shows one over 10 MB); what is not an image
+// still says so in its card rather than showing a broken one.
+test.describe('canvas image errors', () => {
   test.use({ prepareWorkspace: async ({}, use) => use((directory: string) => {
     writeFileSync(join(directory, 'large.png'), Buffer.alloc(10 * 1024 * 1024 + 1));
     writeFileSync(join(directory, 'Image limit.canvas'), JSON.stringify({ nodes: [
       { id: 'large-image', type: 'file', file: 'large.png', x: 0, y: 0, width: 360, height: 220 },
     ], edges: [] }));
   }) });
-  test('an oversized canvas image shows its error in the card', async ({ page }) => {
+  test('a canvas image that will not decode shows its error in the card', async ({ page }) => {
     await page.locator('.note-row', { hasText: 'Image limit' }).first().click();
     const card = page.locator('[data-canvas-node="large-image"]');
-    await expect(card).toContainText('This image is too large to show here (over 10 MB).');
+    await expect(card).toContainText('Could not load image.');
     await expect(card.locator('img')).toHaveCount(0);
   });
 });

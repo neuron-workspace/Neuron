@@ -54,6 +54,24 @@ export function needsSniff(path: string): boolean {
   return !NAMES.has(nameOf(path)) && !EXTENSIONS.has(extensionOf(path));
 }
 
+// Notes and Neuron's own documents (views, databases, canvases, diagrams, CSV
+// tables) and the workspace's configuration: what notes:list returns.
+const LISTED_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid|csv)$)/;
+
+/** Whether notes:list lists this path, and the renderer keeps it among its notes. */
+export function isListedFile(path: string): boolean {
+  return LISTED_FILE.test(path);
+}
+
+/**
+ * A text file outside that listing (JSON, YAML, a README with no extension):
+ * the watcher reports its changes too, so an open copy follows the disk. A
+ * name the table does not know counts; reading it decides whether it is text.
+ */
+export function isUnlistedText(path: string): boolean {
+  return !isListedFile(path) && (fileKind(path) === 'text' || needsSniff(path));
+}
+
 /** Kinds Neuron opens as a file of its own, outside the note listing. */
 export const OPENS_AS_FILE: readonly FileKind[] = ['image', 'video', 'audio', 'text'];
 /** Kinds served to `<img>`, `<video>` and `<audio>` through neuron-file://. */

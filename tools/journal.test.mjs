@@ -2,7 +2,7 @@
 // transpile with vite's bundled esbuild, then assert.
 // Run: node tools/journal.test.mjs
 import { transform } from 'esbuild';
-import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -254,6 +254,61 @@ const newUserData = () => {
   const journal = new WriteJournal(newUserData());
   for (const forged of ['../../etc/passwd', '..', '', 'not-an-id', '1234-zzzz']) {
     assert.equal(journal.restore(ws, forged).success, false, `forged id rejected: ${forged}`);
+  }
+}
+
+// --- restore refuses a pre-image whose bytes do not match its hash ----------
+{
+  const ws = newWorkspace();
+  const userData = newUserData();
+  const journal = new WriteJournal(userData, { reportError: () => {} });
+  const file = join(ws, 'kept.md');
+  writeFileSync(file, 'the original\n');
+  const captured = journal.capturePreImage(ws, file, 'overwrite');
+  writeFileSync(file, 'current\n');
+  const store = join(userData, 'journal', readdirSync(join(userData, 'journal'))[0]);
+  const bin = join(store, `${captured.entry.id}.bin`);
+  for (const tampered of ['the 0riginal\n', 'short']) {
+    writeFileSync(bin, tampered);
+    const restored = journal.restore(ws, captured.entry.id);
+    assert.equal(restored.success, false, `tampered pre-image (${tampered.length} bytes) is refused`);
+    assert.match(restored.error, /integrity/i);
+    assert.equal(readFileSync(file, 'utf-8'), 'current\n', 'the file is untouched');
+  }
+}
+
+// --- restore refuses to write through a link --------------------------------
+{
+  const ws = newWorkspace();
+  const journal = new WriteJournal(newUserData(), { reportError: () => {} });
+  const outside = join(scratch, `outside-${seq++}`);
+  mkdirSync(outside);
+  mkdirSync(join(ws, 'sub'));
+  const file = join(ws, 'sub', 'linked.md');
+  writeFileSync(file, 'before\n');
+  const captured = journal.capturePreImage(ws, file, 'delete');
+  assert.equal(captured.status, 'captured');
+  // The folder becomes a link to somewhere outside the workspace. A junction
+  // needs no privilege on Windows.
+  rmSync(join(ws, 'sub'), { recursive: true });
+  symlinkSync(outside, join(ws, 'sub'), process.platform === 'win32' ? 'junction' : 'dir');
+  const throughFolder = journal.restore(ws, captured.entry.id);
+  assert.equal(throughFolder.success, false, 'a folder link out of the workspace is refused');
+  assert.equal(existsSync(join(outside, 'linked.md')), false, 'nothing was written outside');
+
+  // The file itself a link (needs privilege on Windows; skipped without it).
+  rmSync(join(ws, 'sub'));
+  mkdirSync(join(ws, 'sub'));
+  const target = join(outside, 'target.md');
+  writeFileSync(target, 'outside\n');
+  let fileLink = true;
+  try { symlinkSync(target, file, 'file'); } catch (error) { if (error.code !== 'EPERM') throw error; fileLink = false; }
+  if (fileLink) {
+    const throughFile = journal.restore(ws, captured.entry.id);
+    assert.equal(throughFile.success, false, 'a file link is refused');
+    assert.equal(readFileSync(target, 'utf-8'), 'outside\n', 'the link target is untouched');
+  } else {
+    console.log('  skip file-link restore: not permitted here');
   }
 }
 

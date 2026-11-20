@@ -15,6 +15,8 @@ import { SurfaceBoundary } from '../surfaces/SurfaceBoundary';
 import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from '../surfaces/panels';
 import type { NoteData, Surface } from '../surfaces';
 import { fileKind, MEDIA_KINDS } from '../../main/file-kinds';
+import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
+import { ExternalChangeBar, TooLargeMessage } from './FileNotices';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 const SAVE_LABEL: Record<SaveState, string> = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' };
@@ -52,6 +54,10 @@ export interface GroupContext {
   docs: Record<string, string>;
   saveStates: Record<string, SaveState>;
   onChange: (path: string, value: string) => void;
+  /** Files changed outside Neuron while an edit here was not on disk; each shows ExternalChangeBar. */
+  conflicts: Record<string, true>;
+  onKeepMine: (path: string) => void;
+  onUseDisk: (path: string) => void;
   /** The surface a file opens in, and whether a by-kind surface applies (image, media, text), which has no source view. */
   surfaceFor: (path: string) => { Surface?: Surface; byKind: boolean };
   fileSize: (path: string) => number | undefined;
@@ -92,7 +98,7 @@ export function EditorGroupHeader({ ctx, state, index, showsHome, inLayout = fal
   const path = showsHome ? null : group.selected;
   const blocked = useCallback((direction: SplitDirection) => splitBlocked(state, direction), [state]);
   let controls: ReactNode = null;
-  if (path && !isUrl(path)) {
+  if (path && !isUrl(path) && ctx.docs[path] !== TOO_LARGE_TO_OPEN) {
     const { Surface, byKind } = ctx.surfaceFor(path);
     const content = ctx.docs[path] ?? '';
     if (Surface && !byKind) {
@@ -140,9 +146,10 @@ export function EditorGroupHeader({ ctx, state, index, showsHome, inLayout = fal
           <span className="text-[var(--ink-secondary)]">{path.split('/').pop()}</span>
         </div>
         {/* Media streams from disk and is never written, so it has no save state. */}
-        {!isUrl(path) && !MEDIA_KINDS.includes(fileKind(path)) && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{SAVE_LABEL[saveState]}</span>}
+        {!isUrl(path) && !MEDIA_KINDS.includes(fileKind(path)) && ctx.docs[path] !== TOO_LARGE_TO_OPEN && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{SAVE_LABEL[saveState]}</span>}
         {controls}
       </div>}
+      {path && ctx.conflicts[path] && <ExternalChangeBar path={path} onKeepMine={() => ctx.onKeepMine(path)} onUseDisk={() => ctx.onUseDisk(path)} />}
     </header>
   );
 }
@@ -155,6 +162,8 @@ function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
   // Not read yet: render nothing rather than another file's content or an
   // empty document a surface might take for the real one.
   if (content === undefined) return null;
+  // Over 25 MB: main did not read it, so there is nothing to show or edit.
+  if (content === TOO_LARGE_TO_OPEN) return <TooLargeMessage />;
   const change = (value: string) => ctx.onChange(path, value);
   const toggleTask = (line: number, checked: boolean) => {
     const next = toggleTaskLine(content, line, checked);

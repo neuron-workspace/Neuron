@@ -12,6 +12,7 @@ import {
   type CsvColumnMeta, type CsvColumnType, type CsvTableMeta, type CsvViewState,
 } from '@/lib/csv-table';
 import type { DbOption } from '@/lib/db';
+import { ExternalChangeBar } from '@/components/FileNotices';
 import { registerSurface, type SurfaceProps } from './index';
 
 // ===========================================================================
@@ -103,7 +104,7 @@ export function CsvSurface({ path, content }: SurfaceProps) {
   // `content` prop can still be the previously open file's, so it is ignored.
   const loaded = useRef<string | null>(null);
   const adoptChange = (text: string) => { loaded.current = path; adoptText(text); };
-  const csv = useFileWriter(path, adoptChange);
+  const csv = useFileWriter(path, adoptChange, { askOnConflict: true });
   const metaWriter = useFileWriter(metaPath, adoptMetaText);
   const [unreadable, setUnreadable] = useState(false);
 
@@ -472,6 +473,7 @@ export function CsvSurface({ path, content }: SurfaceProps) {
 
   return (
     <main className={`font-sans h-full ${fill ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--canvas)] text-[var(--ink)]`} data-csv-table={editable ? 'managed' : 'read-only'}>
+      {csv.conflict && <ExternalChangeBar path={path} onKeepMine={csv.keepMine} onUseDisk={() => { void csv.takeDisk(); }} />}
       <SaveNotice error={csv.saveError} path={path} onRetry={() => { if (tableRef.current) writeTable(tableRef.current); }} />
       <SaveNotice error={metaWriter.saveError} path={metaPath} onRetry={() => { if (metaRef.current) void writeMeta(metaRef.current); }} />
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

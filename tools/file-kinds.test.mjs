@@ -23,7 +23,19 @@ const load = async (entry) => {
 };
 
 try {
-  const { fileKind, needsSniff, looksLikeText, extensionOf } = await load('src/main/file-kinds.ts');
+  const { fileKind, needsSniff, looksLikeText, extensionOf, isListedFile, isUnlistedText } = await load('src/main/file-kinds.ts');
+  const { NOTE_READ_LIMIT, tooLargeToOpen, TOO_LARGE_TO_OPEN } = await load('src/main/file-limits.ts');
+
+  check('the 25 MB ceiling: past it a note is listed but not read; an unknown size is left to the read', () => {
+    assert.equal(NOTE_READ_LIMIT, 25 * 1024 * 1024);
+    assert.equal(tooLargeToOpen(NOTE_READ_LIMIT), false, 'exactly 25 MB is read');
+    assert.equal(tooLargeToOpen(NOTE_READ_LIMIT + 1), true);
+    assert.equal(tooLargeToOpen(26 * 1024 * 1024), true);
+    assert.equal(tooLargeToOpen(0), false);
+    assert.equal(tooLargeToOpen(undefined), false);
+    assert.equal(tooLargeToOpen(null), false);
+    assert.match(TOO_LARGE_TO_OPEN, /^Error: This file is too large to open in Neuron \(over 25 MB\)\.$/);
+  });
 
   const expected = {
     note: ['md', 'mdx'],
@@ -76,6 +88,25 @@ try {
     assert.equal(fileKind('.env.example'), 'text');
     assert.equal(fileKind('config/.ENV.EXAMPLE'), 'text');
     assert.equal(needsSniff('.env.example'), false);
+  });
+  check('names with several dots go by the last one, in any case', () => {
+    for (const [name, kind] of [['my.notes.v2.md', 'note'], ['README.MD', 'note'], ['Q3.report.final.CSV', 'table'], ['data.backup.json', 'text'],
+      ['Photo.2024.JPEG', 'image'], ['archive.tar.gz', 'other'], ['setup.v1.2.Exe', 'blocked'], ['notes.md.bak', 'other'], ['a..md', 'note']]) {
+      assert.equal(fileKind(name), kind, name);
+    }
+    assert.equal(needsSniff('notes.md.bak'), true);
+    assert.equal(fileKind('.ENV.EXAMPLE'), 'text');
+    assert.equal(fileKind('sub/dir/.env.example'), 'text');
+    assert.equal(fileKind('.env.example.bak'), 'other', 'only the whole name');
+  });
+  check('notes:list lists notes, Neuron documents and workspace configuration, and nothing else', () => {
+    for (const name of ['a.md', 'b.mdx', 'v.html', 'p.db', 'i.canvas', 'f.mmd', 'f.mermaid', 't.csv', 'neuron.config', 'x.neuron.json',
+      '.neuron/layout.json', '.neuron/tables/t.csv.json', '.neuron/fragments/f.html', '.neuron/styles/s.css']) assert.equal(isListedFile(name), true, name);
+    for (const name of ['a.json', 'readme.txt', 'Makefile', 'a.png', 'tool.exe', 'docs/neuron.config', '.neuron/notes.txt', 'x.pdf']) assert.equal(isListedFile(name), false, name);
+  });
+  check('text files outside that listing are reported to an open copy; media and binaries are not', () => {
+    for (const name of ['config.json', 'compose.YAML', 'notes.txt', 'Makefile', 'LICENSE', '.env.example', '.neuron/notes.txt']) assert.equal(isUnlistedText(name), true, name);
+    for (const name of ['a.md', '.neuron/layout.json', 'a.png', 'clip.mp4', 'x.pdf', 'tool.exe', 'run.sh']) assert.equal(isUnlistedText(name), false, name);
   });
   check('names the table does not know are sniffed, and are other until then', () => {
     for (const name of ['Makefile', 'LICENSE', 'data.dat', 'weird.xyz', 'neuron.config', '.gitignore']) {
@@ -183,7 +214,88 @@ try {
     assert.equal(parseRange('bytes=-0', 100), 'unsatisfiable');
     assert.equal(parseRange('bytes=0-', 0), 'unsatisfiable');
     for (const ignored of ['bytes=20-10', 'bytes=-', 'bytes=0-1,5-6', 'items=0-1', 'bytes=a-b', 'bytes=1.5-2']) assert.equal(parseRange(ignored, 100), null, ignored);
+    assert.deepEqual(parseRange('bytes=0-0', 100), { start: 0, end: 0 }, 'the first byte');
+    assert.deepEqual(parseRange('bytes=50-', 100), { start: 50, end: 99 }, 'open-ended');
   });
+
+  // The whole response, as neuron-file:// answers it, against a real file.
+  const { respondWithFile } = await load('src/main/file-protocol.ts');
+  const bytes = Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 251));
+  fs.writeFileSync(path.join(ws, 'sub/clip.mp4'), bytes);
+  fs.mkdirSync(path.join(ws, 'folder.png'));
+  const serve = (rel, { method = 'GET', range, token = t1 } = {}) => respondWithFile(new Request(url(1, token, rel), { method, headers: range ? { range } : {} }), lookup);
+  const body = async (response) => Buffer.from(await response.arrayBuffer());
+  const asyncChecks = [];
+  const checkAsync = (what, fn) => asyncChecks.push([what, fn]);
+
+  checkAsync('a whole file: 200 with its type, length, ranges offered and the safety headers', async () => {
+    const response = await serve('sub/clip.mp4');
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'video/mp4');
+    assert.equal(response.headers.get('content-length'), '1000');
+    assert.equal(response.headers.get('accept-ranges'), 'bytes');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
+    assert.deepEqual(await body(response), bytes);
+  });
+  checkAsync('bytes=0-0 is the first byte', async () => {
+    const response = await serve('sub/clip.mp4', { range: 'bytes=0-0' });
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get('content-range'), 'bytes 0-0/1000');
+    assert.equal(response.headers.get('content-length'), '1');
+    assert.deepEqual(await body(response), bytes.subarray(0, 1));
+  });
+  checkAsync('bytes=-500 is the last 500 bytes', async () => {
+    const response = await serve('sub/clip.mp4', { range: 'bytes=-500' });
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get('content-range'), 'bytes 500-999/1000');
+    assert.deepEqual(await body(response), bytes.subarray(500));
+  });
+  checkAsync('bytes=500- runs to the end', async () => {
+    const response = await serve('sub/clip.mp4', { range: 'bytes=500-' });
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get('content-range'), 'bytes 500-999/1000');
+    assert.deepEqual(await body(response), bytes.subarray(500));
+  });
+  checkAsync('a start past the end is 416, saying the size', async () => {
+    const response = await serve('sub/clip.mp4', { range: 'bytes=1000-' });
+    assert.equal(response.status, 416);
+    assert.equal(response.headers.get('content-range'), 'bytes */1000');
+    assert.equal((await body(response)).length, 0);
+  });
+  checkAsync('two ranges, or a malformed one, get the whole file', async () => {
+    for (const range of ['bytes=0-1,5-6', 'bytes=9-2', 'bytes=x-y', 'pages=1-2']) {
+      const response = await serve('sub/clip.mp4', { range });
+      assert.equal(response.status, 200, range);
+      assert.equal(response.headers.get('content-range'), null, range);
+      assert.deepEqual(await body(response), bytes, range);
+    }
+  });
+  checkAsync('HEAD has the headers and no body', async () => {
+    const whole = await serve('sub/clip.mp4', { method: 'HEAD' });
+    assert.equal(whole.status, 200);
+    assert.equal(whole.headers.get('content-length'), '1000');
+    assert.equal(whole.headers.get('content-type'), 'video/mp4');
+    assert.equal(whole.body, null);
+    const part = await serve('sub/clip.mp4', { method: 'HEAD', range: 'bytes=10-19' });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-length'), '10');
+    assert.equal(part.body, null);
+  });
+  checkAsync('a wrong token, a blocked or non-media kind, another method or a folder is refused (403)', async () => {
+    assert.equal((await serve('sub/clip.mp4', { token: windows.get(2).token })).status, 403);
+    assert.equal((await serve('sub/clip.mp4', { token: 'f'.repeat(64) })).status, 403);
+    for (const rel of ['tool.exe', 'run.bat', 'note.md', 'b.json']) assert.equal((await serve(rel)).status, 403, rel);
+    assert.equal((await serve('sub/clip.mp4', { method: 'POST' })).status, 403);
+    assert.equal((await serve('folder.png')).status, 403);
+  });
+  checkAsync('a missing file is 404', async () => {
+    assert.equal((await serve('missing.png')).status, 404);
+  });
+  for (const [what, fn] of asyncChecks) {
+    try { await fn(); } catch (error) { error.message = what + ': ' + error.message; throw error; }
+    checks += 1;
+  }
 
   console.log(`file-kinds: ${checks} checks passed`);
 } finally {
