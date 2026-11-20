@@ -101,11 +101,12 @@ Fragments interpolate <code>{{ variables.name }}</code> and <code>{{ params.name
 /** Create missing .neuron folders/files. Never overwrites anything. */
 function ensureScaffold(root: string): void {
   for (const dir of ['fragments', 'styles', 'templates']) {
-    fs.mkdirSync(path.join(root, '.neuron', dir), { recursive: true });
+    const resolved = resolveInWorkspace(root, `.neuron/${dir}`);
+    if (resolved) fs.mkdirSync(resolved.full, { recursive: true });
   }
   for (const [rel, content] of Object.entries(SCAFFOLD)) {
-    const full = path.join(root, '.neuron', rel.split('/').join(path.sep));
-    if (!fs.existsSync(full)) fs.writeFileSync(full, content, 'utf-8');
+    const resolved = resolveInWorkspace(root, `.neuron/${rel}`);
+    if (resolved && !fs.existsSync(resolved.full)) fs.writeFileSync(resolved.full, content, 'utf-8');
   }
 }
 
@@ -134,7 +135,7 @@ function viewKey(root: string, viewRel: string): string {
 }
 
 export function initHtmxViews(deps: Deps): void {
-  const readApprovals = (): Approvals => (deps.getSetting(APPROVALS_KEY) as Approvals) ?? {};
+  const readApprovals = (): Approvals => Object.assign(Object.create(null), deps.getSetting(APPROVALS_KEY));
 
   const isApproved = (key: string, hash: string): boolean => {
     if (onceApprovals.get(key) === hash) return true;
@@ -145,6 +146,7 @@ export function initHtmxViews(deps: Deps): void {
   ipcMain.handle('htmx-views:open', async (_event, relativePath: string, theme?: 'light' | 'dark') => {
     const root = deps.getRepoRoot(_event);
     if (!root) return { status: 'error', message: 'No workspace is open.' };
+    if (theme !== undefined && theme !== 'light' && theme !== 'dark') return { status: 'error', message: 'Invalid theme.' };
     const resolved = resolveInWorkspace(root, relativePath);
     if (!resolved || !isViewPath(resolved.rel)) return { status: 'error', message: 'Not a valid HTMX view path.' };
     if (!fs.existsSync(resolved.full)) return { status: 'error', message: 'View file not found.' };
@@ -193,6 +195,7 @@ export function initHtmxViews(deps: Deps): void {
   ipcMain.handle('htmx-views:approve', (_event, relativePath: string, scope: 'always' | 'once') => {
     const root = deps.getRepoRoot(_event);
     if (!root) return { success: false, error: 'No workspace is open.' };
+    if (scope !== 'always' && scope !== 'once') return { success: false, error: 'Invalid approval scope.' };
     const resolved = resolveInWorkspace(root, relativePath);
     if (!resolved) return { success: false, error: 'Invalid path.' };
     const { manifest, hash, errors } = loadManifest(root, resolved.rel);
@@ -210,8 +213,8 @@ export function initHtmxViews(deps: Deps): void {
 
   ipcMain.handle('htmx-views:close', (_event, sessionId: string) => {
     const root = deps.getRepoRoot(_event);
-    if (!root || sessions.get(sessionId)?.root !== root) return { success: false };
-    if (typeof sessionId === 'string') sessions.revoke(sessionId);
+    if (!root || typeof sessionId !== 'string' || sessions.get(sessionId)?.root !== root) return { success: false };
+    sessions.revoke(sessionId);
     return { success: true };
   });
 

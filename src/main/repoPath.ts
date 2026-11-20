@@ -15,8 +15,20 @@ export function hasGitSegment(relativePath: string): boolean {
   return relativePath.split(/[\\/]/).some((segment) => segment.split(':')[0].replace(/[. ]+$/, '').toLowerCase() === '.git');
 }
 
+/**
+ * `..` is refused everywhere. On Windows, aliases and streams must not bypass
+ * path checks, so trailing dots/spaces, `:` and device names are refused too;
+ * on macOS and Linux those are legal file names (`Meeting 10:30.md`, `aux.md`).
+ */
+export function hasUnsafeSegment(relativePath: string, windows: boolean = process.platform === 'win32'): boolean {
+  return relativePath.split(/[\\/]/).some((segment) => segment === '..'
+    || (windows && ((segment !== '.' && /[. ]$/.test(segment)) || segment.includes(':')
+      || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(segment))));
+}
+
 export function resolveInside(root: string, relativePath: string, pathApi: path.PlatformPath = path): string | null {
-  if (typeof relativePath !== 'string' || relativePath.includes('\0') || pathApi.isAbsolute(relativePath) || hasGitSegment(relativePath)) return null;
+  if (typeof relativePath !== 'string' || relativePath.includes('\0') || /^[\\/]/.test(relativePath)
+    || pathApi.isAbsolute(relativePath) || hasGitSegment(relativePath) || hasUnsafeSegment(relativePath, pathApi.sep === '\\')) return null;
   const full = pathApi.resolve(root, relativePath);
   const rel = pathApi.relative(pathApi.resolve(root), full);
   if (rel === '' || rel === '..' || rel.startsWith('..' + pathApi.sep) || pathApi.isAbsolute(rel)) return null;

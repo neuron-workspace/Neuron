@@ -492,6 +492,7 @@ ipcMain.handle('window:opener-workspace', (event) => {
 ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
   const window = windowOf(event);
   if ((process.platform !== 'win32' && process.platform !== 'linux') || !window) return;
+  if (!isRecord(colors)) return;
   if (typeof colors?.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.color)
     || typeof colors?.symbolColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.symbolColor)) return;
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor });
@@ -508,6 +509,11 @@ ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; s
 // every ai:complete call. Any renderer code could read every plugin's key, and
 // plugins are not sandboxed (risk R3), so one plugin could read another's.
 const SECRETS_KEY = '__secrets';
+const safeSettingsKey = (key: unknown): key is string => typeof key === 'string'
+  && !['__proto__', 'constructor', 'prototype'].includes(key);
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null
+  && typeof value === 'object' && !Array.isArray(value)
+  && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 
 function secretCodec(): SecretCodec {
   return {
@@ -528,13 +534,13 @@ function readSecret(scope: string, field: string): string | null {
 }
 
 ipcMain.handle('settings:get', (_event, key: string) => {
-  if (!entryOf(_event)) return null;
+  if (!entryOf(_event) || !safeSettingsKey(key)) return null;
   // The renderer may never read the secret namespace, by any key that resolves
   // to it. Without this the store would be one settings.get('__secrets') away
   // from being exactly as exposed as before.
   if (key === SECRETS_KEY) return null;
   const settings = readSettings();
-  if (key in settings) {
+  if (Object.hasOwn(settings, key)) {
     const value = settings[key];
     return rendererSettingsValue(key, value);
   }
@@ -542,6 +548,7 @@ ipcMain.handle('settings:get', (_event, key: string) => {
 });
 ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
   if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+  if (!safeSettingsKey(key)) return { success: false, error: 'Invalid settings key.' };
   if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
   if (JSON.stringify(rendererSettingsValue(key, value)) !== JSON.stringify(value)) return { success: false, error: 'Use the secret store for keys.' };
   const settings = readSettings();
@@ -559,7 +566,7 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
 // exists, and it can never read the value back.
 ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, value: string) => {
   if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
-  if (typeof scope !== 'string' || typeof field !== 'string' || !scope || !field) {
+  if (!safeSettingsKey(scope) || !safeSettingsKey(field) || !scope || !field || typeof value !== 'string') {
     return { success: false, error: 'Invalid secret reference.' };
   }
   const settings = readSettings();
@@ -578,7 +585,8 @@ ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, val
   return writeSettings(settings) ? { success: true } : { success: false, error: 'Could not save the key.' };
 });
 
-ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => !!entryOf(_event) && readSecret(scope, field) !== null);
+ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => !!entryOf(_event)
+  && safeSettingsKey(scope) && safeSettingsKey(field) && readSecret(scope, field) !== null);
 
 // ==========================================================================
 // IPC — repository
@@ -627,6 +635,7 @@ ipcMain.handle('templates:list', (event) =>
 ipcMain.handle('templates:create', async (event, templateId: string) => {
   const parent = windowOf(event);
   if (!parent) return null;
+  if (typeof templateId !== 'string') return { error: 'Invalid template id.' };
 
   const templates = listTemplates(templatesRoot(app.isPackaged, process.resourcesPath));
   const template = templates.find((t) => t.id === templateId);
@@ -683,6 +692,7 @@ ipcMain.handle('repository:switch', (event, dir: string) => {
 
 ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
   if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+  if (!safeSettingsKey(dir) || typeof name !== 'string') return { success: false, error: 'Invalid workspace name.' };
   const settings = readSettings();
   const names = { ...(settings.repositories.names ?? {}) };
   const trimmed = name.trim();
@@ -698,6 +708,7 @@ ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
 
 ipcMain.handle('repository:remove', (event, dir: string) => {
   if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+  if (typeof dir !== 'string') return { success: false, error: 'Invalid workspace path.' };
   const settings = readSettings();
   const key = folderKey(dir);
   settings.repositories.recent = settings.repositories.recent.filter((p) => folderKey(p) !== key);
@@ -715,7 +726,11 @@ ipcMain.handle('repository:remove', (event, dir: string) => {
 });
 
 ipcMain.handle('repository:reveal', (_event, dir: string) => {
-  if (!entryOf(_event)) return { success: false };
+  if (!entryOf(_event) || typeof dir !== 'string') return { success: false };
+  const { current, recent } = readSettings().repositories;
+  const known = [current, ...recent, ...[...appWindows.values()]
+    .filter((entry) => entry.kind === 'workspace' && !entry.window.isDestroyed()).map((entry) => entry.repo)];
+  if (!known.some((repo) => repo && folderKey(repo) === folderKey(dir)) || !fs.existsSync(dir)) return { success: false };
   shell.showItemInFolder(dir);
   return { success: true };
 });
@@ -854,6 +869,7 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
 });
 
 ipcMain.handle('notes:write', async (_event, relativePath: string, content: string) => {
+  if (typeof content !== 'string') return { success: false, error: 'Invalid note content.' };
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   const guard = textGuard(relativePath);
@@ -903,12 +919,13 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
-    if (fs.existsSync(resolved.fullPath)) {
-      capturePreImage(resolved.repo, resolved.fullPath, 'delete');
-      fs.unlinkSync(resolved.fullPath);
-    }
+    const stat = fs.lstatSync(resolved.fullPath);
+    if (stat.isDirectory()) return { success: false, error: 'Use the folder delete for folders.' };
+    if (stat.isFile()) capturePreImage(resolved.repo, resolved.fullPath, 'delete');
+    fs.unlinkSync(resolved.fullPath);
     return { success: true };
   } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { success: true };
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Failed to delete note ${relativePath}:`, err);
     return { success: false, error: message };
@@ -921,7 +938,7 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
 // view would hand it file contents outside its path policy (DECISIONS.md D20).
 ipcMain.handle('journal:list', (_event, relativePath?: string) => {
   const repo = repoOf(_event);
-  if (!repo) return [];
+  if (!repo || (relativePath !== undefined && !resolveInRepo(_event, relativePath))) return [];
   const entries = listJournalEntries(repo);
   return relativePath ? entries.filter((e) => e.relativePath === relativePath) : entries;
 });
@@ -929,6 +946,7 @@ ipcMain.handle('journal:list', (_event, relativePath?: string) => {
 ipcMain.handle('journal:restore', (_event, entryId: string) => {
   const repo = repoOf(_event);
   if (!repo) return { success: false, error: 'No workspace is open.' };
+  if (typeof entryId !== 'string') return { success: false, error: 'Invalid journal entry.' };
   const result = restoreJournalEntry(repo, entryId);
   return result.success ? { success: true } : { success: false, error: result.error };
 });
@@ -953,14 +971,17 @@ ipcMain.handle('notes:get-dir', (event) => repoOf(event));
 // ==========================================================================
 
 // Read a workspace image for .canvas file nodes as a data URL.
-// ponytail: whole-file base64 over IPC — fine for note-sized images; switch to a custom protocol if galleries get huge.
+// Bounded for canvas nodes; other media streams through neuron-file://.
 const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
 ipcMain.handle('views:file', (_event, relativePath: string) => {
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
     if (!fs.existsSync(resolved.fullPath)) return { success: false, error: `File not found: ${relativePath}` };
-    const mime = IMAGE_MIME[path.extname(resolved.fullPath).slice(1).toLowerCase()];
+    const stat = fs.statSync(resolved.fullPath);
+    if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return { success: false, error: 'This image is too large to show here (over 10 MB).' };
+    const extension = path.extname(resolved.fullPath).slice(1).toLowerCase();
+    const mime = Object.hasOwn(IMAGE_MIME, extension) ? IMAGE_MIME[extension] : undefined;
     if (!mime) return { success: false, error: `Not an image: ${relativePath}` };
     return { success: true, dataUrl: `data:${mime};base64,${fs.readFileSync(resolved.fullPath).toString('base64')}` };
   } catch (err: unknown) {
@@ -1000,7 +1021,7 @@ async function serveWorkspaceFile(request: Request): Promise<Response> {
 // Pull Chrome's cookies into the in-app browser's persistent session so the
 // user stays logged in without signing in again.
 ipcMain.handle('cookies:import-chrome', (_event, domain: unknown) =>
-  entryOf(_event) ? importChromeCookies(session.fromPartition('persist:neuron-browser'), domain)
+  entryOf(_event) && typeof domain === 'string' ? importChromeCookies(session.fromPartition('persist:neuron-browser'), domain)
     : { success: false, error: 'Not available here.' },
 );
 
@@ -1126,6 +1147,10 @@ function killAllPtys() {
 
 ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; key?: string } = {}) => {
   if (!entryOf(_event)) throw new Error('terminals are only available to app windows');
+  if (!isRecord(opts) || (opts.key !== undefined && typeof opts.key !== 'string')
+    || (opts.cols !== undefined && !Number.isInteger(opts.cols)) || (opts.rows !== undefined && !Number.isInteger(opts.rows))) {
+    throw new Error('Invalid terminal options.');
+  }
   const owner = _event.sender;
   const key = ptyKey(owner.id, opts.key || 'default');
   const known = ptyByKey.get(key);
@@ -1179,12 +1204,12 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
 ipcMain.handle('terminal:history', (_event, id: number) => (ownsPty(_event, id) ? ptyHistory.get(id) ?? '' : ''));
 
 ipcMain.handle('terminal:write', (_event, id: number, data: string) => {
-  if (!ownsPty(_event, id)) return;
+  if (!ownsPty(_event, id) || typeof data !== 'string') return;
   try { ptys.get(id)?.write(data); } catch { /* pty closed */ }
 });
 
 ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: number) => {
-  if (!ownsPty(_event, id)) return;
+  if (!ownsPty(_event, id) || !Number.isInteger(cols) || !Number.isInteger(rows)) return;
   try { ptys.get(id)?.resize(Math.max(1, cols), Math.max(1, rows)); } catch { /* pty closed */ }
 });
 // ConPTY wraps long lines itself. xterm.js reflows them again on resize unless
@@ -1244,6 +1269,13 @@ ipcMain.handle(
     request: { provider?: unknown; model?: unknown; system?: unknown; messages?: unknown },
   ) => {
     if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+    if (!isRecord(request) || typeof request.provider !== 'string'
+      || (request.model !== undefined && typeof request.model !== 'string')
+      || (request.system !== undefined && typeof request.system !== 'string')
+      || !Array.isArray(request.messages) || !request.messages.every((m) => isRecord(m)
+        && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')) {
+      return { success: false, error: 'Invalid AI request.' };
+    }
     const provider = typeof request?.provider === 'string' ? request.provider : '';
     if (!Object.prototype.hasOwnProperty.call(CONNECTOR_NAMES, provider)) return { success: false, error: `Unknown AI provider "${provider}".` };
     const messages = Array.isArray(request.messages)
@@ -1312,6 +1344,12 @@ ipcMain.handle(
   'plugin:net-request',
   async (_event, req: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => {
     if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+    if (!isRecord(req) || typeof req.url !== 'string'
+      || (req.method !== undefined && typeof req.method !== 'string')
+      || (req.body !== undefined && typeof req.body !== 'string')
+      || (req.headers !== undefined && (!isRecord(req.headers) || !Object.values(req.headers).every((v) => typeof v === 'string')))) {
+      return { success: false, error: 'Invalid network request.' };
+    }
     try {
       return { success: true, ...await requestPublic(req) };
     } catch (err: unknown) {
@@ -1329,6 +1367,9 @@ ipcMain.handle(
   'notes:log-error',
   async (_event, errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) => {
     if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+    if (!isRecord(errorData) || !(['phase', 'error_message', 'stack_trace', 'remediation_step'] as const).every((key) => typeof errorData[key] === 'string')) {
+      return { success: false, error: 'Invalid diagnostic data.' };
+    }
     const success = await diagnostics.write({
       level: 'error',
       category: `renderer.${errorData.phase || 'unknown'}`,
@@ -1394,7 +1435,7 @@ app.on('web-contents-created', (_event, contents) => {
   // 3. The app's own frame may not be navigated away from its bundled content
   //    (clickjacking / drive-by nav). An HTMX view webview is pinned to its own
   //    session on the view server. The browser <webview> may roam.
-  contents.on('will-navigate', (event, url) => {
+  const guardNavigation = (event: Electron.Event, url: string) => {
     if (isHtmxView()) {
       const origin = getViewServerOrigin();
       if (!isSameOrigin(url, origin)) event.preventDefault();
@@ -1406,7 +1447,9 @@ app.on('web-contents-created', (_event, contents) => {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     }
-  });
+  };
+  contents.on('will-navigate', guardNavigation);
+  contents.on('will-redirect', guardNavigation);
 
   // 4. Deny all permission requests (camera, mic, geolocation, …) from the
   //    embedded browser; scoped to the webview session so the app is untouched.

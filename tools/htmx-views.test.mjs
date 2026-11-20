@@ -70,6 +70,11 @@ assert.equal(m.normalizeRel('.\\notes\\a.md'), 'notes/a.md');
 for (const bad of ['..', '../x', 'a/../../x', '/etc/passwd', 'C:/Windows', 'C:\\x', '\\\\server\\share', '~/secrets', 'a\0b', 'a%00b', '', 42, null]) {
   assert.equal(m.normalizeRel(bad), null, `normalizeRel should reject: ${String(bad)}`);
 }
+// Device names, streams and trailing dots/spaces are Windows rules; legal elsewhere.
+for (const name of ['CON', 'NUL', 'COM1', 'aux.txt', 'file.md:stream', 'note.md.', 'dir /note.md', 'dir./note.md', 'Meeting 10:30.md']) {
+  if (process.platform === 'win32') assert.equal(m.normalizeRel(name), null, `normalizeRel should reject on Windows: ${name}`);
+  else assert.equal(m.normalizeRel(name), name.replace(/\\/g, '/'), `normalizeRel should allow: ${name}`);
+}
 assert.equal(m.normalizeRelDir(''), '');
 assert.equal(m.normalizeRelDir('..'), null);
 
@@ -83,6 +88,8 @@ writeFileSync(join(ws, 'notes', 'other.md'), '# Other\n\n#alpha only.\n');
 writeFileSync(join(outside, 'secret.txt'), 'top secret');
 
 assert.ok(m.resolveInWorkspace(ws, 'notes/hello.md'));
+assert.ok(m.resolveInWorkspace(ws, '..hidden/note.md'), 'ordinary dot-prefixed names are not traversal');
+assert.equal(m.resolveInWorkspace(join(ws, 'missing-root'), 'note.md'), null, 'missing roots fail closed');
 assert.equal(m.resolveInWorkspace(ws, '../secret.txt'), null);
 assert.equal(m.resolveInWorkspace(ws, 'C:/Windows/system32'), null);
 let symlinksWork = true;
@@ -105,6 +112,10 @@ assert.ok(m.resolveInWorkspace(ws, '.gitignore'), '.gitignore is an ordinary fil
 if (symlinksWork) {
   symlinkSync(join(ws, '.git'), join(ws, 'gitlink'), 'junction');
   assert.equal(m.resolveInWorkspace(ws, 'gitlink/config'), null, 'a link into .git is refused by its real path');
+  mkdirSync(join(outside, 'gone'));
+  symlinkSync(join(outside, 'gone'), join(ws, 'broken'), process.platform === 'win32' ? 'junction' : 'dir');
+  rmSync(join(outside, 'gone'), { recursive: true });
+  assert.equal(m.resolveInWorkspace(ws, 'broken/new.md'), null, 'broken links fail closed');
 }
 
 // --- manifest validation --------------------------------------------------------
@@ -142,6 +153,21 @@ for (const allowedReadPaths of [undefined, [], ['notes/**']]) {
   assert.deepEqual(result.readPaths, allowedReadPaths?.length ? allowedReadPaths : ['**']);
 }
 assert.equal(m.ipcHandlers.get('htmx-views:close')({ trusted: false }, 'some-session').success, false);
+// Opening a view must not scaffold through a .neuron junction outside the workspace.
+if (symlinksWork) {
+  const linkedWs = join(ws, 'linked-workspace');
+  const scaffoldTarget = join(outside, 'scaffold-target');
+  mkdirSync(linkedWs); mkdirSync(scaffoldTarget);
+  writeFileSync(join(linkedWs, 'view.html'), '<p>View</p>');
+  symlinkSync(scaffoldTarget, join(linkedWs, '.neuron'), process.platform === 'win32' ? 'junction' : 'dir');
+  m.initHtmxViews({ getRepoRoot: () => linkedWs, getSetting: () => ({}), setSetting: () => {} });
+  // Stop before server startup, after the actual scaffold runs, with an invalid legacy manifest.
+  writeFileSync(join(linkedWs, 'view.neuron.json'), '{bad json');
+  const result = await m.ipcHandlers.get('htmx-views:open')({}, 'view.html');
+  assert.equal(result.status, 'error');
+  const { readdirSync } = await import('node:fs');
+  assert.deepEqual(readdirSync(scaffoldTarget), [], 'scaffolding never writes outside the workspace');
+}
 rmSync(join(ws, 'approval.html'));
 rmSync(join(ws, '.neuron', 'manifests', 'approval.json'));
 

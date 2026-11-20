@@ -1,4 +1,6 @@
 import { test, expect, openedExternally } from './fixtures';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The security boundary, asserted against the running app rather than by
 // reading main.ts. Every check here maps to a control in
@@ -21,6 +23,49 @@ test('the preload bridge exposes an allowlist, not ipcRenderer', async ({ page }
   }));
   expect(bridge.hasApi).toBe('object');
   expect(bridge.hasIpc).toBe('undefined');
+});
+
+test('wrong bridge argument types fail cleanly and the workspace stays usable', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const api = window.electronAPI;
+    const bad = null as unknown as string;
+    const before = await api.repository.getCurrent();
+    const failures = await Promise.all([
+      api.repository.setName(bad, 'Name'), api.repository.setName(before!.path, bad),
+      api.repository.reveal(bad), api.repository.remove(bad), api.settings.set(bad, 'value'),
+      api.writeNote('must-not-exist.md', bad), api.deleteNote(bad), api.views.file(bad),
+      api.logError(null as never), api.htmxViews.approve('view.html', null as never),
+    ]);
+    let terminalError = '';
+    try { await api.terminal.spawn(null as never); } catch (error) { terminalError = String(error); }
+    const write = await api.writeNote('security-check.md', '# Still usable');
+    return {
+      failures, terminalError, before, after: await api.repository.getCurrent(), write,
+      content: await api.readNote('security-check.md'), files: await api.listNotes(),
+    };
+  });
+  expect(result.failures.every((failure) => failure.success === false)).toBe(true);
+  expect(result.terminalError).toContain('Invalid terminal options.');
+  expect(result.after).toEqual(result.before);
+  expect(result.write.success).toBe(true);
+  expect(result.content).toBe('# Still usable');
+  expect(result.files).not.toContain('must-not-exist.md');
+  await expect(page.locator('.note-row', { hasText: 'security-check' }).first()).toBeVisible();
+});
+
+test.describe('canvas image limits', () => {
+  test.use({ prepareWorkspace: async ({}, use) => use((directory: string) => {
+    writeFileSync(join(directory, 'large.png'), Buffer.alloc(10 * 1024 * 1024 + 1));
+    writeFileSync(join(directory, 'Image limit.canvas'), JSON.stringify({ nodes: [
+      { id: 'large-image', type: 'file', file: 'large.png', x: 0, y: 0, width: 360, height: 220 },
+    ], edges: [] }));
+  }) });
+  test('an oversized canvas image shows its error in the card', async ({ page }) => {
+    await page.locator('.note-row', { hasText: 'Image limit' }).first().click();
+    const card = page.locator('[data-canvas-node="large-image"]');
+    await expect(card).toContainText('This image is too large to show here (over 10 MB).');
+    await expect(card.locator('img')).toHaveCount(0);
+  });
 });
 
 // T-009 regression, end to end. These URLs all pass a startsWith() prefix test

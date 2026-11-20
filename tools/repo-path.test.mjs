@@ -15,14 +15,22 @@ const temp = fs.mkdtempSync(path.join(tmpdir(), 'neuron-repo-path-'));
 try {
   const tmp = path.join(temp, 'repo-path.mjs');
   fs.writeFileSync(tmp, code);
-  const { resolveInside, realpathInside, hasGitSegment } = await import(pathToFileURL(tmp));
+  const { resolveInside, realpathInside, hasGitSegment, hasUnsafeSegment } = await import(pathToFileURL(tmp));
   for (const pathApi of [path.win32, path.posix]) {
     const repo = pathApi === path.win32 ? 'C:\\work\\notes' : '/work/notes';
-    for (const relative of ['a/note.md', 'a/../b.md', '..hidden/note.md']) {
+    for (const relative of ['a/note.md', '..hidden/note.md']) {
       assert.equal(resolveInside(repo, relative, pathApi), pathApi.resolve(repo, relative));
     }
-    for (const relative of ['../x.md', '../notes-secret/x.md', '..', 'a/../../x', '/etc/passwd', 'a\0b', '', '.', 'a/..', null, 42]) {
+    for (const relative of ['../x.md', '../notes-secret/x.md', '..', 'a/../../x', 'a/../b.md', '/etc/passwd', 'a\0b', '', '.', 'a/..', null, 42,
+      '\\rooted.md', ...(pathApi === path.win32 ? ['C:\\other\\x.md', 'C:note.md', '\\\\server\\share\\x'] : [])]) {
       assert.equal(resolveInside(repo, relative, pathApi), null);
+    }
+    // Windows-only names: aliases, streams and devices. Legal on macOS and Linux.
+    const windowsOnly = ['CON', 'NUL', 'COM1', 'aux.txt', 'aux.md', 'sub/LPT9.md', 'COM¹', 'file.md:stream', 'Meeting 10:30.md',
+      'file.md.', 'notes.', 'dir /note.md', 'dir./note.md'];
+    for (const relative of windowsOnly) {
+      if (pathApi === path.win32) assert.equal(resolveInside(repo, relative, pathApi), null, relative);
+      else assert.equal(resolveInside(repo, relative, pathApi), pathApi.resolve(repo, relative), relative);
     }
     // Drive and UNC paths are absolute only under Windows path semantics.
     const absolutePaths = pathApi === path.win32
@@ -41,6 +49,14 @@ try {
       assert.equal(resolveInside(repo, relative, pathApi), pathApi.resolve(repo, relative), relative);
     }
   }
+  // POSIX: only traversal is unsafe; these are legal user file names.
+  for (const legal of ['Meeting 10:30.md', 'aux.md', 'notes.']) {
+    assert.equal(hasUnsafeSegment(legal, false), false, legal);
+    assert.equal(resolveInside('/work/notes', legal, path.posix), path.posix.resolve('/work/notes', legal), legal);
+  }
+  assert.equal(hasUnsafeSegment('../x', false), true);
+  assert.equal(resolveInside('/work/notes', '../x', path.posix), null);
+  for (const illegal of ['Meeting 10:30.md', 'aux.md', 'notes.', '../x']) assert.equal(hasUnsafeSegment(illegal, true), true, illegal);
   assert.equal(hasGitSegment('docs/.git/x'), true);
   assert.equal(hasGitSegment('docs/.gitignore'), false);
 

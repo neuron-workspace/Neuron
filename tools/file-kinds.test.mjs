@@ -153,6 +153,21 @@ try {
   check('a path is one encoded segment, so a slash in it cannot move the token', () => {
     assert.equal(ok(`${FILE_SCHEME}://w/1/${t1}/sub/clip.mp4`).ok, false);
   });
+  check('media authorization rejects git internals and traversal on every platform, Windows aliases on Windows', () => {
+    const windowsOnly = ['CON.png', 'NUL.png', 'COM1.png', 'aux.txt/a.png', 'a.png:stream.png', 'dir./a.png', 'dir /a.png', 'C:photo.png'];
+    for (const rel of ['.git/a.png', '.GIT./a.png', '.git::$INDEX_ALLOCATION/a.png', 'sub/../a.png',
+      ...(process.platform === 'win32' ? windowsOnly : [])]) {
+      assert.equal(ok(url(1, t1, rel)).ok, false, rel);
+    }
+  });
+  check('media authorization rejects junctions outside the workspace and into .git', () => {
+    fs.mkdirSync(path.join(ws, '.git'));
+    for (const [name, target] of [['escape', secret], ['gitlink', path.join(ws, '.git')]]) {
+      fs.symlinkSync(target, path.join(ws, name), process.platform === 'win32' ? 'junction' : 'dir');
+      assert.equal(ok(url(1, t1, `${name}/x.png`)).ok, false);
+      assert.equal(ok(url(1, t1, `${name}/new/x.png`)).ok, false);
+    }
+  });
 
   check('range headers', () => {
     assert.equal(parseRange(null, 100), null);

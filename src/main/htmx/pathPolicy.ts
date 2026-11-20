@@ -5,7 +5,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { hasGitSegment } from '../repoPath';
+import { hasGitSegment, hasUnsafeSegment, realpathInside } from '../repoPath';
 
 const CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'darwin';
 
@@ -90,7 +90,7 @@ export function policyAllows(policy: GlobMatcher[], relPath: string): boolean {
  */
 export function normalizeRel(input: unknown): string | null {
   if (typeof input !== 'string' || input.length === 0 || input.length > 1024) return null;
-  if (input.includes('\0') || input.includes('%00')) return null;
+  if (input.includes('\0') || input.includes('%00') || hasUnsafeSegment(input)) return null;
   const p = input.replace(/\\/g, '/');
   if (p.startsWith('~') || path.isAbsolute(p) || /^[a-zA-Z]:/.test(p) || p.startsWith('//')) return null;
   const segments: string[] = [];
@@ -110,17 +110,6 @@ export function normalizeRelDir(input: unknown): string | null {
   return normalizeRel(input);
 }
 
-/** Real path of the deepest existing ancestor (for symlink-escape detection). */
-function realExistingAncestor(fullPath: string): string {
-  let cur = fullPath;
-  for (;;) {
-    if (fs.existsSync(cur)) return fs.realpathSync(cur);
-    const parent = path.dirname(cur);
-    if (parent === cur) return cur;
-    cur = parent;
-  }
-}
-
 export interface ResolvedPath {
   /** Absolute filesystem path. */
   full: string;
@@ -136,15 +125,13 @@ export interface ResolvedPath {
 export function resolveInWorkspace(root: string, input: unknown, opts: { allowRootDir?: boolean } = {}): ResolvedPath | null {
   const rel = opts.allowRootDir ? normalizeRelDir(input) : normalizeRel(input);
   if (rel === null) return null;
-  const realRoot = fs.realpathSync(root);
+  let realRoot: string;
+  try { realRoot = fs.realpathSync(root); } catch { return null; }
   const full = path.resolve(realRoot, rel.split('/').join(path.sep));
   const back = path.relative(realRoot, full);
-  if (back.startsWith('..') || path.isAbsolute(back)) return null;
+  if (back === '..' || back.startsWith('..' + path.sep) || path.isAbsolute(back)) return null;
   // Symlink / junction escape: canonicalize the deepest existing ancestor and
   // require it to still be under the canonical root.
-  const real = realExistingAncestor(full);
-  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return null;
-  // Again on the real path: a link or a short name can reach `.git` without spelling it.
-  if (hasGitSegment(path.relative(realRoot, real))) return null;
+  if (!realpathInside(realRoot, full)) return null;
   return { full, rel };
 }
