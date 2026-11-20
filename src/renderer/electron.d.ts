@@ -9,6 +9,14 @@ export interface RepositoryInfo {
   cloud: boolean;
 }
 
+/** A workspace in a window's list: Recent in a workspace window, every known one in Settings. */
+export interface RecentWorkspace extends RepositoryInfo {
+  /** Its folder is not there now (moved, deleted, or on a drive that is not connected). */
+  missing: boolean;
+  /** Settings only: the workspace whose window opened Settings, while that window shows it. */
+  isOpener: boolean;
+}
+
 /**
  * A workspace template: a folder that gets copied into wherever the user picks.
  * Adding one means dropping a directory into `examples/` — there is no registry
@@ -106,7 +114,7 @@ export interface ElectronAPI {
   // Repository
   repository: {
     getCurrent: () => Promise<RepositoryInfo | null>;
-    listRecent: () => Promise<RepositoryInfo[]>;
+    listRecent: () => Promise<RecentWorkspace[]>;
     create: () => Promise<RepositoryInfo | null>;
     open: () => Promise<RepositoryInfo | null>;
     switch: (dir: string) => Promise<{ success: boolean; error?: string; repository?: RepositoryInfo }>;

@@ -12,7 +12,7 @@ import { build } from 'esbuild';
 const bundle = await build({ stdin: { contents: `
   export * from './src/main/repoPath';
   export * from './src/main/htmx/pathPolicy';
-  export { folderKey } from './src/main/recentRepos';
+  export { folderKey, withName } from './src/main/recentRepos';
   export { settingsSectionOf } from './src/main/workspace-windows';
   export { createSaveQueue, saveKey, writeAtomically } from './src/main/save-file';
   export { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './src/main/file-limits';
@@ -88,7 +88,7 @@ const context = vm.createContext({
   resolveInWorkspace: policy.resolveInWorkspace,
   textGuard: () => 'free', capturePreImage: () => { captures++; },
   settingsSectionOf: policy.settingsSectionOf,
-  folderKey: policy.folderKey,
+  folderKey: policy.folderKey, withName: policy.withName,
   readSettings: () => settings,
   writeSettings: (...args) => { effect('settings')(...args); return true; },
   secretCodec: () => ({ available: true }), encodeSecret: (value) => `encrypted:${value}`,
@@ -323,7 +323,10 @@ assert.equal(settings.__secrets.provider.apiKey, 'encrypted:value');
 assert.equal((await handlers.get('settings:set-secret')(event, 'provider', 'apiKey', '')).success, true);
 assert.equal(Object.hasOwn(settings.__secrets.provider, 'apiKey'), false, 'empty string still clears a secret');
 assert.equal((await handlers.get('repository:set-name')(event, '/workspace', '  Work  ')).success, true);
-assert.equal(settings.repositories.names['/workspace'], 'Work');
+// Kept by folder identity (3C), so another spelling of the folder finds it.
+assert.deepEqual(settings.repositories.names, { [policy.folderKey('/workspace')]: 'Work' });
+assert.equal((await handlers.get('repository:set-name')(event, '/workspace/', 'Field')).success, true);
+assert.deepEqual(settings.repositories.names, { [policy.folderKey('/workspace')]: 'Field' }, 'one name per folder, however it is spelled');
 await Promise.all([save(event, 'note.md', 'one'), save(event, 'note.md', 'two')]);
 assert.equal(writes.length, 2);
 assert.notEqual(writes[0].file, writes[1].file, 'same clock tick still gets independent temporary files');

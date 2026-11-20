@@ -14,7 +14,7 @@ import { encodeSecret, decodeSecret, migrateSecretSettings, rendererSettingsValu
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
-import { folderKey, uniqueRecents } from './recentRepos';
+import { folderKey, keyNames, listedWorkspaces, nameOf, startupRecents, uniqueRecents, withName } from './recentRepos';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
@@ -234,27 +234,41 @@ function demoRepoPath(): string {
 
 function repoInfo(dir: string) {
   const lower = dir.toLowerCase();
-  const names = readSettings().repositories.names ?? {};
   // In development the demo is in the list, and a workspace copied from it is
   // usually a folder called demo-repo too: two rows reading "demo-repo".
   const base = folderKey(dir) === folderKey(demoRepoPath()) ? 'Demo workspace' : path.basename(dir) || dir;
   return {
     path: dir,
-    name: names[dir] || base,
+    // By folder, not spelling: a rename made through C:\Notes still names c:\notes\.
+    name: nameOf(readSettings().repositories.names, dir) || base,
     cloud: CLOUD_HINTS.some((hint) => lower.includes(hint)),
   };
 }
 
+/** The workspace whose window opened Settings, while a window still shows it (in any spelling). */
+function openSettingsOpener(): string | null {
+  const opener = settingsOpener;
+  if (!opener) return null;
+  const key = folderKey(opener);
+  const open = [...appWindows.values()].some((entry) => entry.kind === 'workspace' && !!entry.repo && folderKey(entry.repo) === key);
+  return open ? opener : null;
+}
+
+const isFolder = (dir: string): boolean => {
+  try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+};
+
 /** Repair saved workspace paths and keep the development demo discoverable. */
 function ensureDefaultRepo(): void {
   const settings = readSettings();
-  const isDir = (p: string) => fs.existsSync(p) && fs.statSync(p).isDirectory();
   const demo = demoRepoPath();
-  const demoExists = isDir(demo);
+  const demoExists = isFolder(demo);
 
-  // Prune repositories whose folders no longer exist (e.g. renamed/removed),
-  // and collapse entries that are the same folder spelled differently.
-  settings.repositories.recent = uniqueRecents(settings.repositories.recent.filter((p) => !isInstallWorkspace(p) && isDir(p)), null);
+  // Folders that are not there stay listed (an unplugged drive comes back);
+  // install-folder workspaces go, and two spellings of one folder become one.
+  settings.repositories.recent = startupRecents(settings.repositories.recent, isInstallWorkspace);
+  // Names saved under a spelling are kept under the folder's identity instead.
+  if (settings.repositories.names) settings.repositories.names = keyNames(settings.repositories.names);
 
   if (settings.repositories.current && isInstallWorkspace(settings.repositories.current)) {
     settings.repositories.current = null;
@@ -498,10 +512,9 @@ ipcMain.handle('window:open-page', (event, asked: unknown) => {
 // Only the opener's name and folder cross over, and only while a window still
 // has it open: Settings gets no file access to it.
 ipcMain.handle('window:opener-workspace', (event) => {
-  if (entryOf(event)?.kind !== 'settings' || !settingsOpener) return null;
-  const opener = settingsOpener;
-  const open = [...appWindows.values()].some((entry) => entry.kind === 'workspace' && entry.repo === opener);
-  return open ? repoInfo(opener) : null;
+  if (entryOf(event)?.kind !== 'settings') return null;
+  const opener = openSettingsOpener();
+  return opener ? repoInfo(opener) : null;
 });
 ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
   const window = windowOf(event);
@@ -613,10 +626,16 @@ ipcMain.handle('repository:get-current', (event) => {
 
 // The open workspace is not "recent": the switcher already shows it on its
 // button, and listing it again underneath was the name appearing twice.
+// Settings gets every folder once, with its opener marked. A folder that is
+// not there is still listed, marked missing, so a drive that is plugged back
+// in brings its workspace back.
 ipcMain.handle('repository:list-recent', (event) => {
-  if (!entryOf(event)) return [];
-  const recent = readSettings().repositories.recent;
-  return uniqueRecents(recent.filter((p) => !isInstallWorkspace(p) && fs.existsSync(p)), repoOf(event)).map(repoInfo);
+  const entry = entryOf(event);
+  if (!entry) return [];
+  const recent = readSettings().repositories.recent.filter((p) => typeof p === 'string' && !isInstallWorkspace(p));
+  const opener = entry.kind === 'settings' ? openSettingsOpener() : null;
+  return listedWorkspaces(recent, entry.repo, opener)
+    .map(({ dir, isOpener }) => ({ ...repoInfo(dir), missing: !isFolder(dir), isOpener }));
 });
 
 ipcMain.handle('repository:create', async (event) => {
@@ -698,7 +717,7 @@ ipcMain.handle('repository:open', async (event) => {
 ipcMain.handle('repository:switch', (event, dir: string) => {
   if (typeof dir !== 'string' || !entryOf(event)) return { success: false, error: 'Folder no longer exists.' };
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-    return { success: false, error: 'Folder no longer exists.' };
+    return { success: false, error: `Folder not found: “${repoInfo(dir).name}” may have been moved, renamed or deleted, or be on a drive that is not connected.` };
   }
   if (!openWorkspace(dir, entryOf(event))) return { success: false, error: INSTALL_FOLDER_MESSAGE };
   return { success: true, repository: repoInfo(dir) };
@@ -708,14 +727,14 @@ ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
   if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
   if (!safeSettingsKey(dir) || typeof name !== 'string') return { success: false, error: 'Invalid workspace name.' };
   const settings = readSettings();
-  const names = { ...(settings.repositories.names ?? {}) };
-  const trimmed = name.trim();
-  if (trimmed) names[dir] = trimmed;
-  else delete names[dir];
-  settings.repositories.names = names;
+  // Stored by folder identity, so every spelling of the folder shows the name.
+  settings.repositories.names = withName(settings.repositories.names, dir, name);
   writeSettings(settings);
+  const key = folderKey(dir);
   for (const entry of appWindows.values()) {
-    if (entry.repo === dir && !entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', repoInfo(dir));
+    if (entry.repo && folderKey(entry.repo) === key && !entry.window.isDestroyed()) {
+      entry.window.webContents.send('repository:changed', repoInfo(entry.repo));
+    }
   }
   return { success: true, repository: repoInfo(dir) };
 });

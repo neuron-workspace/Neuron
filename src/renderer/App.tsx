@@ -94,7 +94,7 @@ const kindIn = (path: string, text: ReadonlySet<string>): FileKind => {
 /** A file outside the note listing that opens in a surface of its own (image, video, audio, text). */
 const opensAsFile = (path: string, text: ReadonlySet<string>) => OPENS_AS_FILE.includes(kindIn(path, text));
 const isMediaPath = (path: string) => MEDIA_KINDS.includes(fileKind(path));
-import type { RepositoryInfo, WorkspaceEntries } from './electron.d';
+import type { RecentWorkspace, RepositoryInfo, WorkspaceEntries } from './electron.d';
 import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appearance } from './lib/theme';
 
 interface NoteData { path: string; content: string }
@@ -152,7 +152,7 @@ const NEURON_CONFIG_TEMPLATE = `{
 
 export default function App() {
   const [repository, setRepository] = useState<RepositoryInfo | null>(null);
-  const [recents, setRecents] = useState<RepositoryInfo[]>([]);
+  const [recents, setRecents] = useState<RecentWorkspace[]>([]);
   const [repoReady, setRepoReady] = useState(false);
 
   const [notes, setNotes] = useState<string[]>([]);
@@ -456,10 +456,25 @@ export default function App() {
   const openRepository = useCallback(async () => {
     if (await window.electronAPI?.repository.open()) void reloadRepoState();
   }, [reloadRepoState]);
+  // Every way of opening a workspace by path ends here: the welcome page, the
+  // switcher, the palette and Settings › Workspaces. A folder that is gone says
+  // so, and the list is asked again so it shows the folder as missing.
   const switchRepository = useCallback(async (dir: string) => {
-    const result = await window.electronAPI?.repository.switch(dir);
-    if (result?.success) void reloadRepoState();
+    if (!window.electronAPI) return;
+    let result: { success: boolean; error?: string };
+    try { result = await window.electronAPI.repository.switch(dir); }
+    catch { result = { success: false }; }
+    if (!result.success) setNotice(result.error || 'Could not open that workspace.');
+    void reloadRepoState();
   }, [reloadRepoState]);
+  // A folder can come back (a drive plugged in) or go away while the window is
+  // in the background; coming back to it asks for the list again.
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const refresh = () => { void window.electronAPI.repository.listRecent().then(setRecents).catch(() => {}); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
 
   // --- Notes ----------------------------------------------------------------
   // Every file and folder, for the tree and the explorer. A failed listing
@@ -1247,6 +1262,16 @@ export default function App() {
     mainContent = notesView;
   }
 
+  // The app's one notice, over whatever this window shows: notes, the welcome
+  // page, or Settings.
+  const noticeCallout = notice && (
+    <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+      <CalloutIcon kind="error" />
+      <span>{notice}</span>
+      <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
+    </div>
+  );
+
   if (utilityWindow) {
     // The plugin host runs here too, for the Connectors section. It has no
     // workspace, so no plugin is on here.
@@ -1260,6 +1285,7 @@ export default function App() {
             recents={recents}
             onSwitchRepo={switchRepository}
             onReloadRepos={reloadRepoState}
+            notice={noticeCallout}
           />
         </TooltipProvider>
       </PluginProvider>
@@ -1299,7 +1325,8 @@ export default function App() {
           {!repoReady ? (
             <div className="grid place-items-center text-sm text-[var(--ink-muted)]">Loading…</div>
           ) : !repository ? (
-            <RepositoryOnboarding onCreate={createRepository} onOpen={openRepository} />
+            <RepositoryOnboarding recents={recents} onSwitch={switchRepository} onCreate={createRepository} onOpen={openRepository}
+              onReload={reloadRepoState} notice={noticeCallout} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
             <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={openPlugins}
@@ -1339,13 +1366,7 @@ export default function App() {
               {/* One card, or one per group when the editor is split, like the docks. */}
               <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden',
                 !inShell && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
-                {notice && (
-                  <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
-                    <CalloutIcon kind="error" />
-                    <span>{notice}</span>
-                    <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
-                  </div>
-                )}
+                {noticeCallout}
                 {pendingShellConfig && (
                   <div role="status" data-callout-kind="info" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="info" />

@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import {
   Sparkles, PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search,
   FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Settings2, Share2, SlidersHorizontal } from 'lucide-react';
-import type { RepositoryInfo } from '../electron.d';
+import type { RecentWorkspace, RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuCheckboxItem,
 } from './ui/dropdown-menu';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import WorkspaceTemplatesDialog from './WorkspaceTemplatesDialog';
 import { useWorkspaceTemplates } from '../lib/useWorkspaceTemplates';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
@@ -19,7 +19,7 @@ interface TitleBarProps {
   /** Saved-layouts control, rendered at the right of the bar. */
   layoutSwitcher?: React.ReactNode;
   repository: RepositoryInfo | null;
-  recents: RepositoryInfo[];
+  recents: RecentWorkspace[];
   activeNote: string | null;
   sidebarOpen: boolean;
   rightPanelOpen: boolean;
@@ -74,7 +74,8 @@ export function parentFolder(dir: string): string {
 
 export default function TitleBar(props: TitleBarProps) {
   const { repository, recents } = props;
-  const { templates, busy, error, start } = useWorkspaceTemplates();
+  const workspaceTemplates = useWorkspaceTemplates();
+  const { templates } = workspaceTemplates;
   const [templatesOpen, setTemplatesOpen] = useState(false);
   // Scope native overlay safe areas and macOS typography to the host.
   useEffect(() => {
@@ -147,11 +148,14 @@ export default function TitleBar(props: TitleBarProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Recent</DropdownMenuLabel>
                 {recents.map((repo) => (
-                  <DropdownMenuItem key={repo.path} title={repo.path} onClick={() => props.onSwitchRepo(repo.path)}>
+                  <DropdownMenuItem key={repo.path} title={repo.path} data-missing={repo.missing || undefined}
+                    className={cn(repo.missing && 'text-[var(--ink-muted)]')} onClick={() => props.onSwitchRepo(repo.path)}>
                     <FolderGit2 className="h-4 w-4" />
                     <span className="truncate">{repo.name}</span>
                     {sharedName(recents, repo) && <span className="truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
-                    {repo.cloud && <Cloud className="ml-auto h-3 w-3 text-[var(--ink-muted)]" />}
+                    {repo.missing
+                      ? <span className="ml-auto shrink-0 pl-3 text-[11px] text-[var(--ink-muted)]">Folder not found</span>
+                      : repo.cloud && <Cloud className="ml-auto h-3 w-3 text-[var(--ink-muted)]" />}
                   </DropdownMenuItem>
                 ))}
               </>
@@ -161,31 +165,7 @@ export default function TitleBar(props: TitleBarProps) {
             <DropdownMenuItem onClick={props.onManageWorkspaces}><Settings2 className="h-4 w-4" /> Manage workspaces…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Dialog open={templatesOpen} onOpenChange={setTemplatesOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>New workspace from template</DialogTitle>
-              <DialogDescription>A template is copied into a folder you pick; the originals stay untouched.</DialogDescription>
-            </DialogHeader>
-            <div className="overflow-hidden rounded-md border border-[var(--divider)]">
-              {templates.map((template, index) => (
-                <button
-                  key={template.id}
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => void start(template).then(() => setTemplatesOpen(false))}
-                  className={cn('interactive flex w-full flex-col items-start px-3 py-2 text-left hover:bg-[var(--surface-hover)] disabled:opacity-60', index > 0 && 'border-t border-[var(--divider)]')}
-                >
-                  <span className="text-[13px] font-medium text-[var(--ink)]">{busy === template.id ? 'Creating…' : template.name}</span>
-                  <span className="text-xs text-[var(--ink-muted)]">
-                    {template.description || `${template.noteCount} note${template.noteCount === 1 ? '' : 's'} to start from`}
-                  </span>
-                </button>
-              ))}
-            </div>
-            {error && <p role="alert" className="text-xs text-[var(--danger)]">{error}</p>}
-          </DialogContent>
-        </Dialog>
+        <WorkspaceTemplatesDialog open={templatesOpen} onOpenChange={setTemplatesOpen} {...workspaceTemplates} />
         <IconButton label={props.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} active={props.sidebarOpen} onClick={props.onToggleSidebar}>
           <PanelLeft className="h-4 w-4" />
         </IconButton>
