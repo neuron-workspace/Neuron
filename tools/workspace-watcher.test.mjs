@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { cpSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -37,7 +37,9 @@ try {
     writeFileSync(join(source, 'one.md'), 'one');
     writeFileSync(join(source, 'two.bin'), 'two');
     const events = [];
-    const watcher = watchWorkspace(dir, (event, path) => events.push({ event, path }), { useNative });
+    // What a listener reading the file at that moment would see.
+    const contents = (path) => { try { return readFileSync(join(dir, path), 'utf8'); } catch { return null; } };
+    const watcher = watchWorkspace(dir, (event, path) => events.push({ event, path, text: contents(path) }), { useNative });
     const has = (event, path) => events.some(e => e.event === event && e.path === path);
     const settle = async () => { await delay(400); events.length = 0; };
     try {
@@ -54,17 +56,29 @@ try {
         assert.ok(events.filter(e => e.path === 'note.md').every(e => e.event !== 'unlink'));
       });
       await settle();
-      if (useNative) {
-        await check(mode + ': 20 rapid writes emit exactly one event', async () => {
-          for (let i = 0; i < 20; i++) writeFileSync(join(dir, 'note.md'), String(i));
-          await waitFor(() => events.length > 0, 'Missing debounced event');
-          await delay(500);
-          assert.equal(events.length, 1);
-          assert.equal(events[0].path, 'note.md');
-          assert.notEqual(events[0].event, 'unlink');
-        });
-        await settle();
-      }
+      await check(mode + ': 20 rapid writes emit exactly one event', async () => {
+        for (let i = 0; i < 20; i++) writeFileSync(join(dir, 'note.md'), String(i));
+        await waitFor(() => events.length > 0, 'Missing debounced event');
+        await delay(500);
+        assert.equal(events.length, 1);
+        assert.equal(events[0].path, 'note.md');
+        assert.notEqual(events[0].event, 'unlink');
+      });
+      await settle();
+      // An in-place rewrite is a truncate and then a write. Chokidar used to
+      // report the truncate and drop the write, so a reader saw an empty file
+      // and was never told about the finished one.
+      await check(mode + ': a file rewritten in place is reported once it is whole', async () => {
+        const fd = openSync(join(dir, 'note.md'), 'w');
+        await delay(20);
+        writeSync(fd, 'finished');
+        closeSync(fd);
+        await waitFor(() => events.some(e => e.path === 'note.md'), 'Missing rewrite event');
+        await delay(500);
+        const seen = events.filter(e => e.path === 'note.md');
+        assert.equal(seen.at(-1).text, 'finished', JSON.stringify(seen));
+      });
+      await settle();
       await check(mode + ': delete file emits unlink', async () => {
         remove(join(dir, 'note.md'));
         await waitFor(() => has('unlink', 'note.md'), 'Missing file unlink');
