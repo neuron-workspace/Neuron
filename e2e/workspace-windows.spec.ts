@@ -1,4 +1,4 @@
-import { test, expect, openSettings, openWorkspaceSettings, setPluginEnabled } from './fixtures';
+import { test, expect, keychain, openSettings, openWorkspaceSettings, setPluginEnabled } from './fixtures';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -143,6 +143,12 @@ test('the Terminal switched on in one workspace stays off in another', async ({ 
 });
 
 test('Settings shows Connectors and no plugin switches; a saved key is never shown again', async ({ app, page }) => {
+  // Saving needs a real keychain, and Neuron refuses without one (that refusal
+  // is tested in secrets.spec.ts). Only Linux can lack one; anywhere else an
+  // unusable keychain is a bug, so the test runs and fails.
+  const store = await keychain(app);
+  test.skip(process.platform === 'linux' && !store.usable,
+    `No usable system keychain on this Linux machine (${store.backend}, encryption ${store.available ? 'available' : 'unavailable'}), so Neuron rightly will not save a key.`);
   const settings = await openSettings(app, page, 'connectors');
   await expect(settings.getByRole('heading', { name: 'Connectors', level: 1 })).toBeVisible();
   await expect(settings.getByRole('switch')).toHaveCount(0);

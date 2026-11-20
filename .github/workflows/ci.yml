@@ -158,6 +158,24 @@ jobs:
           printf 'probe' | timeout 30 secret-tool store --label='Neuron CI probe' neuron ci-probe
           [ "$(timeout 30 secret-tool lookup neuron ci-probe)" = probe ]
           echo "DBUS_SESSION_BUS_ADDRESS=$bus" >> "$GITHUB_ENV"
+      # Diagnostic only: what Electron itself makes of that keychain, with
+      # Chromium's os_crypt logging, in a later step than the one that started
+      # it (so it also shows whether the daemon survived the step boundary).
+      - name: Check the keychain from Electron
+        if: env.RUN == 'true' && runner.os == 'Linux' && env.SPECS != ''
+        continue-on-error: true
+        run: |
+          pgrep -a gnome-keyring || echo "gnome-keyring-daemon is not running"
+          timeout 30 secret-tool lookup neuron ci-probe || echo "secret-tool lookup failed"
+          cat > "$RUNNER_TEMP/keychain-probe.cjs" <<'EOF'
+          const { app, safeStorage } = require('electron');
+          app.whenReady().then(async () => {
+            const asyncAvailable = await safeStorage.isAsyncEncryptionAvailable().catch(String);
+            console.log('[keychain-probe]', JSON.stringify({ available: safeStorage.isEncryptionAvailable(), backend: safeStorage.getSelectedStorageBackend(), asyncAvailable }));
+            app.quit();
+          });
+          EOF
+          timeout 90 xvfb-run --auto-servernum npx electron "$RUNNER_TEMP/keychain-probe.cjs" --password-store=gnome-libsecret --enable-logging=stderr --vmodule='*os_crypt*=2,*key_storage*=2,*libsecret*=2' 2>&1 | grep -Ei 'keychain-probe|crypt|secret|keyring|key_storage|dbus' || true
       - name: Run Electron end-to-end tests
         if: env.RUN == 'true' && env.SPECS == 'all'
         run: ${{ matrix.wrap }} npm run test:e2e

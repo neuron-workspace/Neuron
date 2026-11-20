@@ -331,6 +331,21 @@ export async function closeMenuByClickingOutside(page: Page) {
   await expect(open).toHaveCount(0);
 }
 
+/**
+ * Whether this app instance can keep a key, by the same rule as secretCodec()
+ * in src/main/main.ts: encryption available, and on Linux not Chromium's
+ * plain-text fallback. Logged, so a CI run says which keychain it had.
+ */
+export async function keychain(app: ElectronApplication) {
+  const state = await app.evaluate(({ safeStorage }) => ({
+    available: safeStorage.isEncryptionAvailable(),
+    backend: process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : process.platform,
+  }));
+  const usable = state.available && state.backend !== 'basic_text';
+  console.log(`[keychain] ${JSON.stringify({ ...state, usable })}`);
+  return { ...state, usable };
+}
+
 /** URLs the app handed to the OS browser, recorded by the stub above. */
 export function openedExternally(app: ElectronApplication): Promise<string[]> {
   return app.evaluate(() => (globalThis as unknown as { __openExternal?: string[] }).__openExternal ?? []);
