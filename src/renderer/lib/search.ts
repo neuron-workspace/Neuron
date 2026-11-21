@@ -4,11 +4,15 @@
 // word you knew you had written was unfindable unless it happened to be in the
 // filename. Note bodies are already in memory — the workspace is a folder of
 // text files and the app has read all of them — so this needs no index and no
-// dependency, just a scoring pass.
+// dependency, just a scoring pass. Other text files (JSON, YAML, logs, code)
+// are read for the search when it runs (lib/use-text-search) and scored here
+// the same way.
 //
 // If a workspace ever grows past what a linear scan can take per keystroke, the
 // replacement is an inverted index (MiniSearch) or ripgrep in the main process.
 // The shape of `searchNotes` is what those would slot behind.
+
+import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
 
 export interface SearchMatch {
   /** 1-based, so it can be shown to a person. */
@@ -22,6 +26,8 @@ export interface SearchHit {
   /** Whether the name matched, which is worth saying in the UI. */
   titleMatch: boolean;
   matches: SearchMatch[];
+  /** Only the start of the file was searched (a text file past 5 MB). */
+  truncated?: boolean;
 }
 
 export interface SearchOptions {
@@ -30,10 +36,13 @@ export interface SearchOptions {
   snippets?: number;
 }
 
-interface Note {
+export interface SearchableFile {
   path: string;
   content: string;
+  /** `content` is only the start of the file. */
+  truncated?: boolean;
 }
+type Note = SearchableFile;
 
 /** Filename without its directory or extension. */
 function basename(path: string): string {
@@ -66,11 +75,18 @@ function countOccurrences(haystack: string, needle: string): number {
 
 // Deliberately coarse. The job is to put the note you meant near the top, not to
 // be defensible to three decimal places.
+//
+// Tiers, per term: the exact name, then the name containing it, then a folder
+// on its path, then a heading, then the text. Each tier is worth more than
+// everything below it put together (the body is capped, a heading counts once),
+// so a note never climbs a tier by sheer repetition. With the old weights a
+// folder match and a one-word heading tied, and five mentions in the text beat
+// a heading.
 const SCORE = {
   exactName: 40,
-  nameContains: 12,
-  pathContains: 4,
-  heading: 3,
+  nameContains: 24,
+  pathContains: 12,
+  heading: 6,
   bodyOccurrence: 1,
   /** Past this, more mentions of the same word stop meaning more relevance. */
   bodyCap: 5,
@@ -85,6 +101,9 @@ export function searchNotes(notes: readonly Note[], rawQuery: string, options: S
   const hits: SearchHit[] = [];
 
   for (const note of notes) {
+    // Past 25 MB main never reads a note, so there is nothing of it to search;
+    // App leaves it out, and should its answer slip through it is not text.
+    if (note.content === TOO_LARGE_TO_OPEN) continue;
     const lowerPath = note.path.toLowerCase();
     const lowerName = basename(note.path).toLowerCase();
     const lowerBody = note.content.toLowerCase();
@@ -103,18 +122,20 @@ export function searchNotes(notes: readonly Note[], rawQuery: string, options: S
     }
 
     // Headings are what a note says it is about, so a match there outranks the
-    // same word buried in a paragraph.
+    // same word buried in a paragraph. Once per term, however many headings.
     const lines = note.content.split(/\r?\n/);
     const matches: SearchMatch[] = [];
+    const inHeading = new Set<string>();
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lower = line.toLowerCase();
       if (!wanted.some((t) => lower.includes(t))) continue;
-      if (/^\s{0,3}#{1,6}\s/.test(line)) score += SCORE.heading;
+      if (/^\s{0,3}#{1,6}\s/.test(line)) for (const t of wanted) if (lower.includes(t)) inHeading.add(t);
       if (matches.length < snippetCount) matches.push({ line: i + 1, text: line.trim() });
     }
+    score += inHeading.size * SCORE.heading;
 
-    hits.push({ path: note.path, score, titleMatch, matches });
+    hits.push(note.truncated ? { path: note.path, score, titleMatch, matches, truncated: true } : { path: note.path, score, titleMatch, matches });
   }
 
   // Score first; ties broken by path so the order never wobbles between renders.

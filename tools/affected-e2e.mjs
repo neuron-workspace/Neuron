@@ -8,6 +8,9 @@ export const areas = [
   [/^(surfaces\/CsvSurface\.tsx|components\/db\/table-kit\.tsx|lib\/(csv|csv-table)\.ts)$/, ['csv-tables']],
   [/^(components\/(FloatingGraph|GraphCanvas|SigmaGraph)\.tsx|lib\/(graph-layout|knowledge-graph)\.ts)$/, ['graph']],
   [/^(components\/(Workbench|RightPanel|Sidebar)\.tsx|lib\/layout\.ts|surfaces\/(LayoutSurface\.tsx|layout\.ts|panels\.tsx))$/, ['layout', 'panels', 'workspace-layout-config']],
+  // Module 11: search, open-at-line, the palette, and graph Fit.
+  [/^(components\/(Sidebar|CommandPalette|wiki-completion)\.tsx|lib\/(search|use-text-search|reveal|palette-commands|graph-fit|workspace-names)\.ts|plugins\/activate\.ts)$/, ['search-graph']],
+  [/^components\/wiki-completion\.tsx$/, ['links-and-rename']],
   [/^(views\/WorkspaceExplorer\.tsx|lib\/(explorer-state\.tsx|workspace-explorer\.ts))$/, ['workspace-explorer']],
   [/^(surfaces\/(ImageSurface|MediaSurface|TextSurface)\.tsx|components\/OtherFileIcon\.tsx)$/, ['open-files', 'all-files']],
   [/^(surfaces\/MermaidSurface\.tsx|components\/MermaidDiagram\.tsx|lib\/mermaid\.ts)$/, ['mermaid']],

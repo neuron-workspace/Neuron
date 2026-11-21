@@ -7,7 +7,9 @@ import OtherFileIcon from './OtherFileIcon';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
-import { searchNotes } from '../lib/search';
+import { searchNotes, type SearchHit } from '../lib/search';
+import { useTextSearch } from '../lib/use-text-search';
+import { fileKind, isListedFile } from '../../main/file-kinds';
 import type { FileAction } from './FileActionDialog';
 
 type View = 'notes' | 'gallery';
@@ -39,8 +41,14 @@ interface SidebarProps {
   folders: string[];
   /** Files Neuron does not open: listed, selectable, never opened. */
   otherFiles: string[];
-  /** Images, video, audio and text outside the note listing: they open, but are not searched. */
+  /** Images, video, audio and text outside the note listing: they open in views of their own. */
   openFiles?: string[];
+  /** The text files among them (JSON, YAML, logs, code): search reads these when it runs. */
+  textFiles?: string[];
+  /** Size on disk, from the listing, when known: a text file past 5 MB is searched by its start. */
+  fileSize?: (path: string) => number | undefined;
+  /** Open a search hit with the cursor on the line it matched. */
+  onOpenAt?: (path: string, line: number) => void;
   onReveal: (path: string) => void;
   revealedFolder: string | null;
   tags: string[];
@@ -115,6 +123,7 @@ function buildTree(paths: string[], other: ReadonlySet<string> = new Set()): Tre
 }
 
 const NONE: string[] = [];
+const noSize = () => undefined;
 
 function allFolderPaths(node: TreeNode, out: string[] = []): string[] {
   for (const child of node.folders.values()) {
@@ -174,10 +183,19 @@ export default function Sidebar(props: SidebarProps) {
   // Ranked over names AND bodies. This used to be a substring test against the
   // path, so a word you knew you had written was unfindable unless it happened
   // to be in the filename.
+  // Text files are read for the search only while it is open, and only once
+  // something has been typed: see useTextSearch.
+  const textFiles = useTextSearch(mode === 'search', !!query, props.textFiles ?? NONE, props.fileSize ?? noSize);
   const hits = useMemo(
-    () => (query ? searchNotes(notesData ?? notes.map((path) => ({ path, content: '' })), query) : []),
-    [notesData, notes, query],
+    () => (query ? searchNotes([...(notesData ?? notes.map((path) => ({ path, content: '' }))), ...textFiles], query) : []),
+    [notesData, notes, textFiles, query],
   );
+  const searched = (notesData?.length ?? notes.length) + textFiles.length;
+  const openHit = (hit: SearchHit, line?: number) => {
+    const at = line ?? hit.matches[0]?.line;
+    if (at !== undefined && props.onOpenAt) props.onOpenAt(hit.path, at);
+    else onSelectNote(hit.path);
+  };
   const filtered = useMemo(() => (query ? hits.map((hit) => hit.path) : notes), [hits, notes, query]);
   const otherFiles = query ? NONE : props.otherFiles;
   const openFiles = query ? NONE : props.openFiles ?? NONE;
@@ -372,14 +390,19 @@ export default function Sidebar(props: SidebarProps) {
               <input autoFocus className="field py-1.5 pl-8 pr-8 text-xs" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" />
               {search && <button aria-label="Clear search" className="tool-button interactive absolute right-1 top-1/2 -translate-y-1/2" onClick={() => setSearch('')}><X className="h-3.5 w-3.5" /></button>}
             </label>
-            <p className="mt-1.5 px-0.5 text-[11px] text-[var(--ink-muted)]">{filtered.length} of {notes.length} notes</p>
+            <p className="mt-1.5 px-0.5 text-[11px] text-[var(--ink-muted)]">{query ? `${filtered.length} of ${searched} files` : `${notes.length} notes`}</p>
           </div>
           {query ? (
             <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
               {hits.map((hit) => (
                 <button
                   key={hit.path}
-                  onClick={() => onSelectNote(hit.path)}
+                  data-search-hit={hit.path}
+                  // A click on one of the lines opens the file at that line; elsewhere, at the first.
+                  onClick={(event) => {
+                    const line = (event.target as HTMLElement).closest<HTMLElement>('[data-hit-line]')?.dataset.hitLine;
+                    openHit(hit, line ? Number(line) : undefined);
+                  }}
                   onDoubleClick={() => props.onKeepNote?.(hit.path)}
                   className={cn(
                     'interactive block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--surface-hover)]',
@@ -387,17 +410,22 @@ export default function Sidebar(props: SidebarProps) {
                   )}
                 >
                   <div className="flex items-center gap-1.5">
-                    <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                    {fileKind(hit.path) === 'text' || !isListedFile(hit.path)
+                      ? <OtherFileIcon path={hit.path} aria-hidden className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                      : /\.csv$/i.test(hit.path)
+                      ? <Table2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                      : <FileCode2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
                     <span className="truncate text-xs font-medium text-[var(--ink)]">{hit.path}</span>
                   </div>
                   {/* The line that matched, so a body hit does not look like a
                       filename hit with nothing behind it. */}
                   {hit.matches.map((match) => (
-                    <div key={match.line} className="mt-0.5 flex gap-1.5 pl-5">
+                    <div key={match.line} data-hit-line={match.line} className="mt-0.5 flex gap-1.5 rounded pl-5 hover:bg-[var(--surface)]">
                       <span className="shrink-0 font-sans text-[10px] tabular-nums text-[var(--ink-muted)]">{match.line}</span>
                       <span className="truncate font-sans text-[10px] leading-4 text-[var(--ink-secondary)]">{match.text}</span>
                     </div>
                   ))}
+                  {hit.truncated && <div data-search-truncated className="mt-0.5 pl-5 font-sans text-[10px] leading-4 text-[var(--ink-muted)]">Only the first 5 MB of this file was searched.</div>}
                 </button>
               ))}
               {hits.length === 0 && (

@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cn } from '../lib/utils';
 import { isMac, platform } from '../lib/platform';
 import { formatChord } from '../lib/keybindings';
+import { parentFolder, sharedName } from '../lib/workspace-names';
 
 interface TitleBarProps {
   /** Saved-layouts control, rendered at the right of the bar. */
@@ -62,15 +63,9 @@ function IconButton({ label, active, onClick, children }: { label: string; activ
   );
 }
 
-/** Two different folders with the same name need their location to tell them apart. */
-export function sharedName(recents: RepositoryInfo[], repo: RepositoryInfo): boolean {
-  return recents.some((other) => other.path !== repo.path && other.name === repo.name);
-}
-
-export function parentFolder(dir: string): string {
-  const parts = dir.split(/[\\/]+/).filter(Boolean);
-  return parts.slice(-3, -1).join('/');
-}
+// Two different folders with the same name need their location to tell them
+// apart; the palette lists workspaces too, so the rule lives in one place.
+export { parentFolder, sharedName };
 
 export default function TitleBar(props: TitleBarProps) {
   const { repository, recents } = props;

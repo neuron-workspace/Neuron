@@ -3,6 +3,7 @@ import Sigma from 'sigma';
 import { LocateFixed, RotateCcw, Search, Settings2, Share2 } from 'lucide-react';
 import { type GraphNode, type GraphEdge, KnowledgeGraph, GRAPH_DEFAULTS, GRAPH_RANGES, graphPreferences, seedPositions, type GraphPreferences, type Positions } from '../lib/knowledge-graph';
 import { settleLayout } from '../lib/graph-layout';
+import { fitCamera } from '../lib/graph-fit';
 import type { GraphCanvasProps } from './GraphCanvas';
 
 const labels = { gravity: 'Centre / gravity', repel: 'Repel', attraction: 'Link attraction', distance: 'Link distance', nodeSize: 'Node size', linkThickness: 'Link thickness', labelThreshold: 'Label fade threshold', depth: 'Steps from this note' };
@@ -240,11 +241,10 @@ export default function SigmaGraph(props: GraphCanvasProps) {
     const sigma = renderer.current;
     if (!sigma) return;
     userNavigated.current = true; sigma.setCustomBBox(null); sigma.refresh();
-    const nodes = model.current.graph.nodes().map(id => sigma.getNodeDisplayData(id)).filter(n => n && !n.hidden);
-    if (!nodes.length) return;
-    const xs = nodes.map(n => n!.x), ys = nodes.map(n => n!.y);
-    const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
-    void sigma.getCamera().animate({ x: (xmin + xmax) / 2, y: (ymin + ymax) / 2, ratio: Math.max(0.1, xmax - xmin, ymax - ymin) }, { duration: duration() });
+    // Display data is in Sigma's framed-graph space, not graph coordinates; see lib/graph-fit.
+    const nodes = model.current.graph.nodes().map(id => sigma.getNodeDisplayData(id)).filter((n): n is NonNullable<typeof n> => !!n && !n.hidden);
+    const target = fitCamera(nodes, sigma.getDimensions(), (point, cameraState) => sigma.framedGraphToViewport(point, { cameraState }), { maxRatio: 8 });
+    if (target) void sigma.getCamera().animate(target, { duration: duration() });
   };
   const matches = model.current.graph.nodes().filter(id => model.current.graph.getNodeAttribute(id, 'kind') !== 'unresolved' && model.current.graph.getNodeAttribute(id, 'label').toLowerCase().includes(query.toLowerCase()));
 

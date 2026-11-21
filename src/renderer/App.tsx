@@ -10,6 +10,7 @@ import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
 import { NEW_FILE_KINDS, startingCompanions, startingContent } from './lib/new-file';
 import { isCsvPath, tableMetaPath } from './lib/csv-table';
+import { requestReveal } from './lib/reveal';
 import {
   canSplit, closeGroup, closeInGroup, dropPreviews, EMPTY_GROUPS, focusGroup, keepEverywhere, keepTab, mapGroup, moveTab, openInGroup,
   removeMissingAll, renameInGroups, restoreGroups, serializeGroups, splitGroup, type GroupsState, type SplitDirection,
@@ -1216,6 +1217,18 @@ export default function App() {
     () => [...notesData, ...notes.filter(isCsvPath).map((path) => ({ path, content: '' }))],
     [notesData, notes],
   );
+  // Text files (JSON, YAML, logs, code, unknown names that start as text): the
+  // search reads these itself when it runs, so they never join notesData.
+  // Configuration under .neuron/ is not something you wrote, as for notes.
+  const searchTextFiles = useMemo(
+    () => openFiles.filter((path) => !path.startsWith('.neuron/') && (fileKind(path) === 'text' || textFiles.has(path))),
+    [openFiles, textFiles],
+  );
+  const fileSizeOf = useCallback((path: string) => entries?.info[path]?.size, [entries]);
+  const openAt = useCallback((path: string, line: number) => {
+    requestReveal(path, line);
+    handleSelectNote(path);
+  }, [handleSelectNote]);
 
   const bridge = useMemo(() => ({
     activeNote: selectedNote,
@@ -1483,6 +1496,9 @@ export default function App() {
                   folders={selectedTag ? createdFolders : treeFolders}
                   otherFiles={selectedTag ? NO_FILES : otherFiles}
                   openFiles={selectedTag ? NO_FILES : openFiles}
+                  textFiles={selectedTag ? NO_FILES : searchTextFiles}
+                  fileSize={fileSizeOf}
+                  onOpenAt={openAt}
                   onReveal={revealFile}
                   revealedFolder={revealedFolder}
                   tags={tags}

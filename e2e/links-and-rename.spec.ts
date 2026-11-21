@@ -118,6 +118,33 @@ test('[[ autocomplete writes the path form for a duplicate name', async ({ page,
   expect(read(workspace, 'Draft.md')).not.toContain(']]]]');
 });
 
+test('[[ autocomplete in Live offers both duplicates and writes the path form for the farther one', async ({ page, workspace }) => {
+  await addFile(page, workspace, 'team/Meeting Notes.md', '# Team meeting\n');
+  await openNote(page, 'Draft.md');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  // The empty paragraph after the heading, typed into in place.
+  const line = page.locator('article.preview-prose [contenteditable="true"]').last();
+  await line.click();
+  await page.keyboard.type('See [[Meet');
+  const list = page.locator('[data-live-wiki-completion]');
+  await expect(list).toBeVisible();
+  const options = list.getByRole('option');
+  await expect(options).toHaveCount(2);
+  // Each says where it is: the root, or the team folder.
+  await expect(options.filter({ hasText: /^Meeting Notesteam$/ })).toHaveCount(1);
+  await expect(options.filter({ hasText: /^Meeting Notes\/$/ })).toHaveCount(1);
+  // The keyboard picks it, as in the source editors; Enter is not also the line's Enter.
+  const farther = await options.evaluateAll((items) => items.findIndex((item) => item.textContent?.endsWith('team')));
+  for (let i = 0; i < farther; i++) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(list).toHaveCount(0);
+  await expect(line).toContainText('[[team/Meeting Notes|Meeting Notes]]');
+  // Committed when the line is left.
+  await page.locator('article.preview-prose h1').click();
+  await expect.poll(() => read(workspace, 'Draft.md')).toContain('See [[team/Meeting Notes|Meeting Notes]]');
+  expect(read(workspace, 'Draft.md')).not.toContain(']]]]');
+});
+
 test('an alias link opens the note that declares it', async ({ page }) => {
   await openNote(page, 'Alias Home.md');
   await page.getByRole('button', { name: 'Open note people/Ada Lovelace.md' }).click();

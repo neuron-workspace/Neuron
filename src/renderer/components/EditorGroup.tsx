@@ -20,6 +20,7 @@ import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
 import { ExternalChangeBar, TooLargeMessage } from './FileNotices';
 import { WikiCompletionContext } from './wiki-completion';
 import type { WikiIndex } from '../lib/wikilinks';
+import { cursorToLine, useReveal } from '../lib/reveal';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 const SAVE_LABEL: Record<SaveState, string> = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' };
@@ -156,6 +157,8 @@ export function EditorGroupHeader({ ctx, state, index, showsHome, inLayout = fal
 /** A group's file, rendered exactly as the single editor always has. */
 function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
   const editorRef = useRef<any>(null);
+  // A search hit opening this file at a line, when the source editor is what shows it.
+  useReveal(path, (line) => cursorToLine(editorRef.current?.view, line));
   if (isUrl(path)) return <BrowserView key={path} url={path} />;
   const content = ctx.docs[path];
   // Not read yet: render nothing rather than another file's content or an
@@ -205,7 +208,7 @@ function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
       <Editor ref={editorRef} value={content} onChange={change} colorScheme={colorScheme} />
     </WikiCompletionContext.Provider>
   );
-  const preview = <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} />;
+  const preview = <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} revealLines={false} />;
 
   if (mode === 'live') {
     return <MDXPreview key={path} editable mdxContent={content} onChangeSource={change} onToggleTask={toggleTask} colorScheme={colorScheme} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} onRequestRawMode={() => setMode('split')} removeEmptyFrontmatter={properties.removeEmpty} defaultPropertiesCollapsed={properties.collapsedByDefault} />;

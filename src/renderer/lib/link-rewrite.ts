@@ -40,7 +40,9 @@ export function findLinks(content: string): LinkMatch[] {
     }
     if (fenceMatch && (fenceMatch[1][0] === '~' || !fenceMatch[2].includes('`'))) { fence = fenceMatch[1]; continue; }
     // Inline code blanked to the same length, so offsets still match the line.
-    const prose = line.replace(/`[^`\n]*`/g, (code) => ' '.repeat(code.length));
+    // A code span closes on a run of as many backticks as opened it, so
+    // ``[[a]] `b` `` is one span (it used to end at the first backtick).
+    const prose = line.replace(/(?<!`)(`+)(?!`)(?:.*?[^`])?\1(?!`)/g, (code) => ' '.repeat(code.length));
     for (const match of prose.matchAll(LINK)) {
       const at = lineStart + match.index!;
       if (match[2] !== undefined) {

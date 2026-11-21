@@ -1,15 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import type { HostRuntime, PanelView, PluginCommand, PluginHost, PluginManifest, PluginModule } from './types';
+import type { HostRuntime, PluginManifest, PluginModule } from './types';
+import { activatePlugins, type RegisteredCommand, type RegisteredPanel } from './activate';
 import {
   connectorsOf, connectorStatus as statusOf, knownWorkspaceKeys, migrateConnectorValues, resolveWorkspacePlugins, secretFields,
   workspaceKey, workspacePluginsKey,
   type Connector, type ConnectorSecrets, type ConnectorValues, type LegacyPlugins, type WorkspacePlugins,
 } from './connectors';
 import { platform } from '../lib/platform';
-
-interface RegisteredPanel { pluginId: string; view: PanelView }
-interface RegisteredCommand { pluginId: string; command: PluginCommand }
 
 // Plugins are opt-in, with one exception. Version history is a recovery
 // surface: a user who must discover and enable it first will do so *after*
@@ -308,28 +306,7 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
 
   useEffect(() => {
     if (!ready) return;
-    const nextPanels: RegisteredPanel[] = [];
-    const nextCommands: RegisteredCommand[] = [];
-    const nextMdx: Record<string, ComponentType<Record<string, unknown>>> = {};
-    const cleanups: Array<() => void> = [];
-
-    for (const plugin of catalog) {
-      if (!state.enabled[plugin.manifest.id]) continue;
-      const host: PluginHost = {
-        manifest: plugin.manifest,
-        registerPanel: (view) => nextPanels.push({ pluginId: plugin.manifest.id, view }),
-        registerCommand: (command) => nextCommands.push({ pluginId: plugin.manifest.id, command }),
-        registerMdxComponent: (name, component) => {
-          nextMdx[name] = component;
-        },
-      };
-      try {
-        const cleanup = plugin.activate(host);
-        if (typeof cleanup === 'function') cleanups.push(cleanup);
-      } catch (err) {
-        console.error(`Plugin "${plugin.manifest.id}" failed to activate:`, err);
-      }
-    }
+    const { panels: nextPanels, commands: nextCommands, mdxComponents: nextMdx, cleanups } = activatePlugins(catalog, state.enabled);
 
     setPanels(nextPanels);
     setPanelsKey(loadedKey);

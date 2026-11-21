@@ -353,6 +353,10 @@ body.platform-darwin .status-bar {
 
 .preview-prose { max-width: 720px; }
 
+/* The block a search hit opened at, for a moment, so the eye lands on it. */
+.preview-prose [data-revealed] { background: var(--surface-hover); transition: background-color 600ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .preview-prose [data-revealed] { transition: none; } }
+
 /* `fullWidth: true` in a note's frontmatter. The measure is capped for prose,
    which is wrong for the documents people open a wide window for -- a nine
    column table, a diagram, a dashboard of layout components. The flag sits on

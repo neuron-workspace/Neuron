@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import { cursorToLine, useReveal } from '../lib/reveal';
 import { aliasesOf, buildWikiIndex } from '../lib/wikilinks';
 import { WikiCompletionContext } from '../components/wiki-completion';
 import { createPortal } from 'react-dom';
@@ -118,6 +120,9 @@ function EditorPanel({ surface }: PanelContext) {
   // layout that places the editor where no tab row exists keeps its own row.
   const [modeSlot, setModeSlot] = useState<HTMLElement | null>(null);
   useEffect(() => { setModeSlot(document.getElementById(EDITOR_MODE_SLOT)); }, [selectedNote]);
+  // A search hit opening the note at a line, when a source editor shows it; the preview takes it otherwise.
+  const source = useRef<ReactCodeMirrorRef>(null);
+  useReveal(selectedNote, (line) => cursorToLine(source.current?.view, line));
 
   const isNote = !!selectedNote && /\.(md|mdx)$/.test(selectedNote);
   // Plain-text workspace files -- .neuron/layout.json above all -- are editable
@@ -147,7 +152,7 @@ function EditorPanel({ surface }: PanelContext) {
           {selectedNote}
         </div>
         <div className="min-h-0 flex-1">
-          <Editor value={noteContent} onChange={onChangeNote} colorScheme={colorScheme ?? 'dark'} />
+          <Editor ref={source} value={noteContent} onChange={onChangeNote} colorScheme={colorScheme ?? 'dark'} />
         </div>
       </div>
     );
@@ -179,8 +184,8 @@ function EditorPanel({ surface }: PanelContext) {
           removeEmptyFrontmatter={surface.removeEmptyFrontmatter} defaultPropertiesCollapsed={surface.defaultPropertiesCollapsed} />}
         {mode === 'split' && (
           <div className="flex h-full divide-x divide-[var(--divider)]">
-            <div className="min-w-0 flex-1"><WikiCompletionContext.Provider value={{ index: wikiIndex, from: selectedNote }}><Editor value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></WikiCompletionContext.Provider></div>
-            <div className="min-w-0 flex-1 overflow-auto"><MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} wikiIndex={wikiIndex} notePath={selectedNote} onWikiLinkClick={openNote} /></div>
+            <div className="min-w-0 flex-1"><WikiCompletionContext.Provider value={{ index: wikiIndex, from: selectedNote }}><Editor ref={source} value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></WikiCompletionContext.Provider></div>
+            <div className="min-w-0 flex-1 overflow-auto"><MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} wikiIndex={wikiIndex} notePath={selectedNote} onWikiLinkClick={openNote} revealLines={false} /></div>
           </div>
         )}
       </div>
