@@ -16,7 +16,7 @@ export const areas = [
   [/^(lib\/wikilinks\.ts|components\/(MDXPreview|LiveEditor)\.tsx)$/, ['wikilinks']],
   [/^plugins\/builtin\/version-history\.tsx$/, ['version-history']],
   [/^(surfaces\/(index\.ts|SurfaceBoundary\.tsx|CanvasSurface\.tsx|HtmxViewSurface\.tsx|DbSurface\.tsx)|canvas\/.*)$/, ['surfaces']],
-  [/^(components\/(RunButton|XtermTerminal)\.tsx|lib\/terminal-bus\.ts|plugins\/builtin\/terminal\.tsx)$/, ['run-button']],
+  [/^(components\/(RunButton|XtermTerminal|Automations)\.tsx|lib\/(terminal-bus|useTerminalToggle)\.ts|plugins\/builtin\/terminal\.tsx)$/, ['run-button', 'terminal']],
   [/^(plugins\/(host\.tsx|builtin\/ai-[^/]+\.tsx|builtin\/AssistantPanel\.tsx)|views\/PluginsPage\.tsx)$/, ['secrets']],
   [/^(lib\/(sanitize-html|view-security)\.ts|surfaces\/HtmxViewSurface\.tsx)$/, ['security']],
   // Snake is a plain HTML view; its renderer host is the HTMX surface.
@@ -26,7 +26,13 @@ export const areas = [
   [/^surfaces\/(SurfaceBoundary|CanvasSurface|ImageSurface|MediaSurface)\.tsx$/, ['surface-errors']],
 ];
 
-const benchmark = /(?:^|\/)(graph-benchmark|scale\.benchmark)\.spec\.ts$/;
+// Paths are relative to src/main. Main-process modules used by one area only;
+// any other main or preload change still runs every spec.
+export const mainAreas = [
+  [/^terminal-(shell|history)\.ts$/, ['run-button', 'terminal']],
+];
+
+const benchmark =/(?:^|\/)(graph-benchmark|scale\.benchmark)\.spec\.ts$/;
 
 export function selectSpecs(changedFiles, allSpecs) {
   const available = new Set(allSpecs.filter(p => !benchmark.test(p)));
@@ -34,8 +40,11 @@ export function selectSpecs(changedFiles, allSpecs) {
   const add = p => { if (available.has(p)) selected.add(p); };
   for (const file of changedFiles) {
     const path = file.replaceAll('\\', '/');
+    const mainMatches = path.startsWith('src/main/') ? mainAreas.filter(([pattern]) => pattern.test(path.slice('src/main/'.length))) : [];
     if (/^e2e\/[^/]+\.spec\.ts$/.test(path)) {
       add(path);
+    } else if (mainMatches.length) {
+      for (const [, specs] of mainMatches) for (const spec of specs) add('e2e/' + spec + '.spec.ts');
     // examples/demo-repo is the workspace every spec copies (e2e/fixtures.ts).
     } else if (/^(e2e|examples)\//.test(path) ||/(^|\/)(playwright\.config\.[^/]+|package(?:-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+)$/.test(path) || /^src\/(main|preload)\//.test(path)) {
       return 'all';

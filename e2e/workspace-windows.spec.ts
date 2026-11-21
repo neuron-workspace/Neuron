@@ -1,5 +1,5 @@
 import { test, expect, keychain, openSettings, openWorkspaceSettings, setPluginEnabled } from './fixtures';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 
@@ -163,6 +163,11 @@ test('Settings shows Connectors and no plugin switches; a saved key is never sho
   await claude.getByLabel('Anthropic API key').fill('sk-ant-e2e-WRITE-ONLY');
   await claude.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(claude).toContainText('Connected');
+  // On disk it is only ever the keychain's ciphertext.
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+  const onDisk = () => readFileSync(join(userData, 'neuron-settings.json'), 'utf8');
+  expect(onDisk()).not.toContain('WRITE-ONLY');
+  expect(JSON.parse(onDisk()).__secrets.anthropic.apiKey).toEqual({ v: 1, enc: expect.any(String) });
   // Write-only: the key is nowhere in the page, not even in a field's value.
   const leaked = () => settings.evaluate(() => document.documentElement.outerHTML.includes('WRITE-ONLY')
     || [...document.querySelectorAll('input')].some((i) => i.value.includes('WRITE-ONLY')));
@@ -180,6 +185,26 @@ test('Settings shows Connectors and no plugin switches; a saved key is never sho
   await claude.getByRole('button', { name: 'Disconnect Claude' }).click();
   await expect(claude).toContainText('Not set up');
   await expect(dialog.locator('[data-plugin-row="ai-claude"]')).toContainText('Set up Claude in Settings');
+  // Disconnect clears it from the file, not just from the page.
+  expect(JSON.parse(onDisk()).__secrets.anthropic).not.toHaveProperty('apiKey');
+  expect(await api(settings, 'api.settings.hasSecret("anthropic", "apiKey")')).toBe(false);
+});
+
+test('a plugin switched on in one workspace is off in another', async ({ app, page, workspace }) => {
+  const other = otherWorkspace(workspace);
+  const second = await nextWindow(app, () => page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.switch(dir), other));
+  // Daily Notes is off by default; switch it on in the first workspace only.
+  await setPluginEnabled(app, page, 'Daily Notes', true);
+  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
+  const dialog = await openWorkspaceSettings(second, 'plugins');
+  await dialog.getByPlaceholder('Search plugins').fill('Daily Notes');
+  await expect(dialog.getByRole('switch', { name: 'Enable Daily Notes' })).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(await api(second, `api.settings.get(${JSON.stringify(pluginsKey(other))})`).then((s: any) => s?.enabled?.['daily-calendar'])).not.toBe(true);
+  // And its panel is not offered there.
+  await second.getByRole('button', { name: 'Show panel', exact: true }).click();
+  await expect(second.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Graph', exact: true })).toBeVisible();
+  await expect(second.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Daily', exact: true })).toHaveCount(0);
 });
 
 test('a plugin whose connector is not set up offers to set it up, in Settings at Connectors', async ({ app, page }) => {

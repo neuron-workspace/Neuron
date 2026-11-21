@@ -47,6 +47,33 @@ assert.deepEqual(resolveWorkspacePlugins({ enabled: { a: 'yes', b: true }, confi
 // The old record is not changed by being read.
 assert.deepEqual(legacy.enabled, { 'ai-claude': true, terminal: false, 'daily-calendar': true });
 
+// --- Per workspace: switching a plugin on in one leaves another untouched ----
+// The settings store as the host uses it: load by the workspace's key, save
+// the whole record back under that key (host.tsx setEnabled/persist).
+for (const [platform, a, aAgain, b] of [
+  ['win32', 'C:\\Notes\\Work', 'c:/notes/work/', 'C:\\Notes\\Home'],
+  ['darwin', '/Users/Ada/Work', '/users/ada/Work/', '/Users/Ada/Home'],
+  ['linux', '/home/ada/Work', '/home/ada/Work//', '/home/ada/Home'],
+]) {
+  const store = new Map();
+  const open = (dir) => resolveWorkspacePlugins(store.get(workspacePluginsKey(dir, platform)) ?? null, null, null, workspaceKey(dir, platform), defaults);
+  const enable = (dir, id, on) => {
+    const current = open(dir);
+    store.set(workspacePluginsKey(dir, platform), { ...current, enabled: { ...current.enabled, [id]: on } });
+  };
+  enable(b, 'graph', true);
+  const bBefore = JSON.stringify(store.get(workspacePluginsKey(b, platform)));
+  enable(a, 'daily-calendar', true);
+  assert.equal(open(a).enabled['daily-calendar'], true, `${platform}: on where it was switched on`);
+  assert.equal(open(aAgain).enabled['daily-calendar'], true, `${platform}: another spelling of the folder is the same workspace`);
+  assert.equal(workspacePluginsKey(a, platform), workspacePluginsKey(aAgain, platform), `${platform}: one key for both spellings`);
+  assert.equal(open(b).enabled['daily-calendar'], undefined, `${platform}: off in the other workspace`);
+  assert.equal(JSON.stringify(store.get(workspacePluginsKey(b, platform))), bBefore, `${platform}: the other workspace's record is not written`);
+  enable(aAgain, 'daily-calendar', false);
+  assert.equal(store.size, 2, `${platform}: switching off under the other spelling writes the same record`);
+  assert.equal(open(a).enabled['daily-calendar'], false);
+}
+
 // --- Connectors, read off the plugin manifests -----------------------------
 const claude = {
   id: 'ai-claude', name: 'Claude Assistant', connector: { id: 'anthropic', name: 'Claude', description: 'd' },

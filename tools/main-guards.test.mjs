@@ -16,12 +16,14 @@ const bundle = await build({ stdin: { contents: `
   export { settingsSectionOf } from './src/main/workspace-windows';
   export { createSaveQueue, saveKey, writeAtomically } from './src/main/save-file';
   export { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './src/main/file-limits';
+  export { decodeSecret, hasStoredSecret, carriesApiKey, rendererSettingsValue } from './src/main/secret-storage';
 `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', write: false });
 const policy = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 
 const source = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
-const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'saveQueue']);
+const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'saveQueue',
+  'storedSecret', 'readSecret', 'CONNECTOR_NAMES', 'connectorValues']);
 // Walk every nesting level. A new handler cannot silently fall outside this test.
 function registrations(ast) {
   const found = [];
@@ -63,6 +65,9 @@ const effect = (name) => (...args) => { effects.push([name, ...args]); };
 let settings = { repositories: { current: '/current', recent: ['/recent'] } };
 const revealed = [];
 let captures = 0;
+// The keychain the handlers see, and the AI provider stubs; swapped by the secret checks below.
+const keychain = { codec: { available: true } };
+const ai = { generateText: effect('generateText') };
 const context = vm.createContext({
   appWindows, ptyOwner: new Map([[7, 1]]),
   ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => handlers.set(name, fn) },
@@ -91,10 +96,14 @@ const context = vm.createContext({
   folderKey: policy.folderKey, withName: policy.withName,
   readSettings: () => settings,
   writeSettings: (...args) => { effect('settings')(...args); return true; },
-  secretCodec: () => ({ available: true }), encodeSecret: (value) => `encrypted:${value}`,
-  rendererSettingsValue: (_key, value) => value,
+  secretCodec: () => keychain.codec, encodeSecret: (value) => `encrypted:${value}`,
+  decodeSecret: policy.decodeSecret, hasStoredSecret: policy.hasStoredSecret, carriesApiKey: policy.carriesApiKey,
+  rendererSettingsValue: policy.rendererSettingsValue,
   VIEW_TRUST_KEY: 'htmxViewApprovals',
-  readSecret: effect('readSecret'),
+  createAnthropic: () => (name) => ({ name }), createOpenAI: () => (name) => ({ name }),
+  createGoogleGenerativeAI: () => (name) => ({ name }), createOpenRouter: () => (name) => ({ name }),
+  createOpenAICompatible: () => (name) => ({ name }),
+  generateText: (...args) => ai.generateText(...args),
   listJournalEntries: effect('journal'), restoreJournalEntry: effect('restore'),
   diagnostics: { write: effect('diagnostics') },
   requestPublic: effect('network'),
@@ -373,4 +382,77 @@ failFallback = true;
 assert.equal((await save(event, 'note.md', 'failed fallback')).success, false);
 assert.equal(removed.at(-1), writes.at(-2).file, 'fallback failure cleans temp');
 
-console.log(`main-guards: ${handlers.size} handlers, ${refused} sender refusals, ${badTypes} argument/path refusals; reveal, 25 MB limit, delete and 5 save scenarios passed`);
+// --- Secrets (Module 10): write-only from the renderer ----------------------
+// Results are built inside the vm; copy them out so deepEqual compares plain values.
+const call = async (name, ...args) => JSON.parse(JSON.stringify(await handlers.get(name)(event, ...args)));
+// A spy codec: has-secret must answer without it ever decrypting.
+let decrypts = 0;
+const FAKE_KEY = 'sk-test-FAKE-not-a-real-key-0000';
+const spyCodec = { available: true, encrypt: () => assert.fail('nothing here encrypts'), decrypt: () => { decrypts++; return FAKE_KEY; } };
+keychain.codec = spyCodec;
+const encrypted = { v: 1, enc: Buffer.from('ciphertext').toString('base64') };
+settings.__secrets = { anthropic: { apiKey: encrypted }, openai: { apiKey: encrypted }, legacy: { apiKey: 'plain-legacy' } };
+settings.connectors = { openai: { model: 'gpt-test', apiKey: 'plain-connector-key' } };
+// settings:get never hands back the store, and no other key reaches into it.
+assert.equal(await handlers.get('settings:get')(event, '__secrets'), null);
+for (const key of Object.keys(settings)) {
+  const value = JSON.stringify(await handlers.get('settings:get')(event, key)) ?? '';
+  for (const secret of [encrypted.enc, 'plain-legacy', 'plain-connector-key']) assert.ok(!value.includes(secret), `settings:get(${key}) leaks no secret`);
+}
+assert.equal(decrypts, 0);
+// has-secret answers from the saved shape and never decrypts.
+assert.equal(await handlers.get('settings:has-secret')(event, 'anthropic', 'apiKey'), true);
+assert.equal(await handlers.get('settings:has-secret')(event, 'legacy', 'apiKey'), true, 'an unmigrated key still counts');
+assert.equal(await handlers.get('settings:has-secret')(event, 'google', 'apiKey'), false);
+assert.equal(await handlers.get('settings:has-secret')(event, 'anthropic', 'token'), false);
+assert.equal(await handlers.get('settings:has-secret')(event, 'hasOwnProperty', 'apiKey'), false, 'inherited names are not scopes');
+assert.equal(await handlers.get('settings:has-secret')(event, 'anthropic', 'toString'), false, 'inherited names are not fields');
+keychain.codec = { ...spyCodec, available: false };
+assert.equal(await handlers.get('settings:has-secret')(event, 'anthropic', 'apiKey'), false, 'an encrypted key with no keychain to open it is not usable');
+keychain.codec = spyCodec;
+assert.equal(decrypts, 0, 'has-secret never decrypts');
+// settings:set refuses an apiKey anywhere in any value, and writes nothing.
+for (const [key, value] of [
+  ['test', { apiKey: FAKE_KEY }],
+  ['test', { a: { b: [{ c: { apiKey: FAKE_KEY } }] } }],
+  ['pluginstore:p:k', [{ nested: { apiKey: '' } }]],
+  ['connectors', { anthropic: { apiKey: FAKE_KEY } }],
+  ['plugins:/workspace', { enabled: {}, config: { 'ai-claude': { apiKey: FAKE_KEY } } }],
+]) {
+  const before = JSON.stringify(settings);
+  const writesBefore = effects.length;
+  assert.deepEqual(await call('settings:set', key, value), { success: false, error: 'Use the secret store for keys.' }, `${key}: ${JSON.stringify(value)}`);
+  assert.equal(JSON.stringify(settings), before);
+  assert.equal(effects.length, writesBefore, 'nothing is written');
+}
+assert.equal((await handlers.get('settings:set')(event, 'test', { apiKeyHint: 'set it in Settings', note: 'apiKey' })).success, true,
+  'the word in a value, or in a longer name, is not a key');
+
+// --- ai:complete ---------------------------------------------------------
+ai.generateText = effect('generateText');
+for (const provider of ['nope', 'toString', '__proto__', 'constructor']) {
+  const result = await call('ai:complete', { provider, messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(result, { success: false, error: `Unknown AI provider "${provider}".` }, provider);
+}
+assert.deepEqual(await call('ai:complete', { provider: 'openai', messages: [] }), { success: false, error: 'Nothing to send.' });
+assert.equal(decrypts, 0, 'a refused request never reads the key');
+assert.ok(!effects.some(([name]) => name === 'generateText'), 'nothing reaches the provider');
+// A provider error that quotes the key comes back with the key cut out.
+// The handler's own realm's Error, as a provider SDK in main would throw.
+const VmError = vm.runInContext('Error', context);
+ai.generateText = async () => { throw new VmError(`401 Incorrect API key provided: ${FAKE_KEY}. You passed ${FAKE_KEY}.`); };
+const failed = await handlers.get('ai:complete')(event, { provider: 'openai', messages: [{ role: 'user', content: 'hi' }] });
+assert.equal(failed.success, false);
+assert.ok(!failed.error.includes(FAKE_KEY), 'the key text is redacted');
+assert.equal(failed.error, '401 Incorrect API key provided: [key]. You passed [key].');
+ai.generateText = async () => { throw `raw ${FAKE_KEY}`; };
+assert.equal((await handlers.get('ai:complete')(event, { provider: 'anthropic', messages: [{ role: 'user', content: 'hi' }] })).error, 'raw [key]', 'a thrown string too');
+ai.generateText = async ({ model }) => ({ text: `answered by ${model.name}` });
+assert.deepEqual(await call('ai:complete', { provider: 'openai', messages: [{ role: 'user', content: 'hi' }] }), { success: true, text: 'answered by gpt-test' },
+  'the model comes from the connector settings');
+assert.deepEqual(await call('ai:complete', { provider: 'google', messages: [{ role: 'user', content: 'hi' }] }),
+  { success: false, error: 'Gemini is not set up. Set it up in Settings › Connectors.' });
+delete settings.__secrets; delete settings.connectors;
+keychain.codec = { available: true };
+
+console.log(`main-guards: ${handlers.size} handlers, ${refused} sender refusals, ${badTypes} argument/path refusals; reveal, 25 MB limit, delete, 5 save scenarios, secrets and ai:complete passed`);

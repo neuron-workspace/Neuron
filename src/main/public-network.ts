@@ -32,7 +32,39 @@ export function isBlockedAddress(ip: string): boolean {
 
 export interface PublicRequest { url: string; method?: string; headers?: Record<string, string>; body?: string }
 
-export async function requestPublic(req: PublicRequest): Promise<{ status: number; body: string }> {
+/** Both directions: a plugin's request body, and the response collected for it. */
+export const BODY_LIMIT = 10 * 1024 * 1024;
+export const RESPONSE_TOO_LARGE = 'The response was larger than 10 MB.';
+export const REQUEST_TOO_LARGE = 'The request body was larger than 10 MB.';
+export const REQUEST_TOO_SLOW = 'Network request took longer than 60 seconds.';
+/** Injectable so tests need not wait a minute. */
+export interface RequestTimeouts { idleMs?: number; totalMs?: number }
+
+interface Deadline { expired: boolean; current: http.ClientRequest | null }
+
+export async function requestPublic(req: PublicRequest, timeouts: RequestTimeouts = {}): Promise<{ status: number; body: string }> {
+  // Refused before any lookup or connection.
+  if (req.body !== undefined && Buffer.byteLength(req.body) > BODY_LIMIT) throw new Error(REQUEST_TOO_LARGE);
+  // The idle timeout never trips on a server that keeps sending, so the whole
+  // request -- every redirect hop, DNS included -- also has a deadline.
+  const deadline: Deadline = { expired: false, current: null };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const overall = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      deadline.expired = true;
+      const error = new Error(REQUEST_TOO_SLOW);
+      reject(error);
+      deadline.current?.destroy(error);
+    }, timeouts.totalMs ?? 60_000);
+  });
+  try {
+    return await Promise.race([followRedirects(req, timeouts.idleMs ?? 30_000, deadline), overall]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function followRedirects(req: PublicRequest, idleMs: number, deadline: Deadline): Promise<{ status: number; body: string }> {
   let url = new URL(req.url);
   let method = (req.method || 'GET').toUpperCase();
   let body = req.body;
@@ -44,6 +76,7 @@ export async function requestPublic(req: PublicRequest): Promise<{ status: numbe
     if (url.username || url.password) throw new Error('URL credentials are not allowed.');
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     const addresses = await dns.lookup(hostname, { all: true });
+    if (deadline.expired) throw new Error(REQUEST_TOO_SLOW);
     if (!addresses.length || addresses.some(({ address }) => isBlockedAddress(address))) throw new Error('Only public network addresses are allowed.');
     const vetted = addresses[0];
     // fetch sent a length for string bodies; keep servers that refuse chunked uploads working.
@@ -64,16 +97,28 @@ export async function requestPublic(req: PublicRequest): Promise<{ status: numbe
         const status = response.statusCode ?? 0;
         const location = response.headers.location;
         if ([301, 302, 303, 307, 308].includes(status) && location) {
-          response.resume();
           resolve({ status, body: '', location });
+          // Its body is never read, and a server that kept sending one would
+          // hold this connection open past the deadline.
+          request.destroy();
           return;
         }
         const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        let size = 0;
+        response.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > BODY_LIMIT) {
+            reject(new Error(RESPONSE_TOO_LARGE));
+            request.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
         response.on('end', () => resolve({ status, body: Buffer.concat(chunks).toString('utf8') }));
       });
+      deadline.current = request;
       request.on('error', reject);
-      request.setTimeout(30_000, () => request.destroy(new Error('Network request timed out.')));
+      request.setTimeout(idleMs, () => request.destroy(new Error('Network request timed out.')));
       request.end(body);
     });
     if (!result.location) return { status: result.status, body: result.body };

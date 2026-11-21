@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { selectSpecs, areas } from './affected-e2e.mjs';
+import { selectSpecs, areas, mainAreas } from './affected-e2e.mjs';
 
 const specs = readdirSync(new URL('../e2e/', import.meta.url)).filter(p => p.endsWith('.spec.ts')).map(p => 'e2e/' + p);
 const select = (...files) => selectSpecs(files, specs);
@@ -36,6 +36,20 @@ check('every area matches a real renderer file', () => {
   const paths = readdirSync(new URL('../src/renderer/', import.meta.url), { recursive: true }).map(p => p.replaceAll('\\', '/'));
   for (const [pattern] of areas) assert.ok(paths.some(p => pattern.test(p)), String(pattern));
 });
+check('terminal files, renderer and main, select both the terminal and Run button specs', () => {
+  for (const p of ['src/renderer/components/Automations.tsx', 'src/renderer/lib/useTerminalToggle.ts', 'src/main/terminal-shell.ts', 'src/main/terminal-history.ts',
+    'src/renderer/components/RunButton.tsx', 'src/renderer/components/XtermTerminal.tsx', 'src/renderer/lib/terminal-bus.ts', 'src/renderer/plugins/builtin/terminal.tsx']) {
+    assert.deepEqual(select(p), expected('run-button', 'terminal'), p);
+  }
+});
+check('every main area matches a real main file and names real specs', () => {
+  const paths = readdirSync(new URL('../src/main/', import.meta.url), { recursive: true }).map(p => p.replaceAll('\\', '/'));
+  for (const [pattern, names] of mainAreas) {
+    assert.ok(paths.some(p => pattern.test(p)), String(pattern));
+    for (const name of names) assert.ok(specs.includes('e2e/' + name + '.spec.ts'), name);
+  }
+});
+check('an unmapped main file still runs all specs, even beside a mapped one', () => assert.equal(select('src/main/terminal-shell.ts', 'src/main/main.ts'), 'all'));
 check('all wins over an area selection', () => assert.equal(select('src/renderer/lib/db.ts', 'e2e/fixtures.ts'), 'all'));
 check('overlapping areas include all their specs', () => assert.deepEqual(select('src/renderer/surfaces/HtmxViewSurface.tsx'), expected('surfaces', 'security', 'snake', 'view-trust')));
 check('unrelated source and workflow changes select nothing', () => assert.deepEqual(select('src/shared/types.ts', '.github/workflows/ci.yml', 'build/icon.png'), []));

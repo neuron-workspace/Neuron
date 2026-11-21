@@ -10,7 +10,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { importChromeCookies, cleanupChromeCookieCopies } from './chrome-cookies';
 import { requestPublic } from './public-network';
-import { encodeSecret, decodeSecret, migrateSecretSettings, rendererSettingsValue, NO_KEYCHAIN_ERROR, type SecretCodec } from './secret-storage';
+import { encodeSecret, decodeSecret, hasStoredSecret, carriesApiKey, migrateSecretSettings, rendererSettingsValue, noKeychainError, type SecretCodec } from './secret-storage';
 import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions, APPROVALS_KEY as VIEW_TRUST_KEY } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
@@ -553,13 +553,17 @@ function secretCodec(): SecretCodec {
   };
 }
 
-function readSecret(scope: string, field: string): string | null {
+/** The saved form of a secret, still encrypted. Own properties only. */
+function storedSecret(scope: string, field: string): unknown {
   const store = readSettings()[SECRETS_KEY];
-  if (!store || typeof store !== 'object') return null;
+  if (!store || typeof store !== 'object' || !Object.hasOwn(store, scope)) return null;
   const scoped = (store as Record<string, unknown>)[scope];
-  if (!scoped || typeof scoped !== 'object') return null;
-  const value = (scoped as Record<string, unknown>)[field];
-  return decodeSecret(value, secretCodec());
+  if (!scoped || typeof scoped !== 'object' || !Object.hasOwn(scoped, field)) return null;
+  return (scoped as Record<string, unknown>)[field];
+}
+
+function readSecret(scope: string, field: string): string | null {
+  return decodeSecret(storedSecret(scope, field), secretCodec());
 }
 
 ipcMain.handle('settings:get', (_event, key: string) => {
@@ -582,7 +586,9 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
   // Which HTML views are trusted is written by the trust prompt in main only
   // (htmx/index.ts); a renderer write here would trust a view nobody saw.
   if (key === VIEW_TRUST_KEY) return { success: false, error: 'Reserved key.' };
-  if (JSON.stringify(rendererSettingsValue(key, value)) !== JSON.stringify(value)) return { success: false, error: 'Use the secret store for keys.' };
+  // Not only where keys used to live: an apiKey anywhere in any value would be
+  // plain text on disk and readable back by every renderer.
+  if (carriesApiKey(value)) return { success: false, error: 'Use the secret store for keys.' };
   const settings = readSettings();
   settings[key] = value;
   writeSettings(settings);
@@ -608,7 +614,7 @@ ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, val
   const scoped = { ...(store[scope] ?? {}) };
   if (typeof value === 'string' && value.length > 0) {
     const codec = secretCodec();
-    if (!codec.available) return { success: false, error: NO_KEYCHAIN_ERROR };
+    if (!codec.available) return { success: false, error: noKeychainError(process.platform) };
     try { scoped[field] = encodeSecret(value, codec); }
     catch { return { success: false, error: 'Could not encrypt the key with the system keychain.' }; }
   }
@@ -617,8 +623,9 @@ ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, val
   return writeSettings(settings) ? { success: true } : { success: false, error: 'Could not save the key.' };
 });
 
+// Answered from the saved shape: asking whether a key exists never decrypts it.
 ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => !!entryOf(_event)
-  && safeSettingsKey(scope) && safeSettingsKey(field) && readSecret(scope, field) !== null);
+  && safeSettingsKey(scope) && safeSettingsKey(field) && hasStoredSecret(storedSecret(scope, field), secretCodec()));
 
 // ==========================================================================
 // IPC — repository

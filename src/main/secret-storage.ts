@@ -1,4 +1,8 @@
 export const NO_KEYCHAIN_ERROR = "No system keychain is available, so Neuron can't store keys safely on this computer.";
+/** The refusal, with the fix where there is one to give: only Linux can lack a keychain. */
+export function noKeychainError(platform: string): string {
+  return platform === 'linux' ? `${NO_KEYCHAIN_ERROR} Install and unlock GNOME Keyring or KWallet, then restart Neuron.` : NO_KEYCHAIN_ERROR;
+}
 export interface SecretCodec {
   available: boolean;
   encrypt: (value: string) => Buffer;
@@ -7,8 +11,28 @@ export interface SecretCodec {
 export interface EncryptedSecret { v: 1; enc: string }
 
 export function encodeSecret(value: string, codec: SecretCodec): EncryptedSecret {
-  if (!codec.available) throw new Error(NO_KEYCHAIN_ERROR);
+  if (!codec.available) throw new Error(noKeychainError(process.platform));
   return { v: 1, enc: codec.encrypt(value).toString('base64') };
+}
+
+/**
+ * Whether a usable secret is saved, by its shape alone: asking never decrypts.
+ * An encrypted one counts only while the keychain that can open it is there,
+ * as decodeSecret would.
+ */
+export function hasStoredSecret(value: unknown, codec: Pick<SecretCodec, 'available'>): boolean {
+  if (typeof value === 'string') return value.length > 0;
+  if (!value || typeof value !== 'object' || !codec.available) return false;
+  const stored = value as Partial<EncryptedSecret>;
+  return stored.v === 1 && typeof stored.enc === 'string' && stored.enc.length > 0;
+}
+
+/** Any property named apiKey, at any depth: such a value belongs in the secret store. */
+export function carriesApiKey(value: unknown, seen = new Set<object>()): boolean {
+  if (!value || typeof value !== 'object' || seen.has(value)) return false;
+  seen.add(value);
+  if (!Array.isArray(value) && Object.hasOwn(value, 'apiKey')) return true;
+  return Object.values(value).some((child) => carriesApiKey(child, seen));
 }
 
 export function decodeSecret(value: unknown, codec: SecretCodec): string | null {
