@@ -34,6 +34,8 @@ import { createSaveQueue, saveKey, writeAtomically } from './save-file';
 import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import * as pty from 'node-pty';
+import { defaultShell } from './terminal-shell';
+import { appendHistory } from './terminal-history';
 
 
 const RENDERER_ROOT = pathToFileURL(path.join(__dirname, '../renderer') + path.sep).href;
@@ -1024,7 +1026,6 @@ ipcMain.handle('cookies:import-chrome', (_event, domain: unknown) =>
 
 const ptys = new Map<number, pty.IPty>();
 const ptyHistory = new Map<number, string>();
-const TERMINAL_HISTORY_LIMIT = 200 * 1024;
 
 /**
  * One shell per terminal, identified by a key the renderer chooses.
@@ -1058,55 +1059,6 @@ function onPath(candidates: string[]): string | null {
     }
   }
   return null;
-}
-
-/**
- * PowerShell on Windows, not cmd.
- *
- * Notes are written once and opened on whatever machine the workspace lands on,
- * so a `<Run />` button saying `ls` is the normal case rather than a mistake.
- * cmd.exe answers that with "'ls' is not recognized"; PowerShell ships `ls`,
- * `pwd`, `cat` and `rm` as aliases, so the same note works on all three
- * platforms without pretending Windows is Linux.
- *
- * pwsh is preferred because it is the maintained one. COMSPEC remains the last
- * resort for a machine with neither, which is not a machine PowerShell was ever
- * removed from -- it is one where PATH is unusual.
- */
-const defaultShell = () => {
-  if (process.platform !== 'win32') return process.env.SHELL || '/bin/bash';
-  return onPath(['pwsh.exe', 'powershell.exe']) ?? process.env.COMSPEC ?? 'cmd.exe';
-};
-
-/**
- * Sequences that mean "what came before this is gone".
- *
- *   ESC[2J  erase the screen        ESC[3J  erase the scrollback
- *   ESC c   full reset
- *
- * Kept out of the append below so the intent is readable rather than a regex
- * in a hot path.
- */
-const CLEARS_SCREEN = /\x1b\[[23]J|\x1bc/g;
-
-/**
- * Add pty output to the replayable history.
- *
- * The history exists so a panel that remounts does not show an empty pane; it
- * is replayed verbatim on attach. That made `cls` look broken: the shell
- * cleared the screen, but the erased output was still in this buffer and came
- * straight back on the next attach. Anything before the last clear is gone as
- * far as the user is concerned, so it goes here too.
- */
-function appendHistory(history: string, data: string): string {
-  let next = history + data;
-
-  CLEARS_SCREEN.lastIndex = 0;
-  let cut = -1;
-  for (let m = CLEARS_SCREEN.exec(next); m; m = CLEARS_SCREEN.exec(next)) cut = m.index;
-  if (cut >= 0) next = next.slice(cut);
-
-  return next.length > TERMINAL_HISTORY_LIMIT ? next.slice(-TERMINAL_HISTORY_LIMIT) : next;
 }
 
 /**
@@ -1164,8 +1116,10 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
   // explanation anywhere the user could see. Let the failure reach the caller
   // so the panel can print it.
   let proc: pty.IPty;
+  // PowerShell on Windows; a login shell on macOS and Linux (terminal-shell.ts).
+  const launch = defaultShell(process.platform, process.env, onPath);
   try {
-    proc = pty.spawn(defaultShell(), [], {
+    proc = pty.spawn(launch.shell, launch.args, {
       name: 'xterm-color',
       cols: opts.cols ?? 80,
       rows: opts.rows ?? 24,
@@ -1173,7 +1127,7 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
       env: process.env as { [key: string]: string },
     });
   } catch (error) {
-    throw new Error(`could not start ${defaultShell()}: ${(error as Error).message}`);
+    throw new Error(`could not start ${launch.shell}: ${(error as Error).message}`);
   }
   ptys.set(id, proc);
   ptyHistory.set(id, '');

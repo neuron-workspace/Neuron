@@ -31,6 +31,23 @@ assert.equal(bus.isRunnableCommand('echo hi\nrm -rf .'), false, 'a newline would
 assert.equal(bus.isRunnableCommand('echo hi\rrm -rf .'), false, 'a carriage return submits the line too');
 assert.equal(bus.isRunnableCommand('echo \u0007bell'), false, 'control characters are refused');
 
+const hidden = [0x00, 0x09, 0x0a, 0x0d, 0x1b, 0x1f, 0x7f, 0x80, 0x85, 0x9f,
+  0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff];
+for (const point of hidden) {
+  const char = String.fromCodePoint(point);
+  for (const command of [`echo ${char}safe`, `${char}echo safe`, `echo safe${char}`]) {
+    assert.equal(bus.isRunnableCommand(command), false, `refuse U+${point.toString(16)}`);
+  }
+}
+for (const command of ['echo café', 'echo 中文', 'echo 😀']) assert.equal(bus.isRunnableCommand(command), true);
+// Neighbours of the refused ranges are ordinary text.
+for (const point of [0x7e, 0xa0, 0xe9, 0x200a, 0x2010, 0x202f, 0x2065, 0x206a, 0xfefe, 0xff01]) {
+  assert.equal(bus.isRunnableCommand(`echo a${String.fromCodePoint(point)}b`), true, `allow U+${point.toString(16)}`);
+}
+for (const value of [null, undefined, 42, {}]) assert.equal(bus.isRunnableCommand(value), false, 'only strings run');
+assert.equal(bus.HIDDEN_CHARS_REFUSAL, "This command contains hidden characters and won't run.");
+
 // --- the queue ---------------------------------------------------------------
 {
   const written = [];
@@ -79,12 +96,30 @@ assert.equal(bus.isRunnableCommand('echo \u0007bell'), false, 'control character
   const written = [];
   let opened = 0;
   const close = bus.registerTerminalOpener(() => { opened++; });
-  assert.equal(bus.runAutomationInTerminal(['echo first', 'echo second']), true);
-  assert.equal(opened, 2);
+  assert.equal(bus.runAutomationInTerminal(['echo first', 'echo second', 'echo third']), true);
+  assert.equal(opened, 3);
+  assert.deepEqual(written, [], 'cold-start commands wait for readiness');
   const off = bus.registerTerminalWriter((data) => written.push(data));
-  assert.deepEqual(written, ['echo first\r', 'echo second\r']);
+  assert.deepEqual(written, ['echo first\r', 'echo second\r', 'echo third\r']);
   assert.equal(bus.runAutomationInTerminal(['echo safe', 'hidden\rcommand']), false);
-  assert.equal(written.length, 2, 'an invalid sequence never partially runs');
+  assert.equal(written.length, 3, 'an invalid sequence never partially runs');
+  off(); close();
+}
+
+// Refused sequences neither open the panel nor leave anything in its queue.
+for (const ready of [false, true]) {
+  const written = [];
+  let opened = 0;
+  const close = bus.registerTerminalOpener(() => { opened++; });
+  let off = ready ? bus.registerTerminalWriter((data) => written.push(data)) : null;
+  for (const bad of ['', '   ', null, ...hidden.map((point) => `echo ${String.fromCodePoint(point)}bad`)]) {
+    assert.equal(bus.runAutomationInTerminal(['echo before', bad, 'echo after']), false);
+    if (typeof bad === 'string') bus.runInTerminal(bad);
+  }
+  assert.equal(bus.runAutomationInTerminal([]), false);
+  assert.equal(opened, 0);
+  off ??= bus.registerTerminalWriter((data) => written.push(data));
+  assert.deepEqual(written, []);
   off(); close();
 }
 

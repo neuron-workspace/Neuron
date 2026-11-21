@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Play, Plus, Trash2, Zap } from 'lucide-react';
-import { runAutomationInTerminal } from '../lib/terminal-bus';
+import { HIDDEN_CHARS_REFUSAL, isRunnableCommand, runAutomationInTerminal } from '../lib/terminal-bus';
 
 interface Automation {
   id: string;
@@ -28,9 +28,17 @@ export default function Automations() {
     await window.electronAPI?.settings.set(STORE_KEY, next);
   };
 
+  // Lines are kept as typed, not trimmed: trim() would drop a leading U+FEFF and
+  // the rule is to refuse hidden characters visibly (isRunnableCommand).
   const add = () => {
-    const commands = body.split('\n').map((l) => l.trim()).filter(Boolean);
+    const lines = body.split(/\r?\n/);
+    const commands = lines.filter((l) => l.trim().length > 0);
     if (!name.trim() || commands.length === 0) return;
+    const bad = lines.findIndex((line) => line.trim().length > 0 && !isRunnableCommand(line));
+    if (bad >= 0) {
+      setNotice(`Line ${bad + 1}: ${HIDDEN_CHARS_REFUSAL}`);
+      return;
+    }
     void persist([...items, { id: `${Date.now()}`, name: name.trim(), commands }]);
     setName('');
     setBody('');
@@ -38,10 +46,12 @@ export default function Automations() {
 
   const remove = (id: string) => void persist(items.filter((a) => a.id !== id));
 
+  // A saved automation can still hold a bad line (settings synced or edited by
+  // hand), so the whole list is checked again here, and refused as one.
   const run = (automation: Automation) => {
     setNotice(runAutomationInTerminal(automation.commands)
       ? `${automation.name} sent to the workspace terminal.`
-      : 'Each command must be a nonempty single line without control characters.');
+      : `${automation.name}: ${HIDDEN_CHARS_REFUSAL} Nothing was sent.`);
   };
 
   return (
@@ -64,6 +74,9 @@ export default function Automations() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-medium text-[var(--ink)]">{a.name}</div>
                   <div className="truncate font-mono text-[10px] text-[var(--ink-muted)]">{a.commands.join(' · ')}</div>
+                  {!a.commands.every(isRunnableCommand) && (
+                    <div className="text-[10px] text-[var(--danger)]">{HIDDEN_CHARS_REFUSAL}</div>
+                  )}
                 </div>
                 <button onClick={() => remove(a.id)} className="interactive grid h-7 w-7 place-items-center rounded text-[var(--ink-muted)] opacity-0 hover:text-[var(--danger)] group-hover:opacity-100" title="Delete" aria-label={`Delete ${a.name}`}>
                   <Trash2 className="h-3.5 w-3.5" />

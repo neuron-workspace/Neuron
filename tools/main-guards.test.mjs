@@ -178,6 +178,24 @@ assert.equal(revealed.length, 0);
 
 const save = handlers.get('notes:write');
 const event = { sender, senderFrame: mainFrame };
+// A second legitimate app window passes entryOf, but cannot use our pty id.
+const otherFrame = {};
+const otherSender = { id: 2, mainFrame: otherFrame };
+appWindows.set(2, { window: { webContents: otherSender, isDestroyed: () => false }, repo: '/other', kind: 'workspace' });
+const otherEvent = { sender: otherSender, senderFrame: otherFrame };
+assert.ok(context.checkEntry(otherEvent));
+for (const name of ['terminal:write', 'terminal:resize', 'terminal:kill', 'terminal:history']) {
+  const before = effects.length;
+  const result = await handlers.get(name)(otherEvent, ...contracts[name]);
+  assert.equal(result, name === 'terminal:history' ? '' : undefined, name);
+  assert.equal(effects.length, before, `${name}: another window cannot touch the pty`);
+  assert.ok(context.ptys.has(7), `${name}: the owner's pty survives`);
+}
+assert.equal(await handlers.get('terminal:history')(event, 7), 'history');
+await handlers.get('terminal:write')(event, 7, 'owned');
+await handlers.get('terminal:resize')(event, 7, 90, 30);
+assert.deepEqual(effects.splice(0), [['ptyWrite', 'owned'], ['ptyResize', 90, 30]]);
+appWindows.delete(2);
 const assertFailure = (name, result) => {
   if (name === 'settings:get') assert.equal(result, null, name);
   else if (name === 'settings:has-secret') assert.equal(result, false, name);

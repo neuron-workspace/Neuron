@@ -195,6 +195,12 @@ const stacked = resolveLayout({
 const third = { pluginId: 'q', view: { id: 'b' } };
 assert.equal(terminalVisible([other, term, third], stacked), false);
 assert.deepEqual(terminalTogglePatch([other, term, third], stacked), { rightPanel: true, activePanels: { 'right:0': 'q:b', 'right:1': TERMINAL_PANEL_KEY } });
+// Showing for a Run button or automation: selects the terminal tab over another, never hides it.
+const { terminalShowPatch } = helpers;
+assert.deepEqual(terminalShowPatch(both, otherTab), { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+assert.deepEqual(terminalShowPatch([term], DEFAULT_LAYOUT), { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+assert.equal(terminalShowPatch(both, shown), null, 'already shown: left alone, not toggled closed');
+assert.equal(terminalShowPatch([other], DEFAULT_LAYOUT), null, 'plugin off: nothing to show');
 
 // .neuron/layout.json: the sidebar and terminal keys, and the meaning-not-text comparison.
 const surfaces = await transform(readFileSync(join(root, 'src/renderer/surfaces/layout.ts'), 'utf8'), { loader: 'ts', format: 'esm' });

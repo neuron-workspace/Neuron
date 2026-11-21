@@ -53,9 +53,10 @@ import { useTerminalToggle } from './lib/useTerminalToggle';
 import { type SidebarMode } from './components/ActivityRail';
 
 /** Hands the terminal toggle to the global shortcut handler. Renders nothing. */
-function TerminalShortcut({ toggleRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
-  const { toggle } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
+function TerminalShortcut({ toggleRef, showRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; showRef: { current: (() => boolean) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
+  const { toggle, show } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
   toggleRef.current = toggle;
+  showRef.current = show;
   return null;
 }
 
@@ -325,7 +326,12 @@ export default function App() {
   // A <Run /> button in a note reveals the terminal it is about to write to.
   // Running a command into a panel the user cannot see would hide the one part
   // of this that makes it reviewable.
+  // Its tab is selected too: opening the dock alone left another tab (such as
+  // Automations) on screen, the terminal unmounted, and the command queued.
+  // Filled by <TerminalShortcut />, which can see the plugin panels.
+  const showTerminalRef = useRef<(() => boolean) | null>(null);
   useEffect(() => registerTerminalOpener(() => {
+    if (showTerminalRef.current?.()) return;
     const dock = layoutRef.current.panels['terminal:terminal.panel']?.dock ?? 'bottom';
     patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
@@ -1417,7 +1423,7 @@ export default function App() {
           )}
 
           {layout.statusBar && !layout.zen && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
-          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
+          <TerminalShortcut toggleRef={toggleTerminalRef} showRef={showTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
           <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 

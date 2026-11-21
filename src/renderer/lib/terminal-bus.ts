@@ -41,16 +41,30 @@ export function registerTerminalWriter(fn: Writer): () => void {
 }
 
 /**
- * A command is one line, always.
+ * A command is one visible line, always: what the button shows is what the
+ * shell receives.
  *
  * Note content is untrusted -- a workspace can be cloned, synced or shared --
  * and a command carrying a newline would run as two, with only the first
- * visible on the button that claims to describe it. Everything else about this
- * is legible to the person clicking; that is the property worth keeping.
+ * visible on the button that claims to describe it. The same goes for anything
+ * that displays differently from what it sends:
+ *
+ *   C0 controls and DEL            U+0000-U+001F, U+007F (newline, CR, tab, ESC)
+ *   C1 controls                    U+0080-U+009F (includes the 8-bit CSI)
+ *   bidi overrides and isolates    U+202A-U+202E, U+2066-U+2069
+ *   bidi marks                     U+200E, U+200F, U+061C
+ *   zero-width characters          U+200B-U+200D, U+2060, U+FEFF
+ *
+ * Ordinary Unicode (accents, CJK, emoji) is fine. Run buttons and automations
+ * both use this one rule.
  */
+const HIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩‎‏؜​-‍⁠﻿]/;
+
+/** Shown wherever a command is refused by isRunnableCommand. */
+export const HIDDEN_CHARS_REFUSAL = "This command contains hidden characters and won't run.";
+
 export function isRunnableCommand(command: string): boolean {
-  const CONTROL_CHARS = new RegExp('[\\u0000-\\u001f\\u007f]');
-  return command.trim().length > 0 && !CONTROL_CHARS.test(command);
+  return typeof command === 'string' && command.trim().length > 0 && !HIDDEN_CHARS.test(command);
 }
 
 /** Reveal the terminal and run one command in it. */

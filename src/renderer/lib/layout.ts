@@ -149,6 +149,16 @@ export function terminalTogglePatch<T extends PlaceablePanel>(panels: T[], layou
 }
 
 /**
+ * The layout change that shows the terminal and never hides it, for a Run
+ * button or an automation: opening its dock is not enough when another tab
+ * (Automations, say) is the selected one there. Null when it is already shown
+ * or the plugin is off.
+ */
+export function terminalShowPatch<T extends PlaceablePanel>(panels: T[], layout: WorkbenchLayout): Partial<WorkbenchLayout> | null {
+  return terminalVisible(panels, layout) ? null : terminalTogglePatch(panels, layout);
+}
+
+/**
  * The layout change for a workspace's starting arrangement (.neuron/layout.json),
  * or null when there is nothing to change. A missing setting leaves the person's
  * own arrangement alone, and with the Terminal plugin off (no panel registered)
