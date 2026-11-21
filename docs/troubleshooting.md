@@ -16,6 +16,25 @@ Run a fresh `npm run dist:dir`. Packaged resources are copied through Electron B
 
 Current public artifacts are unsigned. Do not disable system security globally. Verify that the artifact came from the expected GitHub Release and use the operating system's per-application review flow. Maintainers should configure signing before promoting releases broadly.
 
+## Linux AppImage: "Failed to move to new namespace"
+
+Ubuntu 24.04+ and Debian 13 use AppArmor to block unprivileged user namespaces, which Electron's sandbox needs. The `.deb` installs an AppArmor profile that allows them, so it works as is: **install the `.deb` if you can.**
+
+To keep the AppImage, give it a profile of its own. Save this as `/etc/apparmor.d/neuron-appimage`, with the path to your AppImage in place of the example:
+
+```
+abi <abi/4.0>,
+include <tunables/global>
+
+profile neuron-appimage /home/*/Applications/Neuron-*.AppImage flags=(unconfined) {
+  userns,
+}
+```
+
+Then load it with `sudo apparmor_parser -r /etc/apparmor.d/neuron-appimage` and start the AppImage again.
+
+Last resort only: `./Neuron-*.AppImage --no-sandbox` starts it with Chromium's sandbox turned off. That is weaker: a compromised page or view is no longer contained by the sandbox. Prefer the `.deb` or the profile.
+
 ## Packaging cannot download Electron
 
 Electron Builder downloads platform runtime files on first use. Check network, proxy, firewall, and GitHub access. CI runners normally perform this download automatically.

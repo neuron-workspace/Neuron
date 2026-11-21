@@ -204,7 +204,10 @@ GitHub release can still be marked as a prerelease independently.
 ## Linux
 
 Direct downloads (AppImage and `.deb`) are attached to every GitHub release by
-the existing matrix. No signing is required for either.
+the existing matrix. No signing is required for either. The `.deb` installs an
+AppArmor profile (electron-builder's after-install script); the AppImage cannot,
+so on Ubuntu 24.04+ and Debian 13 it needs the workaround in
+[troubleshooting](troubleshooting.md#linux-appimage-failed-to-move-to-new-namespace).
 
 **Flathub** is the distribution channel worth adding: it is where Linux users
 look for applications, it handles updates and sandboxing, and it is free.

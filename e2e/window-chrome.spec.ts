@@ -204,9 +204,12 @@ test('F11 enters and leaves full screen', async ({ app, page }) => {
   try {
     await page.keyboard.press('F11');
     await expect.poll(isFullScreen).toBe(true);
+    // The title bar follows the window's state through the body class.
+    await expect(page.locator('body')).toHaveClass(/window-fullscreen/);
     await expect(page.locator('.titlebar')).toBeHidden();
     await page.keyboard.press('F11');
     await expect.poll(isFullScreen).toBe(false);
+    await expect(page.locator('body')).not.toHaveClass(/window-fullscreen/);
     await expect(page.locator('.titlebar')).toBeVisible();
   } finally {
     await setFullScreen(app, false);
@@ -236,17 +239,23 @@ test('theme changes reach the native overlay and invalid colors are ignored', as
     const style = getComputedStyle(document.documentElement);
     return { color: style.getPropertyValue('--nav').trim(), symbolColor: style.getPropertyValue('--ink').trim() };
   };
-  for (const name of ['Nord', 'Light', 'Graphite']) {
+  // Dark, light, dark again: each switch recolours the native buttons.
+  const overlayFor: Record<string, unknown> = {};
+  for (const [name, scheme] of [['Nord', 'dark'], ['Light', 'light'], ['Graphite', 'dark']] as const) {
     const button = settings.getByRole('group', { name: 'Application theme' }).getByRole('button', { name: new RegExp('^' + name) });
     await button.click();
     await expect(button).toHaveAttribute('aria-pressed', 'true');
     const chosen = await settings.evaluate(read);
     await expect.poll(() => page.evaluate(read)).toEqual(chosen);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scheme);
     const colors = await page.evaluate(read);
     await expect.poll(() => app.evaluate(() =>
       (globalThis as unknown as { overlayCalls: unknown[] }).overlayCalls.at(-1),
     )).toEqual(colors);
+    overlayFor[name] = colors;
   }
+  expect(overlayFor.Light).not.toEqual(overlayFor.Nord);
+  expect(overlayFor.Light).not.toEqual(overlayFor.Graphite);
 
   const calls = await app.evaluate(() => (globalThis as unknown as { overlayCalls: unknown[] }).overlayCalls.length);
   await page.evaluate(async () => {
