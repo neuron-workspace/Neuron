@@ -100,7 +100,7 @@ for (const hostile of [
 
 test('an htmx view runs in a sandboxed webview with no Node and its own partition', async ({ app, page }) => {
   await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
-  await page.getByRole('button', { name: 'Allow for this view' }).click();
+  await page.getByRole('button', { name: 'Trust this version' }).click();
   await expect(page.locator('webview')).toHaveCount(1);
 
   const probe = await app.evaluate(async ({ webContents }) => {
@@ -121,7 +121,7 @@ test('an htmx view runs in a sandboxed webview with no Node and its own partitio
 
 test('a view webview cannot open a popup window', async ({ app, page }) => {
   await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
-  await page.getByRole('button', { name: 'Allow for this view' }).click();
+  await page.getByRole('button', { name: 'Trust this version' }).click();
   await expect(page.locator('webview')).toHaveCount(1);
 
   // Count real BrowserWindows in the main process, not app.windows():

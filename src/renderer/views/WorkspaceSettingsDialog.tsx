@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Blocks, SlidersHorizontal } from 'lucide-react';
-import type { RepositoryInfo } from '../electron.d';
+import type { RepositoryInfo, TrustedHtmlView } from '../electron.d';
+import { announceViewTrustChanged } from '../lib/view-trust';
 import type { Dock, WorkbenchLayout } from '../lib/layout';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
@@ -40,9 +41,54 @@ function WorkspaceGeneral({ workspace, onRenamed }: { workspace: RepositoryInfo;
           <Button size="sm" variant="outline" className="shrink-0" onClick={() => void window.electronAPI.repository.reveal(workspace.path)}>Reveal</Button>
         </div>
       </div>
+      <TrustedHtmlViews workspacePath={workspace.path} />
       <p className="text-xs text-[var(--ink-muted)]">Layout for this workspace is set in .neuron/layout.json.</p>
     </div>
   );
+}
+
+/** HTML views trusted in this workspace (7B), each with a way to take it back. */
+function TrustedHtmlViews({ workspacePath }: { workspacePath: string }) {
+  const [views, setViews] = useState<TrustedHtmlView[] | null>(null);
+  const load = useCallback(async () => {
+    const result = await window.electronAPI.htmxViews.listTrusted();
+    setViews(result.success ? result.views : []);
+  }, []);
+  useEffect(() => { void load(); }, [load, workspacePath]);
+  const remove = async (path: string) => {
+    await window.electronAPI.htmxViews.resetApproval(path);
+    announceViewTrustChanged(path);
+    await load();
+  };
+  return (
+    <div data-trusted-views>
+      <p id="trusted-views-label" className="text-[13px] font-medium text-[var(--ink)]">Trusted HTML views</p>
+      <p className="mt-0.5 text-xs text-[var(--ink-muted)]">A view runs once you trust it, until it changes. Remove one to be asked again.</p>
+      {views === null ? null : views.length === 0 ? (
+        <p className="mt-2 text-xs text-[var(--ink-muted)]">No views are trusted yet.</p>
+      ) : (
+        <ul aria-labelledby="trusted-views-label" className="mt-2 divide-y divide-[var(--divider)] rounded-md border border-[var(--divider)]">
+          {views.map((view) => (
+            <li key={view.path} data-trusted-view={view.path} className="flex items-center gap-3 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] text-[var(--ink)]">{view.name}</p>
+                <p className="truncate font-mono text-[11px] text-[var(--ink-muted)]" title={view.path}>{view.path}</p>
+              </div>
+              <time dateTime={view.grantedAt} className="shrink-0 text-[11px] text-[var(--ink-muted)]">
+                Trusted {formatTrustedAt(view.grantedAt)}
+              </time>
+              <Button size="sm" variant="outline" className="shrink-0" aria-label={`Remove ${view.path}`} onClick={() => void remove(view.path)}>Remove</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function formatTrustedAt(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 interface WorkspaceSettingsDialogProps {

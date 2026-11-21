@@ -21,6 +21,9 @@ export const areas = [
   [/^(lib\/(sanitize-html|view-security)\.ts|surfaces\/HtmxViewSurface\.tsx)$/, ['security']],
   // Snake is a plain HTML view; its renderer host is the HTMX surface.
   [/^surfaces\/HtmxViewSurface\.tsx$/, ['snake']],
+  // Trust by content for HTML views (7B).
+  [/^(surfaces\/HtmxViewSurface\.tsx|lib\/view-trust\.ts)$/, ['view-trust']],
+  [/^surfaces\/(SurfaceBoundary|CanvasSurface|ImageSurface|MediaSurface)\.tsx$/, ['surface-errors']],
 ];
 
 const benchmark = /(?:^|\/)(graph-benchmark|scale\.benchmark)\.spec\.ts$/;

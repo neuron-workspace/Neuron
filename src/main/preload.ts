@@ -151,9 +151,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   htmxViews: {
     open: (relativePath: string, theme?: 'light' | 'dark') => ipcRenderer.invoke('htmx-views:open', relativePath, theme),
-    approve: (relativePath: string, scope: 'always' | 'once') => ipcRenderer.invoke('htmx-views:approve', relativePath, scope),
+    approve: (relativePath: string, contentHash: string) => ipcRenderer.invoke('htmx-views:approve', relativePath, contentHash),
     close: (sessionId: string) => ipcRenderer.invoke('htmx-views:close', sessionId),
     resetApproval: (relativePath: string) => ipcRenderer.invoke('htmx-views:reset-approval', relativePath),
+    listTrusted: () => ipcRenderer.invoke('htmx-views:list-trusted'),
   },
   cookies: {
     importChrome: (domain: string) => ipcRenderer.invoke('cookies:import-chrome', domain),

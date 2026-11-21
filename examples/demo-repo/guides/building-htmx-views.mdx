@@ -145,8 +145,9 @@ The first view you open scaffolds `.neuron/` at the workspace root:
 Views receive no capabilities by default. To read or write workspace data, add
 a manifest under `.neuron/manifests/` (`Custom dashboard.html` →
 `.neuron/manifests/Custom dashboard.json`) declaring `permissions`,
-`allowedReadPaths`, and `allowedWritePaths`. Neuron shows an approval dialog
-before the first run and again whenever the manifest changes. Inline scripts
+`allowedReadPaths`, and `allowedWritePaths`. Every view, manifest or not, asks
+before it runs, and asks again whenever its HTML, its manifest, or a style or
+fragment it can load changes. Inline scripts
 may run, but views cannot reach the network, Node, or files outside their
 approved paths.
 

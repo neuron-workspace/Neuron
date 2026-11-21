@@ -20,15 +20,16 @@ import {
 import { NEURON_VIEW_CSS } from './theme';
 import { NEURON_VIEW_JS } from './neuronJs';
 import { capturePreImage } from '../journal';
+import { MAX_DOC_BYTES, MAX_STYLE_BYTES, MAX_FRAGMENT_BYTES, readTrusted } from './trust';
 
 export const API_VERSION = 1;
+
+/** A workspace file the view was not trusted with, or one changed since (7B). */
+const UNTRUSTED_MESSAGE = 'This file changed since you trusted this view, so it does not run. Reopen the view to review it.';
 
 // Resource ceilings: a broken or hostile view degrades, it never freezes Neuron.
 const MAX_BODY_BYTES = 1024 * 1024;        // request body
 const MAX_READ_BYTES = 2 * 1024 * 1024;    // single file read
-const MAX_DOC_BYTES = 2 * 1024 * 1024;     // view document
-const MAX_STYLE_BYTES = 256 * 1024;        // one custom stylesheet
-const MAX_FRAGMENT_BYTES = 128 * 1024;     // one fragment template
 const MAX_LIST_ENTRIES = 500;              // directory listing
 const MAX_WALK_ENTRIES = 20000;            // filesystem walk budget
 const MAX_SEARCH_RESULTS = 50;
@@ -305,7 +306,13 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       send(ctx.res, 413, { 'Content-Type': 'text/html; charset=utf-8' }, '<!doctype html><p>View document exceeds the 2 MB limit.</p>');
       return;
     }
-    let body = fs.readFileSync(resolved.full, 'utf-8');
+    // Only the exact version that was trusted runs, reloads included.
+    const trusted = readTrusted(session.trusted, session.root, session.viewPath, MAX_DOC_BYTES);
+    if (!trusted) {
+      send(ctx.res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument(UNTRUSTED_MESSAGE));
+      return;
+    }
+    let body = trusted.toString('utf-8');
     // Safe template substitution: {{ variables.x }} in the document, escaped,
     // key lookup only. Requires the variables.read capability.
     if (session.caps.has('variables.read')) {
@@ -345,9 +352,12 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     }
     const styleMatch = asset.match(/^styles\/([A-Za-z0-9 _.-]+\.css)$/);
     if (styleMatch) {
-      const file = path.join(ctx.session.root, '.neuron', 'styles', styleMatch[1]);
-      if (!fs.existsSync(file) || fs.statSync(file).size > MAX_STYLE_BYTES) { fail(ctx, 404, 'not_found', 'Stylesheet not found or too large.'); return; }
-      const css = fs.readFileSync(file, 'utf-8');
+      const rel = `.neuron/styles/${styleMatch[1]}`;
+      const file = resolveInWorkspace(ctx.session.root, rel);
+      if (!file || !fs.existsSync(file.full) || fs.statSync(file.full).size > MAX_STYLE_BYTES) { fail(ctx, 404, 'not_found', 'Stylesheet not found or too large.'); return; }
+      const bytes = readTrusted(ctx.session.trusted, ctx.session.root, rel, MAX_STYLE_BYTES);
+      if (!bytes) { fail(ctx, 403, 'untrusted', UNTRUSTED_MESSAGE); return; }
+      const css = bytes.toString('utf-8');
       // Custom CSS must stay local: no remote imports or remote url() fetches.
       if (/@import\b/i.test(css) || /url\(\s*['"]?\s*(https?:|\/\/)/i.test(css)) {
         fail(ctx, 422, 'unsafe_css', `Stylesheet "${styleMatch[1]}" uses @import or remote URLs, which are blocked.`);
@@ -709,10 +719,15 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
   function apiFragment(ctx: Ctx, name: string): void {
     // Fragments resolve by sanitized id inside .neuron/fragments only — the
     // name can never become a filesystem path.
-    const file = path.join(ctx.session.root, '.neuron', 'fragments', `${name}.html`);
+    const rel = `.neuron/fragments/${name}.html`;
+    const file = resolveInWorkspace(ctx.session.root, rel);
     let template: string | null = null;
-    if (fs.existsSync(file) && fs.statSync(file).size <= MAX_FRAGMENT_BYTES) {
-      template = fs.readFileSync(file, 'utf-8');
+    if (file && fs.existsSync(file.full) && fs.statSync(file.full).size <= MAX_FRAGMENT_BYTES) {
+      // htmx runs scripts in a swapped fragment: it is code, so only the
+      // trusted version is served.
+      const bytes = readTrusted(ctx.session.trusted, ctx.session.root, rel, MAX_FRAGMENT_BYTES);
+      if (!bytes) { fail(ctx, 403, 'untrusted', UNTRUSTED_MESSAGE); return; }
+      template = bytes.toString('utf-8');
     } else if (name === 'workspace-summary') {
       if (!requireCap(ctx, 'notes.read') || !requireCap(ctx, 'tags.read')) return;
       template = builtinWorkspaceSummary(ctx.session);

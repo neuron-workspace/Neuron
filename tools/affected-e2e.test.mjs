@@ -37,7 +37,7 @@ check('every area matches a real renderer file', () => {
   for (const [pattern] of areas) assert.ok(paths.some(p => pattern.test(p)), String(pattern));
 });
 check('all wins over an area selection', () => assert.equal(select('src/renderer/lib/db.ts', 'e2e/fixtures.ts'), 'all'));
-check('overlapping areas include all their specs', () => assert.deepEqual(select('src/renderer/surfaces/HtmxViewSurface.tsx'), expected('surfaces', 'security', 'snake')));
+check('overlapping areas include all their specs', () => assert.deepEqual(select('src/renderer/surfaces/HtmxViewSurface.tsx'), expected('surfaces', 'security', 'snake', 'view-trust')));
 check('unrelated source and workflow changes select nothing', () => assert.deepEqual(select('src/shared/types.ts', '.github/workflows/ci.yml', 'build/icon.png'), []));
 check('deleted specs do not turn into nonexistent test filters', () => assert.deepEqual(select('e2e/deleted.spec.ts'), []));
 check('the CLI prints all, selected paths, or an empty line', () => {

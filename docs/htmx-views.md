@@ -134,14 +134,21 @@ add a manifest under `.neuron/manifests/`, mirroring the view's path —
 - Unknown manifest fields and unknown permissions are **rejected**, not
   ignored. `networkPolicy` accepts only `"none"` — views cannot reach the
   network at all.
-- Every requested capability requires approval on first open. Approval is bound
-  to the exact manifest content, so an edit asks again.
-- The approval dialog offers **Allow for this view** / **Allow once**.
-  Approvals are stored in Neuron's protected application
-  settings — never in the workspace — and are bound to the manifest's content
-  hash: any manifest edit re-requests approval.
-- Reset a view's approval with `htmxViews.resetApproval` (exposed for the
-  permission card) or by editing the manifest.
+- Every view asks before it runs, capabilities or not: HTML can be malicious.
+  The prompt names the file and what it may access, with **Trust this version**
+  and **Don't run**.
+- Trust is bound to content: a SHA-256 over the view's HTML, its manifest, and
+  every workspace file the view server serves to it as code or style (each
+  `.neuron/styles/*.css` and `.neuron/fragments/*.html`). Any change to any of
+  them stops the view and asks again ("This view changed since you trusted
+  it."). While a view is open, the server serves those files only if they still
+  match the trusted version, and answers 403 otherwise.
+- Trust is stored in Neuron's protected application settings — never in the
+  workspace, and not writable through `settings.set` — and lasts until the
+  content changes.
+- Take trust back with **Stop trusting this view** in the view's menu, or
+  **Remove** under Workspace settings › General › Trusted HTML views
+  (`htmxViews.resetApproval`).
 
 ### API routes (`/api/v1`)
 
@@ -179,9 +186,10 @@ capability-checked, and rate-limited.
 | `sessions.ts` | Session + token lifecycle (one-time boot token, cookie token, constant-time compare, TTL, rate bucket). |
 | `pathPolicy.ts` | Glob compilation, relative-path normalization, canonical resolution, symlink-escape rejection. |
 | `manifest.ts` | Manifest / variables / capability validation (strict, unknown-key-rejecting). |
+| `trust.ts` | The content hash a view is trusted by (HTML, manifest, served styles and fragments) and the trusted-bytes check the server applies to each of them. Electron-free. |
 | `html.ts` | Escaping, limited `{{ }}` interpolation, document wrapper, fragment renderers. |
 | `theme.ts` | The `neuron.css` string served to views. |
-| `index.ts` | Electron wiring: IPC (`htmx-views:open/approve/close/reset-approval`), approval store, `.neuron` scaffolding, server lifecycle. |
+| `index.ts` | Electron wiring: IPC (`htmx-views:open/approve/close/reset-approval/list-trusted`), trust store, `.neuron` scaffolding, server lifecycle. |
 
 Renderer: `src/renderer/surfaces/HtmxViewSurface.tsx` (the tab — loading /
 permission / error / crashed states, `<webview>` host). Registered for
@@ -262,8 +270,8 @@ connect to the port — is mitigated by the unguessable per-view tokens.
 | Request floods / accidental htmx loops | Per-session token bucket (burst 30, ~15 rps) → 429; body ≤ 1 MB; file reads ≤ 2 MB; listings ≤ 500; walk budget 20 000; search capped |
 | Hostile configuration files | `variables.json`/manifests validated with versioned schemas; invalid config fails closed with diagnostics |
 | DNS rebinding | Exact Host-header check against the loopback origin |
-| Manifest self-escalation | Manifests only *request*; every grant requires user approval bound to the manifest hash; approvals live in app settings, not the workspace |
-| View impersonation after edit | Manifest hash change invalidates prior approval; source/manifest changes reload the tab with a fresh session |
+| Manifest self-escalation | Manifests only *request*; every view requires the user's trust, bound to the content hash of its HTML, manifest and served code; trust lives in app settings, not the workspace |
+| View impersonation after edit | Any change to the HTML, manifest, a stylesheet or a fragment changes the content hash: the session is revoked and the view asks again; the server refuses changed code even under a running view |
 
 Known limitations (deliberate, documented): no remote-content capability, no
 `commands.execute`/actions bridge, search is a bounded workspace scan rather

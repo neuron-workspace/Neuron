@@ -292,10 +292,11 @@ gets an isolated session. The API exposes specific operations for files,
 directories, note metadata, tags, search, typed variables, and reusable HTML
 fragments. There is no command-execution endpoint or generic filesystem proxy.
 
-Without a manifest, an `.html` file renders but receives no capabilities and
+Every `.html` view asks before it runs, and asks again after any change to its
+HTML, its manifest, or the styles and fragments it can load: trust is bound to
+that exact content. Without a manifest a view receives no capabilities and
 cannot read workspace data. A manifest requests named capabilities and allowed
-paths; every requested capability prompts for one-time or persistent approval
-tied to the exact manifest content. A manifest with no permissions grants nothing. Network policy is
+paths, which the prompt lists. A manifest with no permissions grants nothing. Network policy is
 always `none`: views cannot fetch remote content, navigate away, or open popups.
 
 Follow the full [HTMX view user guide](htmx-views.md#user-guide) for templates,

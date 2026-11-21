@@ -23,6 +23,7 @@ await build({
       export * from './src/main/htmx/html';
       export * from './src/main/htmx/server';
       export * from './src/main/htmx/neuronJs';
+      export * from './src/main/htmx/trust';
       export { configureWriteJournal, listJournalEntries } from './src/main/journal';
       export { initHtmxViews } from './src/main/htmx/index';
       export { ipcHandlers } from 'electron';
@@ -152,6 +153,15 @@ for (const allowedReadPaths of [undefined, [], ['notes/**']]) {
   assert.equal(result.status, 'needs-approval');
   assert.deepEqual(result.readPaths, allowedReadPaths?.length ? allowedReadPaths : ['**']);
 }
+// A view with no manifest asks too (7B): HTML alone can be malicious.
+{
+  rmSync(join(ws, '.neuron', 'manifests', 'approval.json'));
+  const result = await m.ipcHandlers.get('htmx-views:open')({ trusted: true }, 'approval.html');
+  assert.equal(result.status, 'needs-approval', 'a view with no capabilities still asks before it runs');
+  assert.deepEqual(result.permissions, []);
+  assert.equal(result.changed, false);
+  assert.match(result.contentHash, /^[0-9a-f]{64}$/);
+}
 assert.equal(m.ipcHandlers.get('htmx-views:close')({ trusted: false }, 'some-session').success, false);
 // Opening a view must not scaffold through a .neuron junction outside the workspace.
 if (symlinksWork) {
@@ -169,7 +179,6 @@ if (symlinksWork) {
   assert.deepEqual(readdirSync(scaffoldTarget), [], 'scaffolding never writes outside the workspace');
 }
 rmSync(join(ws, 'approval.html'));
-rmSync(join(ws, '.neuron', 'manifests', 'approval.json'));
 
 // --- view + manifest paths -----------------------------------------------------
 assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
@@ -296,11 +305,12 @@ assert.equal(m.interpolate('{{ nope.x }}', { params: {} }), '');
 
 // --- sessions -----------------------------------------------------------------
 const sessions = new m.SessionManager();
-const mkSession = (caps, readPatterns, writePatterns = []) => sessions.create({
-  viewPath: 'dash.html', root: ws, name: 'Dash', theme: 'dark',
+const mkSession = (caps, readPatterns, writePatterns = [], viewPath = 'dash.html') => sessions.create({
+  viewPath, root: ws, name: 'Dash', theme: 'dark',
   caps: new Set(caps),
   readPolicy: readPatterns.map(m.compileGlob),
   writePolicy: writePatterns.map(m.compileGlob),
+  trusted: m.computeTrust(ws, viewPath).files,
 });
 {
   const s = mkSession(['notes.read'], ['**']);
@@ -401,6 +411,7 @@ const unmanifested = sessions.create({
   caps: noManifestGrants.caps,
   readPolicy: noManifestGrants.readPatterns.map(m.compileGlob),
   writePolicy: [],
+  trusted: m.computeTrust(ws, 'report.html').files,
 });
 const unmanifestedRes = await fetch(`${srv.origin}/views/${unmanifested.id}/document?boot=${unmanifested.bootToken}`);
 assert.equal(unmanifestedRes.status, 200, 'an unmanifested .html file still renders');
@@ -414,6 +425,7 @@ assert.ok((await unmanifestedRes.text()).includes('Unmanifested report'));
   const s = sessions.create({
     viewPath: 'full.html', root: ws, name: 'Full', theme: 'light',
     caps: new Set(['variables.read']), readPolicy: [], writePolicy: [],
+    trusted: m.computeTrust(ws, 'full.html').files,
   });
   const res = await fetch(`${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`);
   assert.equal(res.status, 200);
@@ -686,7 +698,180 @@ assert.equal((await api(writer, '/api/v1/files/content?path=data/made.txt')).sta
 sessions.revoke(reader.id);
 assert.equal((await api(reader, '/api/v1/context')).status, 401, 'revoked session -> 401');
 
+// --- 7B: trust is bound to content --------------------------------------------
+{
+  const view = 'trusty.html';
+  writeFileSync(join(ws, view), '<h1>Trusty</h1>');
+  mkdirSync(join(ws, '.neuron', 'styles'), { recursive: true });
+  writeFileSync(join(ws, '.neuron', 'styles', 'trusty.css'), 'h1 { color: red; }');
+  const hash = () => m.computeTrust(ws, view).contentHash;
+  const base = hash();
+  assert.match(base, /^[0-9a-f]{64}$/);
+  assert.equal(hash(), base, 'the hash is stable');
+
+  // Exactly the set the server serves to this view, sorted, each path included.
+  const set = m.computeTrust(ws, view).paths;
+  assert.deepEqual(set, [...set].sort(), 'stable order');
+  assert.ok(set.includes(view), 'the HTML');
+  assert.ok(set.includes('.neuron/styles/trusty.css'), 'stylesheets');
+  assert.ok(set.includes('.neuron/fragments/greet.html'), 'fragments');
+  assert.ok(!set.includes('.neuron/variables.json'), 'variables are data, not code');
+  assert.ok(!set.some((p) => p.startsWith('notes/')), 'notes are data the view may read, not code it runs');
+
+  const changes = (label, file, change, restore) => {
+    const before = hash();
+    change();
+    assert.notEqual(hash(), before, `${label} changes the hash`);
+    restore();
+    assert.equal(hash(), before, `${label}: restoring the bytes restores the hash`);
+  };
+  const edit = (rel, text) => { const full = join(ws, ...rel.split('/')); const old = readFileSync(full); return [() => writeFileSync(full, text), () => writeFileSync(full, old)]; };
+  changes('the HTML', view, ...edit(view, '<h1>Trusty v2</h1><script>steal()</script>'));
+  changes('a stylesheet', 'style', ...edit('.neuron/styles/trusty.css', 'h1 { color: blue; }'));
+  changes('a fragment', 'fragment', ...edit('.neuron/fragments/greet.html', '<script>steal()</script>'));
+  mkdirSync(join(ws, '.neuron', 'manifests'), { recursive: true });
+  changes('adding a manifest', 'manifest',
+    () => writeFileSync(join(ws, '.neuron', 'manifests', 'trusty.json'), JSON.stringify({ permissions: [] })),
+    () => rmSync(join(ws, '.neuron', 'manifests', 'trusty.json')));
+  writeFileSync(join(ws, '.neuron', 'manifests', 'trusty.json'), JSON.stringify({ permissions: [] }));
+  changes('editing the manifest', 'manifest', ...edit('.neuron/manifests/trusty.json', JSON.stringify({ permissions: ['workspace.files.read'] })));
+  rmSync(join(ws, '.neuron', 'manifests', 'trusty.json'));
+  changes('a new fragment', 'fragment',
+    () => writeFileSync(join(ws, '.neuron', 'fragments', 'late.html'), '<p>late</p>'),
+    () => rmSync(join(ws, '.neuron', 'fragments', 'late.html')));
+  // Unrelated files do not touch it: notes, data, variables, other views, templates.
+  const unrelated = hash();
+  writeFileSync(join(ws, 'notes', 'hello.md'), readFileSync(join(ws, 'notes', 'hello.md'), 'utf8') + '\nmore\n');
+  writeFileSync(join(ws, 'data', 'out.txt'), 'v2');
+  writeFileSync(join(ws, '.neuron', 'variables.json'), readFileSync(join(ws, '.neuron', 'variables.json'), 'utf8') + '\n');
+  writeFileSync(join(ws, 'report.html'), '<h1>Another view</h1>');
+  mkdirSync(join(ws, '.neuron', 'templates'), { recursive: true });
+  writeFileSync(join(ws, '.neuron', 'templates', 'x.html'), '<p>not served</p>');
+  writeFileSync(join(ws, '.neuron', 'styles', 'notes.txt'), 'not a stylesheet');
+  assert.equal(hash(), unrelated, 'an unrelated file does not change the hash');
+
+  // The server refuses a changed or untrusted code file, and serves a trusted unchanged one.
+  const s = mkSession([], [], [], view);
+  const boot = await fetch(`${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`);
+  assert.equal(boot.status, 200, 'the trusted document is served');
+  assert.ok((await boot.text()).includes('Trusty'));
+  assert.equal((await api(s, `/views/${s.id}/styles/trusty.css`)).status, 200, 'a trusted stylesheet is served');
+  assert.equal((await api(s, '/api/v1/fragments/greet')).status, 200, 'a trusted fragment is served');
+  const [changeCss, restoreCss] = edit('.neuron/styles/trusty.css', 'h1 { color: blue; }');
+  changeCss();
+  const refusedCss = await api(s, `/views/${s.id}/styles/trusty.css`);
+  assert.equal(refusedCss.status, 403, 'a changed stylesheet is refused');
+  assert.equal((await refusedCss.json()).error.code, 'untrusted');
+  restoreCss();
+  assert.equal((await api(s, `/views/${s.id}/styles/trusty.css`)).status, 200, 'the trusted bytes are served again');
+  const [changeFrag, restoreFrag] = edit('.neuron/fragments/greet.html', '<script>window.stolen = 1</script>');
+  changeFrag();
+  const refusedFrag = await api(s, '/api/v1/fragments/greet', { headers: { 'HX-Request': 'true' } });
+  assert.equal(refusedFrag.status, 403, 'a changed fragment (code htmx would run) is refused');
+  assert.ok(!(await refusedFrag.text()).includes('stolen'), 'none of the changed code is sent');
+  restoreFrag();
+  writeFileSync(join(ws, '.neuron', 'fragments', 'late.html'), '<p>late</p>');
+  assert.equal((await api(s, '/api/v1/fragments/late')).status, 403, 'a fragment added after trust is refused');
+  writeFileSync(join(ws, '.neuron', 'styles', 'late.css'), 'p {}');
+  assert.equal((await api(s, `/views/${s.id}/styles/late.css`)).status, 403, 'a stylesheet added after trust is refused');
+  rmSync(join(ws, '.neuron', 'fragments', 'late.html'));
+  rmSync(join(ws, '.neuron', 'styles', 'late.css'));
+  // Reloading the document after its HTML changed does not run the new HTML.
+  writeFileSync(join(ws, view), '<h1>Trusty v2</h1><script>steal()</script>');
+  const reload = await fetch(`${srv.origin}/views/${s.id}/document`, { headers: { cookie: boot.headers.get('set-cookie').split(';')[0] } });
+  assert.equal(reload.status, 403, 'a changed document is refused on reload');
+  assert.ok(!(await reload.text()).includes('steal()'));
+  sessions.revoke(s.id);
+}
+
+// --- 7B: approvals over IPC ------------------------------------------------------
+{
+  // index.ts finds the bundled htmx runtime next to its compiled file.
+  globalThis.__dirname = dirname(htmxJs);
+  let store = {};
+  const view = 'ipc-view.html';
+  writeFileSync(join(ws, view), '<p>IPC view</p>');
+  m.initHtmxViews({
+    getRepoRoot: (event) => event.trusted ? ws : null,
+    getSetting: (key) => store[key] ?? null,
+    setSetting: (key, value) => { store = { ...store, [key]: JSON.parse(JSON.stringify(value)) }; },
+  });
+  const ev = { trusted: true };
+  const ipc = (name, ...args) => m.ipcHandlers.get(name)(ev, ...args);
+  const key = `${ws}::${view}`;
+
+  // An old manifest-hash record does not count: the view asks once more.
+  store.htmxViewApprovals = { [key]: { manifestHash: 'none', grantedAt: '2025-01-01T00:00:00.000Z' } };
+  let prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(prompt.status, 'needs-approval', 'an old manifest-hash record does not count');
+  assert.equal(prompt.changed, false, 'and it is not reported as a change');
+  assert.deepEqual((await ipc('htmx-views:list-trusted')).views, [], 'nor is it listed as trusted');
+
+  // Trust the version the prompt showed.
+  assert.equal((await ipc('htmx-views:approve', view, 'f'.repeat(64))).changed, true, 'a hash that is not the current version is refused');
+  assert.equal((await ipc('htmx-views:approve', view, 'always')).success, false, 'the old scope argument is gone');
+  assert.equal((await ipc('htmx-views:approve', view, prompt.contentHash)).success, true);
+  const record = store.htmxViewApprovals[key];
+  assert.equal(record.contentHash, prompt.contentHash, 'stored as { contentHash, grantedAt }');
+  assert.ok(!Number.isNaN(Date.parse(record.grantedAt)));
+  assert.equal(record.manifestHash, undefined, 'the old record is replaced, not merged');
+  const listed = (await ipc('htmx-views:list-trusted')).views;
+  assert.deepEqual(listed.map((v) => [v.path, v.name]), [[view, 'ipc-view']]);
+  assert.equal(m.ipcHandlers.get('htmx-views:list-trusted')({ trusted: false }).success, false, 'no workspace, no list');
+
+  let ready = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(ready.status, 'ready', 'a trusted, unchanged view runs');
+  const first = await fetch(ready.url);
+  assert.equal(first.status, 200);
+  const viewCookie = { cookie: first.headers.get('set-cookie').split(';')[0] };
+
+  // Module 7: a denied capability answers 403 to the running view.
+  const denied = await fetch(`${new URL(ready.url).origin}/api/v1/files/content?path=notes/hello.md`, { headers: viewCookie });
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error.code, 'missing_capability');
+
+  // Any change asks again, says so, and stops the running session.
+  writeFileSync(join(ws, view), '<p>IPC view, edited</p>');
+  prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(prompt.status, 'needs-approval', 'an edited view asks again');
+  assert.equal(prompt.changed, true, 'and says it changed since it was trusted');
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: viewCookie })).status, 401, 'the old session is stopped');
+
+  // A change between the prompt and the click is not trusted unseen.
+  const shown = prompt.contentHash;
+  writeFileSync(join(ws, view), '<p>IPC view, edited again</p>');
+  const raced = await ipc('htmx-views:approve', view, shown);
+  assert.equal(raced.success, false);
+  assert.equal(raced.changed, true, 'the version the user did not see is not trusted');
+  prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal((await ipc('htmx-views:approve', view, prompt.contentHash)).success, true);
+
+  // Module 7: closing the tab revokes its session.
+  ready = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(ready.status, 'ready');
+  const second = await fetch(ready.url);
+  const secondCookie = { cookie: second.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: secondCookie })).status, 200);
+  assert.equal((await ipc('htmx-views:close', ready.sessionId)).success, true);
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: secondCookie })).status, 401, 'a closed view loses its session');
+
+  // Reset removes the record and revokes the running session.
+  ready = await ipc('htmx-views:open', view, 'dark');
+  const third = await fetch(ready.url);
+  const thirdCookie = { cookie: third.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await ipc('htmx-views:reset-approval', view)).success, true);
+  assert.equal(store.htmxViewApprovals[key], undefined, 'reset removes the record');
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: thirdCookie })).status, 401, 'reset revokes the session');
+  assert.deepEqual((await ipc('htmx-views:list-trusted')).views, []);
+  prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(prompt.status, 'needs-approval', 'after reset the view asks again');
+  assert.equal(prompt.changed, false);
+}
+
 srv.close();
 rmSync(ws, { recursive: true, force: true });
 rmSync(outside, { recursive: true, force: true });
 console.log(`htmx-views: all checks passed${symlinksWork ? '' : ' (symlink test skipped: no privilege)'}`);
+// index.ts keeps its own view server for the app's lifetime and has no close;
+// the IPC checks above started it, so end the run here.
+process.exit(0);

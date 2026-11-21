@@ -69,8 +69,23 @@ export interface JournalEntry {
 
 export type HtmxViewOpenResult =
   | { status: 'ready'; sessionId: string; url: string; partition: string; name: string }
-  | { status: 'needs-approval'; name: string; permissions: string[]; description?: string; readPaths: string[]; writePaths: string[] }
+  | {
+    status: 'needs-approval'; path: string; name: string; permissions: string[]; description?: string;
+    readPaths: string[]; writePaths: string[];
+    /** The version this prompt shows; approve() trusts exactly this one. */
+    contentHash: string;
+    /** It was trusted before, and has changed since. */
+    changed: boolean;
+  }
   | { status: 'error'; message: string };
+
+/** An HTML view trusted in this workspace (Workspace settings). */
+export interface TrustedHtmlView {
+  path: string;
+  name: string;
+  /** ISO time it was trusted. */
+  grantedAt: string;
+}
 
 /** Whether the toolbar should be hidden for native full screen. */
 export interface WindowChromeState {
@@ -177,9 +192,12 @@ export interface ElectronAPI {
   };
   htmxViews: {
     open: (relativePath: string, theme?: 'light' | 'dark') => Promise<HtmxViewOpenResult>;
-    approve: (relativePath: string, scope: 'always' | 'once') => Promise<{ success: boolean; error?: string }>;
+    /** Trust the version the prompt showed. `changed` when it changed in between. */
+    approve: (relativePath: string, contentHash: string) => Promise<{ success: boolean; error?: string; changed?: boolean }>;
     close: (sessionId: string) => Promise<{ success: boolean }>;
+    /** Stop trusting a view: forgets it and stops a running session. */
     resetApproval: (relativePath: string) => Promise<{ success: boolean }>;
+    listTrusted: () => Promise<{ success: boolean; views: TrustedHtmlView[] }>;
   };
   journal: {
     list: (relativePath?: string) => Promise<JournalEntry[]>;

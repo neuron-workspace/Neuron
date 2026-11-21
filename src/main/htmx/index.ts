@@ -5,7 +5,8 @@
 import { ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SessionManager, sha256 } from './sessions';
+import { SessionManager } from './sessions';
+import { computeTrust } from './trust';
 import { createViewServer, ViewServer } from './server';
 import { compilePolicy, resolveInWorkspace } from './pathPolicy';
 import { validateManifest, effectiveGrants, ViewManifest } from './manifest';
@@ -18,16 +19,20 @@ interface Deps {
   setSetting: (key: string, value: unknown) => void;
 }
 
-interface ApprovalRecord { manifestHash: string; grantedAt: string }
+/**
+ * Trust in one exact version of a view (7B): the content hash of its HTML,
+ * manifest and served code (trust.ts). It lasts until any of those change.
+ * Records from before this (`{ manifestHash }`) do not count: those views ask
+ * once more.
+ */
+interface ApprovalRecord { contentHash: string; grantedAt: string }
 type Approvals = Record<string, ApprovalRecord>;
 
-const APPROVALS_KEY = 'htmxViewApprovals';
+export const APPROVALS_KEY = 'htmxViewApprovals';
 
 const sessions = new SessionManager();
 let serverPromise: Promise<ViewServer> | null = null;
 let serverOrigin: string | null = null;
-// Session-lifetime ("once") approvals: viewKey → manifest hash. Never persisted.
-const onceApprovals = new Map<string, string>();
 
 /** Origin of the running view server, for navigation guards in main.ts. */
 export function getViewServerOrigin(): string | null {
@@ -112,35 +117,43 @@ function ensureScaffold(root: string): void {
 
 // --- manifest + approvals -------------------------------------------------------
 
-function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; hash: string; errors: string[]; manifestPath: string } {
+function loadManifest(root: string, viewRel: string): { manifest: ViewManifest | null; errors: string[]; manifestPath: string } {
   const manifestPath = manifestPathFor(viewRel);
   const primary = resolveInWorkspace(root, manifestPath);
   const legacy = resolveInWorkspace(root, legacyManifestPathFor(viewRel));
   const resolved = primary && fs.existsSync(primary.full) ? primary
     : legacy && fs.existsSync(legacy.full) ? legacy
     : null;
-  if (!resolved) return { manifest: null, hash: 'none', errors: [], manifestPath };
+  if (!resolved) return { manifest: null, errors: [], manifestPath };
   let raw: string;
-  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, hash: 'none', errors: ['Manifest could not be read.'], manifestPath }; }
+  try { raw = fs.readFileSync(resolved.full, 'utf-8'); } catch { return { manifest: null, errors: ['Manifest could not be read.'], manifestPath }; }
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return { manifest: null, hash: 'none', errors: ['Manifest is not valid JSON.'], manifestPath }; }
+  try { parsed = JSON.parse(raw); } catch { return { manifest: null, errors: ['Manifest is not valid JSON.'], manifestPath }; }
   const result = validateManifest(parsed);
-  if (!result.ok) return { manifest: null, hash: 'none', errors: result.errors, manifestPath };
-  // Approvals bind to the exact manifest content: any edit re-requests consent.
-  return { manifest: result.value!, hash: sha256(raw), errors: [], manifestPath };
+  if (!result.ok) return { manifest: null, errors: result.errors, manifestPath };
+  return { manifest: result.value!, errors: [], manifestPath };
 }
 
 function viewKey(root: string, viewRel: string): string {
   return `${root}::${viewRel}`;
 }
 
-export function initHtmxViews(deps: Deps): void {
-  const readApprovals = (): Approvals => Object.assign(Object.create(null), deps.getSetting(APPROVALS_KEY));
+const CONTENT_HASH = /^[0-9a-f]{64}$/;
 
-  const isApproved = (key: string, hash: string): boolean => {
-    if (onceApprovals.get(key) === hash) return true;
-    const record = readApprovals()[key];
-    return !!record && record.manifestHash === hash;
+export function initHtmxViews(deps: Deps): void {
+  /** Only content-bound records count; anything else (old manifest-hash records) is dropped. */
+  const readApprovals = (): Approvals => {
+    const out: Approvals = Object.create(null);
+    const raw = deps.getSetting(APPROVALS_KEY);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      const record = value as Partial<ApprovalRecord> | null;
+      if (record && typeof record === 'object' && typeof record.contentHash === 'string' && CONTENT_HASH.test(record.contentHash)
+        && typeof record.grantedAt === 'string') {
+        out[key] = { contentHash: record.contentHash, grantedAt: record.grantedAt };
+      }
+    }
+    return out;
   };
 
   ipcMain.handle('htmx-views:open', async (_event, relativePath: string, theme?: 'light' | 'dark') => {
@@ -153,20 +166,31 @@ export function initHtmxViews(deps: Deps): void {
 
     try { ensureScaffold(root); } catch { /* read-only workspace: views still work */ }
 
-    const { manifest, hash, errors, manifestPath } = loadManifest(root, resolved.rel);
+    const { manifest, errors, manifestPath } = loadManifest(root, resolved.rel);
     if (errors.length) return { status: 'error', message: `Invalid manifest (${manifestPath}): ${errors.join(' ')}` };
 
     const grants = effectiveGrants(manifest);
     const name = manifest?.name ?? defaultViewName(resolved.rel);
-    if (grants.needsApproval && !isApproved(viewKey(root, resolved.rel), hash)) {
+    const key = viewKey(root, resolved.rel);
+    // Every view asks first, capabilities or not, and asks again after any
+    // change to its HTML, manifest or served code.
+    const trust = computeTrust(root, resolved.rel);
+    const record = readApprovals()[key];
+    if (!record || record.contentHash !== trust.contentHash) {
+      // A view that changed under a running session stops now.
+      const running = sessions.findByPath(root, resolved.rel);
+      if (running) sessions.revoke(running.id);
       return {
         status: 'needs-approval',
+        path: resolved.rel,
         name,
         description: manifest?.description,
         permissions: [...grants.caps],
         readPaths: ['workspace.files.read', 'workspace.directories.list', 'workspace.search', 'notes.read', 'tags.read']
           .some((cap) => grants.caps.has(cap)) ? grants.readPatterns : [],
         writePaths: grants.writePatterns,
+        contentHash: trust.contentHash,
+        changed: !!record,
       };
     }
 
@@ -182,6 +206,7 @@ export function initHtmxViews(deps: Deps): void {
       caps: grants.caps,
       readPolicy: compilePolicy(grants.readPatterns),
       writePolicy: compilePolicy(grants.writePatterns),
+      trusted: trust.files,
     });
     return {
       status: 'ready',
@@ -192,22 +217,23 @@ export function initHtmxViews(deps: Deps): void {
     };
   });
 
-  ipcMain.handle('htmx-views:approve', (_event, relativePath: string, scope: 'always' | 'once') => {
+  // Trust the version the prompt showed, and only that one: the renderer sends
+  // back the hash it was given, and a view that changed in between asks again.
+  ipcMain.handle('htmx-views:approve', (_event, relativePath: string, contentHash: string) => {
     const root = deps.getRepoRoot(_event);
     if (!root) return { success: false, error: 'No workspace is open.' };
-    if (scope !== 'always' && scope !== 'once') return { success: false, error: 'Invalid approval scope.' };
+    // Inline, not CONTENT_HASH: tools/main-guards.test.mjs runs this handler on its own.
+    if (typeof contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(contentHash)) return { success: false, error: 'Invalid content hash.' };
     const resolved = resolveInWorkspace(root, relativePath);
-    if (!resolved) return { success: false, error: 'Invalid path.' };
-    const { manifest, hash, errors } = loadManifest(root, resolved.rel);
-    if (errors.length || !manifest) return { success: false, error: 'Manifest missing or invalid.' };
-    const key = viewKey(root, resolved.rel);
-    if (scope === 'always') {
-      const approvals = readApprovals();
-      approvals[key] = { manifestHash: hash, grantedAt: new Date().toISOString() };
-      deps.setSetting(APPROVALS_KEY, approvals);
-    } else {
-      onceApprovals.set(key, hash);
+    if (!resolved || !isViewPath(resolved.rel)) return { success: false, error: 'Invalid path.' };
+    if (!fs.existsSync(resolved.full)) return { success: false, error: 'View file not found.' };
+    if (loadManifest(root, resolved.rel).errors.length) return { success: false, error: 'Manifest invalid.' };
+    if (computeTrust(root, resolved.rel).contentHash !== contentHash) {
+      return { success: false, changed: true, error: 'This view changed while you were reviewing it.' };
     }
+    const approvals = readApprovals();
+    approvals[viewKey(root, resolved.rel)] = { contentHash, grantedAt: new Date().toISOString() };
+    deps.setSetting(APPROVALS_KEY, approvals);
     return { success: true };
   });
 
@@ -218,17 +244,32 @@ export function initHtmxViews(deps: Deps): void {
     return { success: true };
   });
 
+  // Take trust back: the record goes and a running session stops at once.
   ipcMain.handle('htmx-views:reset-approval', (_event, relativePath: string) => {
     const root = deps.getRepoRoot(_event);
     if (!root) return { success: false };
     const resolved = resolveInWorkspace(root, relativePath);
     if (!resolved) return { success: false };
     const key = viewKey(root, resolved.rel);
-    onceApprovals.delete(key);
     const approvals = readApprovals();
     if (approvals[key]) { delete approvals[key]; deps.setSetting(APPROVALS_KEY, approvals); }
     const session = sessions.findByPath(root, resolved.rel);
     if (session) sessions.revoke(session.id);
     return { success: true };
+  });
+
+  /** The views trusted in this window's workspace, for Workspace settings. */
+  ipcMain.handle('htmx-views:list-trusted', (_event) => {
+    const root = deps.getRepoRoot(_event);
+    if (!root) return { success: false, views: [] };
+    const prefix = `${root}::`;
+    const views = Object.entries(readApprovals())
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, record]) => {
+        const rel = key.slice(prefix.length);
+        return { path: rel, name: defaultViewName(rel), grantedAt: record.grantedAt };
+      })
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    return { success: true, views };
   });
 }

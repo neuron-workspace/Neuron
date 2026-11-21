@@ -289,4 +289,114 @@ const { renderToStaticMarkup } = await import('react-dom/server');
   assert.ok(html('```\nlet x = "<b>";\n```').includes('&lt;b&gt;'), 'code blocks escape content');
 }
 
+// --- Module 7: round trip keeps unknown node types and extra fields, file-wide ---------
+{
+  const original = {
+    version: '1.0-other', future: { anything: [1, { deep: true }] },
+    nodes: [
+      { id: 't', type: 'text', x: 1, y: 2, width: 30, height: 40, text: 'x', z: 3, tags: ['a'] },
+      { id: 'u', type: 'sticker', x: 5, y: 6, width: 70, height: 80, emoji: '★', nested: { a: { b: null } } },
+      { id: 'f', type: 'file', x: 0, y: 0, width: 10, height: 10, file: 'a.md', subpath: '#h' },
+      { id: 'l', type: 'link', x: 0, y: 0, width: 10, height: 10, url: 'https://example.com' },
+      { id: 'g', type: 'group', x: -9, y: -9, width: 99, height: 99, label: 'G', background: 'bg.png', backgroundStyle: 'cover' },
+    ],
+    edges: [{ id: 'e', fromNode: 't', toNode: 'u', fromSide: 'right', toSide: 'left', label: 'L', color: '#123456', weight: 7 }],
+  };
+  const once = m.serializeCanvas(m.parseCanvas(JSON.stringify(original)).doc);
+  const parsed = JSON.parse(once);
+  assert.deepEqual({ ...parsed, nodes: undefined, edges: undefined }, { ...original, nodes: undefined, edges: undefined }, 'unknown top-level fields kept');
+  assert.deepEqual(parsed.nodes, original.nodes, 'every node, known type or not, keeps every field');
+  assert.deepEqual(parsed.edges, original.edges, 'edges keep every field');
+  assert.equal(m.serializeCanvas(m.parseCanvas(once).doc), once, 'a second round trip is byte-identical');
+}
+
+// --- Module 7: undo/redo across add, move, edge and delete -----------------------------
+{
+  // As the surface does: commit() pushes the state before, then adopts the next.
+  const h = new m.CanvasHistory();
+  let current = m.parseCanvas(JSON.stringify({ nodes: [{ id: 'a', type: 'text', x: 0, y: 0, width: 100, height: 50, text: 'A' }], edges: [] })).doc;
+  const states = [current];
+  const commit = (next) => { h.push(current); current = next; states.push(next); };
+  commit({ ...current, nodes: [...current.nodes, { id: 'b', type: 'text', x: 300, y: 0, width: 100, height: 50, text: 'B' }] }); // add
+  commit({ ...current, nodes: current.nodes.map((n) => (n.id === 'b' ? { ...n, x: 400, y: 120 } : n)) });                        // move
+  commit({ ...current, edges: [...current.edges, { id: 'ab', fromNode: 'a', toNode: 'b' }] });                                      // edge
+  commit(m.deleteSelection(current, new Set(['a']), new Set()));                                                                    // delete (cascades the edge)
+  assert.deepEqual(current.nodes.map((n) => n.id), ['b']);
+  assert.equal(current.edges.length, 0, 'deleting a node takes its edge');
+
+  for (let i = states.length - 2; i >= 0; i--) {
+    current = h.undo(current);
+    assert.deepEqual(current, states[i], `undo step back to state ${i}`);
+  }
+  assert.equal(h.undo(current), null, 'nothing before the first state');
+  assert.equal(current.nodes.length, 1, 'back to the single original node');
+  for (let i = 1; i < states.length; i++) {
+    current = h.redo(current);
+    assert.deepEqual(current, states[i], `redo step forward to state ${i}`);
+  }
+  assert.equal(h.redo(current), null, 'nothing after the last state');
+  // Undo the delete restores the node and its edge together.
+  current = h.undo(current);
+  assert.deepEqual(current.nodes.map((n) => n.id), ['a', 'b']);
+  assert.deepEqual(current.edges.map((e) => e.id), ['ab'], 'the edge comes back with its node');
+}
+
+// --- Module 7: edge routing for every side pair ------------------------------------------
+{
+  const a = { id: 'a', type: 'text', x: 0, y: 0, width: 200, height: 100 };
+  const b = { id: 'b', type: 'text', x: 500, y: 300, width: 120, height: 80 };
+  const numbers = (d) => d.match(/-?\d+(\.\d+)?(e-?\d+)?/g).map(Number);
+  // Each anchor is the middle of its side, on the node's edge.
+  assert.deepEqual(m.anchor(a, 'top'), { x: 100, y: 0 });
+  assert.deepEqual(m.anchor(a, 'bottom'), { x: 100, y: 100 });
+  assert.deepEqual(m.anchor(a, 'left'), { x: 0, y: 50 });
+  assert.deepEqual(m.anchor(a, 'right'), { x: 200, y: 50 });
+  let pairs = 0;
+  for (const fromSide of m.SIDES) {
+    for (const toSide of m.SIDES) {
+      const from = m.anchor(a, fromSide);
+      const to = m.anchor(b, toSide);
+      const d = m.edgePath(from, fromSide, to, toSide);
+      assert.match(d, /^M [-\d.e]+ [-\d.e]+ C [-\d.e]+ [-\d.e]+, [-\d.e]+ [-\d.e]+, [-\d.e]+ [-\d.e]+$/, `${fromSide}->${toSide}: one cubic curve`);
+      const [mx, my, c1x, c1y, c2x, c2y, ex, ey] = numbers(d);
+      assert.ok([mx, my, c1x, c1y, c2x, c2y, ex, ey].every(Number.isFinite), `${fromSide}->${toSide}: finite`);
+      assert.deepEqual({ x: mx, y: my }, from, `${fromSide}->${toSide}: starts at the from anchor`);
+      assert.deepEqual({ x: ex, y: ey }, to, `${fromSide}->${toSide}: ends at the to anchor`);
+      // The curve leaves and enters along each side's outward normal, at least 40 px out.
+      const out1 = { x: c1x - from.x, y: c1y - from.y };
+      const out2 = { x: c2x - to.x, y: c2y - to.y };
+      const n1 = m.SIDE_NORMAL[fromSide], n2 = m.SIDE_NORMAL[toSide];
+      assert.ok(out1.x * n1.x + out1.y * n1.y >= 40 && out1.x * n1.y - out1.y * n1.x === 0, `${fromSide}->${toSide}: leaves outward from ${fromSide}`);
+      assert.ok(out2.x * n2.x + out2.y * n2.y >= 40 && out2.x * n2.y - out2.y * n2.x === 0, `${fromSide}->${toSide}: arrives from outside ${toSide}`);
+      pairs++;
+    }
+  }
+  assert.equal(pairs, 16, 'every side pair');
+  // Unstored sides face each other.
+  const at = (x, y) => ({ id: 'n', type: 'text', x, y, width: 100, height: 100 });
+  assert.deepEqual(m.autoSides(at(0, 0), at(500, 0)), ['right', 'left']);
+  assert.deepEqual(m.autoSides(at(500, 0), at(0, 0)), ['left', 'right']);
+  assert.deepEqual(m.autoSides(at(0, 0), at(0, 500)), ['bottom', 'top']);
+  assert.deepEqual(m.autoSides(at(0, 500), at(0, 0)), ['top', 'bottom']);
+  for (const side of m.SIDES) assert.equal(m.sideForPoint(a, m.anchor(a, side)), side, `a point on ${side} picks ${side}`);
+  // Coincident anchors still give a curve with real control points.
+  assert.ok(numbers(m.edgePath({ x: 5, y: 5 }, 'top', { x: 5, y: 5 }, 'top')).every(Number.isFinite));
+}
+
+// --- Module 7: canvas Markdown links go through safeUrl; raw HTML stays text -------------
+{
+  const html = (src) => renderToStaticMarkup(m.renderMarkdown(src));
+  for (const bad of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,hi', 'vbscript:msgbox(1)', 'file:///etc/passwd']) {
+    const out = html(`[x](${bad})`);
+    assert.ok(!out.includes('<a'), `${bad} produces no link`);
+    assert.ok(!out.toLowerCase().includes('href'), `${bad} produces no href`);
+  }
+  assert.ok(html('[mail](mailto:me@example.com)').includes('href="mailto:me@example.com"'), 'a safe scheme still links');
+  for (const raw of ['<a href="javascript:alert(1)">x</a>', '<iframe src="https://evil.example"></iframe>', '<svg onload=alert(1)>', '**<b>bold</b>**']) {
+    const out = html(raw);
+    assert.ok(!/<(a|iframe|svg|b)[\s>]/.test(out), `raw HTML stays text: ${raw}`);
+    assert.ok(out.includes('&lt;'), `escaped: ${raw}`);
+  }
+}
+
 console.log('canvas-model: all checks passed');

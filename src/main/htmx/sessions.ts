@@ -19,6 +19,12 @@ export interface ViewSession {
   caps: ReadonlySet<string>;
   readPolicy: GlobMatcher[];
   writePolicy: GlobMatcher[];
+  /**
+   * The workspace files this view was trusted with (trust.ts): trustKey(rel)
+   * -> SHA-256 of the trusted bytes. The server serves a workspace file as code
+   * or style only when it is in here and still matches.
+   */
+  trusted: ReadonlyMap<string, string>;
   /** One-time token authenticating the initial document request; null once used. */
   bootToken: string | null;
   cookieToken: string;
@@ -43,7 +49,7 @@ function safeEqual(a: string, b: string): boolean {
 export class SessionManager {
   private sessions = new Map<string, ViewSession>();
 
-  create(init: Pick<ViewSession, 'viewPath' | 'root' | 'name' | 'theme' | 'caps' | 'readPolicy' | 'writePolicy'>): ViewSession {
+  create(init: Pick<ViewSession, 'viewPath' | 'root' | 'name' | 'theme' | 'caps' | 'readPolicy' | 'writePolicy' | 'trusted'>): ViewSession {
     const session: ViewSession = {
       ...init,
       id: token(),

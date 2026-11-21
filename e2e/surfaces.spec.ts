@@ -58,7 +58,7 @@ test('an HTML view names the file and asks for its declared permissions before i
   await expect(prompt).toContainText('Custom dashboard.html');
   await expect(page.locator('webview')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Allow for this view' }).click();
+  await page.getByRole('button', { name: 'Trust this version' }).click();
   await expect(page.getByText('HTML view', { exact: false })).toBeVisible();
   await expect(page.locator('webview')).toHaveCount(1);
 });
@@ -75,13 +75,13 @@ test('a view that writes has to say so in the prompt, not only in its manifest',
   await expect(card).toContainText(/write/i);
   await expect(card).toContainText('Can change');
 
-  await page.getByRole('button', { name: 'Allow for this view' }).click();
+  await page.getByRole('button', { name: 'Trust this version' }).click();
   await expect(page.getByText('HTML view', { exact: false })).toBeVisible();
 });
 
 test('the dashboard view actually loads its data, not just its markup', async ({ app, page }) => {
   await page.locator('.note-row', { hasText: 'Custom dashboard' }).first().click();
-  await page.getByRole('button', { name: 'Allow for this view' }).click();
+  await page.getByRole('button', { name: 'Trust this version' }).click();
   await expect(page.locator('webview')).toHaveCount(1);
 
   // Asserting the webview mounted is what the other tests do, and it is not
@@ -150,8 +150,11 @@ test('a full-document view is served as written and can call neuron.context()', 
 </html>
 `);
   await page.locator('.note-row', { hasText: 'Vue complete' }).first().click();
-  // No manifest, so no prompt: it renders straight away with no capabilities,
-  // and context() needs none.
+  // No manifest, so no capabilities -- and context() needs none -- but it still
+  // asks before it runs (7B): HTML alone can be malicious.
+  await expect(page.locator('[data-view-approval]')).toBeVisible();
+  await expect(page.locator('webview')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Trust this version' }).click();
   await expect(page.locator('webview')).toHaveCount(1);
 
   const view = await app.evaluate(async ({ webContents }) => {

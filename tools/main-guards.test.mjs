@@ -93,6 +93,7 @@ const context = vm.createContext({
   writeSettings: (...args) => { effect('settings')(...args); return true; },
   secretCodec: () => ({ available: true }), encodeSecret: (value) => `encrypted:${value}`,
   rendererSettingsValue: (_key, value) => value,
+  VIEW_TRUST_KEY: 'htmxViewApprovals',
   readSecret: effect('readSecret'),
   listJournalEntries: effect('journal'), restoreJournalEntry: effect('restore'),
   diagnostics: { write: effect('diagnostics') },
@@ -136,8 +137,8 @@ const contracts = {
   'plugin:net-request': [{ url: 'https://example.com', method: 'GET', headers: { accept: 'text/plain' }, body: '' }],
   'notes:log-error': [{ phase: 'test', error_message: 'test', stack_trace: '', remediation_step: '' }],
   'diagnostics:open-logs': [],
-  'htmx-views:open': ['view.html', 'dark'], 'htmx-views:approve': ['view.html', 'always'],
-  'htmx-views:close': ['session-id'], 'htmx-views:reset-approval': ['view.html'],
+  'htmx-views:open': ['view.html', 'dark'], 'htmx-views:approve': ['view.html', 'a'.repeat(64)],
+  'htmx-views:close': ['session-id'], 'htmx-views:reset-approval': ['view.html'], 'htmx-views:list-trusted': [],
 };
 assert.deepEqual([...handlers.keys()].sort(), Object.keys(contracts).sort(), 'new handlers need a security contract');
 assert.equal(context.checkEntry({ sender, senderFrame: mainFrame }), entry);
@@ -318,6 +319,8 @@ lstatError = null;
 // Valid calls still reach their existing contracts after the type checks.
 assert.equal((await handlers.get('settings:set')(event, 'example', { enabled: true })).success, true);
 assert.equal(settings.example.enabled, true);
+// Which HTML views are trusted is main's to write (7B): a renderer cannot trust a view nobody saw.
+await rejectArgs('settings:set', ['htmxViewApprovals', { '/workspace::view.html': { contentHash: 'a'.repeat(64), grantedAt: 'now' } }]);
 assert.equal((await handlers.get('settings:set-secret')(event, 'provider', 'apiKey', 'value')).success, true);
 assert.equal(settings.__secrets.provider.apiKey, 'encrypted:value');
 assert.equal((await handlers.get('settings:set-secret')(event, 'provider', 'apiKey', '')).success, true);

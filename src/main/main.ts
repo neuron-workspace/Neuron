@@ -11,7 +11,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { importChromeCookies, cleanupChromeCookieCopies } from './chrome-cookies';
 import { requestPublic } from './public-network';
 import { encodeSecret, decodeSecret, migrateSecretSettings, rendererSettingsValue, NO_KEYCHAIN_ERROR, type SecretCodec } from './secret-storage';
-import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
+import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions, APPROVALS_KEY as VIEW_TRUST_KEY } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
 import { folderKey, keyNames, listedWorkspaces, nameOf, startupRecents, uniqueRecents, withName } from './recentRepos';
@@ -577,6 +577,9 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
   if (!entryOf(event)) return { success: false, error: 'Not available here.' };
   if (!safeSettingsKey(key)) return { success: false, error: 'Invalid settings key.' };
   if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
+  // Which HTML views are trusted is written by the trust prompt in main only
+  // (htmx/index.ts); a renderer write here would trust a view nobody saw.
+  if (key === VIEW_TRUST_KEY) return { success: false, error: 'Reserved key.' };
   if (JSON.stringify(rendererSettingsValue(key, value)) !== JSON.stringify(value)) return { success: false, error: 'Use the secret store for keys.' };
   const settings = readSettings();
   settings[key] = value;
