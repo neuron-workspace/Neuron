@@ -210,6 +210,20 @@ const newUserData = () => {
   const afterDelete = journal.list(ws);
   assert.equal(afterDelete.length, 3, 'delete captures even inside the coalesce window');
   assert.equal(afterDelete[0].operation, 'delete');
+
+  // Links rewritten by Neuron (11D/11E) are their own entry, inside the window
+  // too, so restoring it undoes exactly the rewrite and not the user's edit.
+  clock += 10;
+  writeFileSync(file, 'edited by hand [[Old]]');
+  journal.capturePreImage(ws, file, 'overwrite');
+  clock += 10;
+  writeFileSync(file, 'edited by hand [[New]]');
+  assert.equal(journal.capturePreImage(ws, file, 'overwrite').status, 'not-needed', 'an ordinary save coalesces');
+  const forced = journal.capturePreImage(ws, file, 'overwrite', { coalesce: false });
+  assert.equal(forced.status, 'captured', 'a rewrite is recorded anyway');
+  writeFileSync(file, 'edited by hand [[Rewritten]]');
+  assert.equal(journal.restore(ws, forced.entry.id).success, true);
+  assert.equal(readFileSync(file, 'utf-8'), 'edited by hand [[New]]', 'undoing the rewrite keeps the edit before it');
 }
 
 // --- workspaces do not share a store ----------------------------------------

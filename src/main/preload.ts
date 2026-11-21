@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
   createSection: (relativePath: string) => ipcRenderer.invoke('notes:create-section', relativePath),
+  renamePath: (from: string, to: string) => ipcRenderer.invoke('workspace:rename', from, to),
+  writeLinks: (edits: { path: string; content: string }[]) => ipcRenderer.invoke('notes:write-links', edits),
   journal: {
     list: (relativePath?: string) => ipcRenderer.invoke('journal:list', relativePath),
     restore: (entryId: string) => ipcRenderer.invoke('journal:restore', entryId),

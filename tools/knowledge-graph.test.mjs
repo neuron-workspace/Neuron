@@ -18,12 +18,14 @@ const notes = [
 ];
 const m = new KnowledgeGraph();
 assert.equal(m.sync(notes), true);
-assert.equal(m.graph.order, 9);
-assert.equal(m.graph.hasNode('unresolved:same'), true);
+assert.equal(m.graph.order, 8);
+// Two notes named `same` at one depth: the first by path, as a click opens it
+// (11D; this used to be an unresolved node).
+assert.equal(m.graph.hasNode('unresolved:same'), false);
 assert.equal(m.graph.hasNode('unresolved:not-a-link'), false);
 assert.equal(m.graph.getNodeAttribute('image.png', 'kind'), 'attachment');
 assert.equal(m.graph.getNodeAttribute('board.canvas', 'kind'), 'canvas');
-assert.deepEqual(new Set(m.graph.outNeighbors('a.md')), new Set(['folder/b.md', 'unresolved:missing', 'unresolved:same', 'image.png']));
+assert.deepEqual(new Set(m.graph.outNeighbors('a.md')), new Set(['folder/b.md', 'unresolved:missing', 'one/same.md', 'image.png']));
 assert.equal(m.graph.outEdges('a.md', 'folder/b.md').length, 2);
 assert.deepEqual(m.local('c.md', 1), new Set(['c.md', 'a.md', 'folder/b.md']));
 const parsed = m.parsed;
@@ -41,6 +43,24 @@ assert.equal(m.parsed, parsed + 2);
 m.sync(notes.filter(n => n.path !== 'two/same.md'));
 assert.equal(m.graph.hasNode('unresolved:same'), false);
 assert.ok(m.graph.hasDirectedEdge('a.md', 'one/same.md'));
+// The linking note's own folder wins, and a new file there takes the link.
+m.sync([...notes, { path: 'two/link.md', content: '[[same]]' }]);
+assert.ok(m.graph.hasDirectedEdge('two/link.md', 'two/same.md'));
+// An alias is an edge too, and a real file name beats it.
+const aliased = new KnowledgeGraph();
+aliased.sync([
+  { path: 'people/Ada Lovelace.md', content: '---\naliases: [Ada, Countess]\n---\n' },
+  { path: 'Countess.md', content: '' },
+  { path: 'x.md', content: '[[Ada]] [[Countess]]' },
+]);
+assert.deepEqual(new Set(aliased.graph.outNeighbors('x.md')), new Set(['people/Ada Lovelace.md', 'Countess.md']));
+// Changing only an alias re-resolves links elsewhere.
+aliased.sync([
+  { path: 'people/Ada Lovelace.md', content: '---\naliases: [Augusta]\n---\n' },
+  { path: 'Countess.md', content: '' },
+  { path: 'x.md', content: '[[Ada]] [[Countess]]' },
+]);
+assert.ok(aliased.graph.hasNode('unresolved:ada'));
 m.sync([...notes, { path: 'Missing.md', content: '' }]);
 assert.equal(m.graph.hasNode('unresolved:missing'), false);
 assert.ok(m.graph.hasDirectedEdge('a.md', 'Missing.md'));

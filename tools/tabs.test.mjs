@@ -7,7 +7,7 @@ const { outputText } = ts.transpileModule(source, { compilerOptions: { module: t
 const {
   EMPTY_TABS, openTab, keepTab, closeTab, removeMissing,
   EMPTY_GROUPS, MAX_GROUPS, mapGroup, focusGroup, openInGroup, keepEverywhere, closeGroup, closeInGroup, canSplit, splitBlocked,
-  splitGroup, moveTab, removeMissingAll, dropPreviews, serializeGroups, restoreGroups,
+  splitGroup, moveTab, removeMissingAll, dropPreviews, serializeGroups, restoreGroups, renameInGroups,
 } = await import('data:text/javascript;base64,' + Buffer.from(outputText).toString('base64'));
 
 let checks = 0;
@@ -292,6 +292,25 @@ eq(restoreGroups({ groups: [{ tabs: ['', 'a.md', 'http://x.test/'] }], direction
   const pruned = removeMissingAll(four, (path) => path !== 'a.md' && path !== 'b.md');
   eq(pruned.groups[pruned.focused].tabs, ['c.md']);
 }
+}
+
+// A rename or move: every group's tabs, preview and selection follow, in place (11E).
+{
+  const state = {
+    groups: [
+      { tabs: ['a.md', 'docs/b.md', 'c.md'], preview: 'docs/b.md', selected: 'docs/b.md' },
+      { tabs: ['docs/b.md', 'docs/sub/d.md'], preview: null, selected: 'docs/sub/d.md' },
+      { tabs: ['c.md'], preview: null, selected: 'c.md' },
+    ],
+    direction: 'row', focused: 1,
+  };
+  const move = (path) => (path === 'docs' || path.startsWith('docs/') ? 'archive/' + path : null);
+  const next = renameInGroups(state, move);
+  eq(next.groups[0], { tabs: ['a.md', 'archive/docs/b.md', 'c.md'], preview: 'archive/docs/b.md', selected: 'archive/docs/b.md' });
+  eq(next.groups[1], { tabs: ['archive/docs/b.md', 'archive/docs/sub/d.md'], preview: null, selected: 'archive/docs/sub/d.md' });
+  assert.equal(next.groups[2], state.groups[2], 'an untouched group is the same object');
+  assert.equal(next.focused, 1);
+  assert.equal(renameInGroups(state, () => null), state, 'nothing open moved: the same state');
 }
 
 console.log(`tabs: ${checks} checks passed`);

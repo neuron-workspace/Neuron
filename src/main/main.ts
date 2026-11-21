@@ -33,6 +33,7 @@ import { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './file-li
 import { createSaveQueue, saveKey, writeAtomically } from './save-file';
 import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
+import { moveRefusal, normalizeRelative, samePath, tableMetaMove } from './workspace-rename';
 import * as pty from 'node-pty';
 import { defaultShell } from './terminal-shell';
 import { appendHistory } from './terminal-history';
@@ -967,6 +968,106 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
     console.error(`Failed to delete note ${relativePath}:`, err);
     return { success: false, error: message };
   }
+});
+
+/**
+ * Rename `fromFull` to `toFull`. A case-only rename goes through a temporary
+ * name, which Windows and macOS need to change only the case. A rename held
+ * for a moment (the watcher, an indexer) is retried, as a save's is.
+ */
+async function moveEntry(fromFull: string, toFull: string, caseOnly: boolean): Promise<void> {
+  const once = async (a: string, b: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try { await fs.promises.rename(a, b); return; } catch (error) {
+        if (attempt >= 6 || !['EPERM', 'EBUSY', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 15 * attempt));
+      }
+    }
+  };
+  fs.mkdirSync(path.dirname(toFull), { recursive: true });
+  if (!caseOnly) { await once(fromFull, toFull); return; }
+  const between = `${fromFull}.${randomBytes(6).toString('hex')}.tmp`;
+  await once(fromFull, between);
+  await once(between, toFull);
+}
+
+// Rename or move a file or folder: every entry point (F2, the menus, Move to…,
+// dragging onto a folder) comes here. Both paths are guarded like every other
+// file handler, nothing is overwritten, a folder never goes into itself, and a
+// managed CSV's settings in .neuron/tables/ go with it. The renderer rewrites
+// links afterwards through notes:write-links.
+ipcMain.handle('workspace:rename', async (event, from: string, to: string) => {
+  if (typeof from !== 'string' || typeof to !== 'string') return { success: false, error: 'Invalid path.' };
+  const source = resolveInRepo(event, from);
+  const target = resolveInRepo(event, to);
+  if (!source || !target) return { success: false, error: 'That path is outside this workspace.' };
+  const fromPath = normalizeRelative(from);
+  const toPath = normalizeRelative(to);
+  const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(source.fullPath); } catch { return { success: false, error: `“${fromPath}” is no longer there.` }; }
+  if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory())) return { success: false, error: 'Neuron only renames files and folders.' };
+  const folder = stat.isDirectory();
+  const refusal = moveRefusal(fromPath, toPath, folder, ignoreCase);
+  if (refusal) return { success: false, error: refusal };
+  if (fromPath === toPath) return { success: true };
+  if (!folder && (fileKind(fromPath) === 'blocked' || fileKind(toPath) === 'blocked')) return { success: false, error: 'Neuron doesn’t rename programs or scripts.' };
+  const caseOnly = samePath(fromPath, toPath, ignoreCase);
+  const name = toPath.slice(toPath.lastIndexOf('/') + 1);
+  if (!caseOnly && fs.existsSync(target.fullPath)) return { success: false, error: `“${name}” already exists there. Choose another name.` };
+  // After any save of this file still queued, so that save cannot land at the old name.
+  return saveQueue(saveKey(source.fullPath), async () => {
+    try {
+      // Journalled as what left the old path, so version history can bring it
+      // back there. A folder of more than 200 files is not: the move loses no
+      // content, and it would push the rest of the history out.
+      const files = folder ? walkWorkspace(source.fullPath, { limit: 201 }).files.map((file) => path.join(source.fullPath, file)) : [source.fullPath];
+      if (files.length <= 200) for (const file of files) capturePreImage(source.repo, file, 'delete');
+      await moveEntry(source.fullPath, target.fullPath, caseOnly);
+      const meta = tableMetaMove(fromPath, toPath, folder);
+      const metaFrom = meta && resolveInRepo(event, meta.from);
+      const metaTo = meta && resolveInRepo(event, meta.to);
+      if (metaFrom && metaTo && fs.existsSync(metaFrom.fullPath) && (caseOnly || !fs.existsSync(metaTo.fullPath))) {
+        await moveEntry(metaFrom.fullPath, metaTo.fullPath, caseOnly).catch((error) => console.error(`Failed to move table settings for ${fromPath}:`, error));
+      }
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to rename ${fromPath} to ${toPath}:`, err);
+      return { success: false, error: `Could not rename “${fromPath}”. ${message}` };
+    }
+  });
+});
+
+// Links rewritten after a rename, a move or a new duplicate name: each note
+// written whole, one save at a time per file like notes:write, and journalled
+// on its own (never folded into an edit made a moment ago), so version history
+// can undo exactly this. Notes only, and only ones that are there.
+ipcMain.handle('notes:write-links', async (event, edits: unknown) => {
+  if (!Array.isArray(edits) || !edits.length || edits.length > 10_000) return { success: false, error: 'Invalid link changes.' };
+  const repo = repoOf(event);
+  if (!repo) return { success: false, error: 'No workspace is open.' };
+  const checked: { fullPath: string; content: string }[] = [];
+  for (const edit of edits as unknown[]) {
+    const item = edit as { path?: unknown; content?: unknown } | null;
+    if (!item || typeof item !== 'object' || typeof item.path !== 'string' || typeof item.content !== 'string') return { success: false, error: 'Invalid link changes.' };
+    if (!/\.mdx?$/i.test(item.path)) return { success: false, error: 'Links are rewritten in notes only.' };
+    if (Buffer.byteLength(item.content, 'utf-8') > NOTE_READ_LIMIT) return { success: false, error: TOO_LARGE_TO_SAVE };
+    const resolved = resolveInRepo(event, item.path);
+    if (!resolved) return { success: false, error: 'That path is outside this workspace.' };
+    checked.push({ fullPath: resolved.fullPath, content: item.content });
+  }
+  let written = 0;
+  for (const edit of checked) {
+    const ok = await saveQueue(saveKey(edit.fullPath), async () => {
+      if (!fs.existsSync(edit.fullPath)) return false;
+      capturePreImage(repo, edit.fullPath, 'overwrite', { coalesce: false });
+      await writeAtomically(edit.fullPath, edit.content, `${edit.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`);
+      return true;
+    }).catch((error) => { console.error('Failed to rewrite links:', error); return false; });
+    if (ok) written++;
+  }
+  return { success: written === checked.length, written };
 });
 
 // Version history. Reads the write journal captured on every overwrite/delete.

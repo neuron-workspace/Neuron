@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
 import { searchNotes } from '../lib/search';
+import type { FileAction } from './FileActionDialog';
 
 type View = 'notes' | 'gallery';
 
@@ -45,6 +46,46 @@ interface SidebarProps {
   tags: string[];
   onSelectTag: (tag: string | null) => void;
   selectedTag: string | null;
+  /** Rename (F2) or Move to… a file or folder. */
+  onFileAction?: (action: FileAction) => void;
+  /** A file or folder dropped onto a folder ('' for the root). */
+  onMoveInto?: (path: string, folder: string) => void;
+}
+
+/** What a dragged tree row carries: the path, and whether it is a folder. */
+export const PATH_MIME = 'application/x-neuron-path';
+
+/** Dragging rows and dropping them on folders, shared by the sidebar and the explorer. */
+export function dragPath(path: string, folder: boolean) {
+  return {
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => {
+      event.dataTransfer.setData(PATH_MIME, JSON.stringify({ path, folder }));
+      event.dataTransfer.effectAllowed = 'move';
+      event.stopPropagation();
+    },
+  };
+}
+export function dropOnFolder(folder: string, onMoveInto: ((path: string, folder: string) => void) | undefined) {
+  if (!onMoveInto) return {};
+  return {
+    'data-drop-folder': folder,
+    onDragOver: (event: React.DragEvent) => {
+      if (!event.dataTransfer.types.includes(PATH_MIME)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    },
+    onDrop: (event: React.DragEvent) => {
+      const raw = event.dataTransfer.getData(PATH_MIME);
+      if (!raw) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        const { path } = JSON.parse(raw) as { path?: unknown };
+        if (typeof path === 'string' && path !== folder) onMoveInto(path, folder);
+      } catch { /* not ours */ }
+    },
+  };
 }
 
 interface TreeNode {
@@ -209,9 +250,11 @@ export default function Sidebar(props: SidebarProps) {
     if (file.other) return renderOther(file, depth);
     const isSelected = selectedNote === file.path && view === 'notes' && !selectedOther;
     const isConfirming = pendingDelete === file.path;
-    return (
-      <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
+    const row = (
+      <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} data-tree-file={file.path} style={{ paddingLeft: `${8 + depth * 14}px` }}
+        {...(props.onMoveInto ? dragPath(file.path, false) : {})}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}
+          onKeyDown={(event) => { if (event.key === 'F2' && props.onFileAction) { event.preventDefault(); props.onFileAction({ kind: 'rename', path: file.path, folder: false }); } }}>
           {openSet.has(file.path)
             ? <OtherFileIcon path={file.path} className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
             : /\.csv$/i.test(file.name)
@@ -230,7 +273,20 @@ export default function Sidebar(props: SidebarProps) {
         )}
       </div>
     );
+    return props.onFileAction ? withFileMenu(row, file.path, false) : row;
   };
+
+  // Rename and Move to… on a row's context menu, for files and folders alike.
+  const withFileMenu = (row: React.ReactElement, path: string, folder: boolean) => (
+    <ContextMenu key={path}>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => props.onFileAction?.({ kind: 'rename', path, folder })}>Rename<span className="ml-auto pl-4 text-[10px] text-[var(--ink-muted)]">F2</span></ContextMenuItem>
+        <ContextMenuItem onSelect={() => props.onFileAction?.({ kind: 'move', path, folder })}>Move to…</ContextMenuItem>
+        <ContextMenuItem onSelect={() => props.onReveal(path)}>Show in folder</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 
   const renderFolder = (node: TreeNode, depth: number): React.ReactNode => {
     // Search mode force-opens every folder so matches aren't hidden inside a
@@ -239,8 +295,11 @@ export default function Sidebar(props: SidebarProps) {
     const files = [...node.files];
     return (
       <div key={node.path} data-revealed-folder={node.path === props.revealedFolder}>
-        <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" style={{ paddingLeft: `${8 + depth * 14}px` }}>
-          <button className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left" onClick={() => toggleFolder(node.path)}>
+        {(() => { const row = (
+        <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" data-tree-folder={node.path} style={{ paddingLeft: `${8 + depth * 14}px` }}
+          {...(props.onMoveInto ? dragPath(node.path, true) : {})} {...dropOnFolder(node.path, props.onMoveInto)}>
+          <button className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left" onClick={() => toggleFolder(node.path)}
+            onKeyDown={(event) => { if (event.key === 'F2' && props.onFileAction) { event.preventDefault(); props.onFileAction({ kind: 'rename', path: node.path, folder: true }); } }}>
             <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)] transition-transform', isOpen && 'rotate-90')} />
             {isOpen ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink)]" /> : <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
             <span className="truncate text-[12px] font-medium">{node.name}</span>
@@ -249,6 +308,7 @@ export default function Sidebar(props: SidebarProps) {
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
+        ); return props.onFileAction ? withFileMenu(row, node.path, true) : row; })()}
         {isOpen && (
           <div>
             {[...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, depth + 1))}
@@ -260,7 +320,7 @@ export default function Sidebar(props: SidebarProps) {
   };
 
   const noteTree = (
-    <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
+    <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3" {...dropOnFolder('', props.onMoveInto)}>
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
       {[...tree.files].sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
       {filtered.length === 0 && openFiles.length === 0 && otherFiles.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}

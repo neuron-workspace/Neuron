@@ -3,6 +3,8 @@ import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { EditorView } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
+import { WikiCompletionContext, wikiCompletionSource } from './wiki-completion';
 import { HighlightStyle, syntaxHighlighting, type LanguageSupport } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 
@@ -45,6 +47,18 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
   { value, onChange, readOnly = false, autoHeight = false, autoFocus = false, colorScheme = 'dark', language },
   ref
 ) {
+  // `[[` autocomplete for notes. One extension per editor, reading the latest
+  // index through a ref: a new extension each render would reconfigure the
+  // editor on every keystroke.
+  const wiki = React.useContext(WikiCompletionContext);
+  const wikiRef = React.useRef(wiki);
+  wikiRef.current = wiki;
+  // The source itself is made once too: autocomplete tells sources apart by
+  // identity, and a new one per lookup would leave every query pending.
+  const wikiExtension = React.useMemo(() => {
+    const data = [{ autocomplete: wikiCompletionSource(() => wikiRef.current) }];
+    return EditorState.languageData.of(() => data);
+  }, []);
   React.useEffect(() => {
     const handleResize = () => {
       if (ref && typeof ref === 'object' && 'current' in ref && ref.current?.view) {
@@ -87,6 +101,7 @@ const Editor = forwardRef<ReactCodeMirrorRef, EditorProps>(function Editor(
           // split view cut every sentence off at the pane edge and asked the
           // writer to scroll sideways through their own prose.
           EditorView.lineWrapping,
+          ...(language === undefined ? [wikiExtension] : []),
         ]}
         onChange={(val) => onChange(val)}
         readOnly={readOnly}

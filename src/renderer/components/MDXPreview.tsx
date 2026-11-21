@@ -1,7 +1,10 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react';
 import { AlertCircle, ArrowUpRight, Link2, FileWarning } from 'lucide-react';
 import { Badge, Callout, numericColumns, parseBadgeType, parseSemanticType } from './mdx-components';
-import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
+import { buildWikiIndex, parseWikiLink, resolveMarkdownLink, resolveWikiLink, type WikiIndex } from '../lib/wikilinks';
+import { WikiCompletionContext } from './wiki-completion';
+
+const NO_NOTES: string[] = [];
 import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard, Columns } from './mdx-layout';
@@ -43,6 +46,10 @@ interface MDXPreviewProps {
   tagSuggestions?: string[];
   onTagClick?: (tag: string) => void;
   notes?: string[];
+  /** The workspace's link index, aliases included. Built from `notes` when not given. */
+  wikiIndex?: WikiIndex;
+  /** The note shown, which links resolve from: a file in its own folder wins. */
+  notePath?: string | null;
   onWikiLinkClick?: (note: string) => void;
   defaultPropertiesCollapsed?: boolean;
   /**
@@ -103,7 +110,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false, editable = false, onChangeSource, onRequestRawMode, removeEmptyFrontmatter = true }: MDXPreviewProps) {
+export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = NO_NOTES, wikiIndex, notePath, onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false, editable = false, onChangeSource, onRequestRawMode, removeEmptyFrontmatter = true }: MDXPreviewProps) {
   const [blankLine, setBlankLine] = useState<number | null>(null);
   const [active, setActive] = useState<BlockDraft | null>(null);
   const [inserting, setInserting] = useState<{ range: SourceRange; anchor: DOMRect } | null>(null);
@@ -115,7 +122,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   const fm = useMemo(() => parseFrontmatter(mdxContent), [mdxContent]);
   const fmLineOffset = fm.hasFrontmatter ? (mdxContent.slice(0, fm.bodyStart).match(/\n/g)?.length ?? 0) : 0;
   const lineClick = (index: number) => onLineClick?.(index + fmLineOffset);
-  const wikiNotes = useMemo(() => buildWikiIndex(notes), [notes]);
+  const ownIndex = useMemo(() => (wikiIndex ? null : buildWikiIndex(notes)), [wikiIndex, notes]);
+  const wikiNotes = wikiIndex ?? ownIndex!;
+  const completion = useMemo(() => ({ index: wikiNotes, from: notePath ?? null }), [wikiNotes, notePath]);
   const updateActive = (next: BlockDraft | null) => { activeRef.current = next; setActive(next); };
   const changeSource = (next: string) => {
     if (next === sourceRef.current) return;
@@ -754,8 +763,10 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       } else if (item.startsWith('`') && item.endsWith('`')) {
         parts.push(<code {...atomic} key={key++} className="rounded border border-[var(--divider)] bg-[var(--md-code-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--md-code)]">{item.slice(1, -1)}</code>);
       } else if (item.startsWith('[[') && item.endsWith(']]')) {
-        const linkTarget = item.slice(2, -2);
-        const resolved = resolveWikiLink(wikiNotes, linkTarget);
+        const wiki = parseWikiLink(item.slice(2, -2));
+        // `|label` is what the reader sees; without one, the target and heading as written.
+        const linkTarget = wiki.label?.trim() || wiki.target + wiki.heading;
+        const resolved = resolveWikiLink(wikiNotes, wiki.target, notePath);
         parts.push(
           resolved ? (
             <button
@@ -778,7 +789,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             <span
               {...atomic}
               key={key++}
-              title={`No note found for "${linkTarget}"`}
+              title={`No note found for "${wiki.target}"`}
               className={BROKEN_PILL}
             >
               <FileWarning className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
@@ -816,7 +827,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             </a> : <span {...atomic} key={key++} title={href}>{label}</span>,
           );
         } else {
-          const resolved = resolveWikiLink(wikiNotes, href.replace(/\.(md|mdx)$/i, ''));
+          const resolved = resolveMarkdownLink(wikiNotes, href.split('#')[0], notePath ?? null);
           parts.push(
             resolved ? (
               <button
@@ -866,7 +877,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   return (
     // The flag goes on the scroll container rather than on each block inside
     // it, so the properties panel and the article widen together and a future
-    // block cannot forget to opt in.
+    // block cannot forget to opt in. The provider gives a block's source editor
+    // its `[[` autocomplete.
+    <WikiCompletionContext.Provider value={completion}>
     <div
       className="canvas-surface h-full w-full overflow-y-auto p-7 font-sans select-text"
       data-live-preview={editable || undefined}
@@ -910,5 +923,6 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         </article>
       )}
     </div>
+    </WikiCompletionContext.Provider>
   );
 }

@@ -9,7 +9,7 @@ Write `[[Note name]]` to link to another note. For example, this links back to [
 Switch to the **Graph** tab in the sidebar to see every note as a node, with a line drawn for each wikilink. Click a node to open that note.
 
 <Callout type="info" title="How matching works">
-A wikilink matches a note by its path without the extension. For a note inside a section, link to it by its full path, like projects/Recovery.
+A wikilink matches a note by its name or its path, without the extension. When two notes share a name, the one in the linking note's folder wins, then the one closest to the workspace root, then the first by path. A path such as projects/Recovery reaches only that note. Typing `[[` in the source editor offers every note and writes the shortest link that reaches it, and a note's `aliases:` are names it can be linked by too.
 </Callout>
 
 So to reach the note in the projects section, link to [[projects/Recovery]].

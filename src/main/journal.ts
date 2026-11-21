@@ -92,12 +92,17 @@ export class WriteJournal {
     this.reportError = options.reportError ?? ((message, error) => console.error(message, error));
   }
 
-  capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation): CaptureResult {
+  /**
+   * `coalesce: false` records this pre-image even inside the coalescing
+   * window: a change Neuron makes on its own (links rewritten after a rename)
+   * has to be undoable by itself, not folded into the user's last edit.
+   */
+  capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation, options: { coalesce?: boolean } = {}): CaptureResult {
     const target = this.existingWorkspaceFile(workspaceRoot, filePath);
     if (target === 'missing') return { status: 'not-needed' };
     if (!target) return { status: 'rejected' };
 
-    if (operation === 'overwrite' && this.recentlyCaptured(target.workspaceRoot, target.relativePath)) {
+    if (operation === 'overwrite' && options.coalesce !== false && this.recentlyCaptured(target.workspaceRoot, target.relativePath)) {
       return { status: 'not-needed' };
     }
 
@@ -323,13 +328,13 @@ export function configureWriteJournal(userDataDirectory: string, options: Journa
   return activeJournal;
 }
 
-export function capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation): CaptureResult {
+export function capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation, options: { coalesce?: boolean } = {}): CaptureResult {
   if (!activeJournal) {
     const error = 'Write journal is not configured.';
     console.error(error);
     return { status: 'failed', error };
   }
-  return activeJournal.capturePreImage(workspaceRoot, filePath, operation);
+  return activeJournal.capturePreImage(workspaceRoot, filePath, operation, options);
 }
 
 export function listJournalEntries(workspaceRoot: string): JournalEntry[] {

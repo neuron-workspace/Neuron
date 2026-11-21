@@ -12,8 +12,11 @@ import { NEW_FILE_KINDS, startingCompanions, startingContent } from './lib/new-f
 import { isCsvPath, tableMetaPath } from './lib/csv-table';
 import {
   canSplit, closeGroup, closeInGroup, dropPreviews, EMPTY_GROUPS, focusGroup, keepEverywhere, keepTab, mapGroup, moveTab, openInGroup,
-  removeMissingAll, restoreGroups, serializeGroups, splitGroup, type GroupsState, type SplitDirection,
+  removeMissingAll, renameInGroups, restoreGroups, serializeGroups, splitGroup, type GroupsState, type SplitDirection,
 } from './lib/tabs';
+import { aliasesOf, buildWikiIndex, linkName } from './lib/wikilinks';
+import { linkNotice, movedPath, planLinkRewrites, type LinkRewritePlan } from './lib/link-rewrite';
+import FileActionDialog, { type FileAction } from './components/FileActionDialog';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import ChromeImportDialog from './components/ChromeImportDialog';
@@ -173,6 +176,17 @@ export default function App() {
   const groupSizes = useRef<number[] | null>(null);
   const noteContent = selectedNote ? docs[selectedNote] ?? '' : '';
   const [notesData, setNotesData] = useState<NoteData[]>([]);
+  // Read by the rename and create paths, which plan link rewrites from the
+  // workspace as it is at that moment.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const notesDataRef = useRef(notesData);
+  notesDataRef.current = notesData;
+  // Paths this window just renamed away, and when: the watcher's report that
+  // they went away is our own rename, not a file deleted outside.
+  const movedAway = useRef(new Map<string, number>());
+  // Every file and every alias, for resolving links and `[[` autocomplete.
+  const wikiIndex = useMemo(() => buildWikiIndex(notes, aliasesOf(notesData)), [notes, notesData]);
   const [entries, setEntries] = useState<WorkspaceEntries | null>(null);
   const [view, setView] = useState<View>('notes');
   const [editorModes, setEditorModes] = useState<Record<string, EditorMode>>({});
@@ -180,6 +194,9 @@ export default function App() {
   const [tags, setTags] = useState<string[]>([]);
   const saveState: SaveState = selectedNote && !isUrl(selectedNote) ? saveStates[selectedNote] ?? 'idle' : 'idle';
   const [notice, setNotice] = useState<string | null>(null);
+  // A notice that reports what Neuron did rather than what went wrong.
+  const [info, setInfo] = useState<string | null>(null);
+  const [fileAction, setFileAction] = useState<FileAction | null>(null);
   const [chromeImportOpen, setChromeImportOpen] = useState(false);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceReady, setAppearanceReady] = useState(false);
@@ -639,7 +656,10 @@ export default function App() {
         setNotes(current => current.filter(n => !removed(n)));
         setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
-        setEditor(current => removeMissingAll(current, n => !removed(n)));
+        // Our own rename: its tabs have already followed it, and one still on
+        // the old path is mid-move, not deleted.
+        const ours = [...movedAway.current].some(([from, at]) => Date.now() - at < 10_000 && (path === from || path.startsWith(from + '/')));
+        if (!ours) setEditor(current => removeMissingAll(current, n => !removed(n)));
       } else {
         // A text file (JSON, YAML, ...) is not a note: it never joins the notes
         // or what the graph and search read, and it is read only when open.
@@ -822,11 +842,45 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * Write the notes whose links a change rewrote, in one call that journals
+   * each on its own, and say how many. Open copies take the new text first, so
+   * the next keystroke in one does not save the old link back.
+   */
+  const applyLinkPlan = useCallback(async (plan: LinkRewritePlan, target: string) => {
+    if (!plan.edits.length || !window.electronAPI) return;
+    const changed = new Map(plan.edits.map((edit) => [edit.path, edit.content]));
+    for (const [path, content] of changed) {
+      onDisk.current.set(path, content);
+      if (path in docsRef.current) docsRef.current = { ...docsRef.current, [path]: content };
+    }
+    setDocs((current) => {
+      let next = current;
+      for (const [path, content] of changed) if (path in next && next[path] !== content) next = { ...next, [path]: content };
+      return next;
+    });
+    setNotesData((current) => current.map((note) => (changed.has(note.path) ? { ...note, content: changed.get(note.path)! } : note)));
+    let result: { success: boolean; error?: string; written?: number };
+    try { result = await window.electronAPI.writeLinks(plan.edits); } catch (error) { result = { success: false, error: String(error) }; }
+    if (!result.success) setNotice(`Some links could not be updated. ${result.error ?? ''}`.trim());
+    if (result.success || result.written) setInfo(linkNotice(plan.count, target));
+  }, []);
+
+  /** Links a new file would take from a note of the same name, rewritten so they stay (11D). */
+  const planForNewFile = useCallback((path: string): LinkRewritePlan | null => {
+    const files = notesRef.current;
+    const name = linkName(path).toLowerCase();
+    if (files.includes(path) || !files.some((file) => linkName(file).toLowerCase() === name)) return null;
+    const aliases = aliasesOf(notesDataRef.current);
+    return planLinkRewrites({ notes: notesDataRef.current, before: buildWikiIndex(files, aliases), after: buildWikiIndex([...files, path], aliases) });
+  }, []);
+
   const createNote = useCallback(async (relativePath: string, content?: string, companions: { path: string; content: string }[] = []): Promise<boolean> => {
     if (!window.electronAPI) return false;
     try {
       const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '');
       const body = content ?? '# ' + title + '\n\n';
+      const plan = planForNewFile(relativePath);
       // First, so the file is what its companions describe from the moment it opens.
       for (const companion of companions) {
         const written = await window.electronAPI.writeNote(companion.path, companion.content);
@@ -834,6 +888,7 @@ export default function App() {
       }
       const result = await window.electronAPI.writeNote(relativePath, body);
       if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
+      if (plan) await applyLinkPlan(plan, plan.targets[0] ?? relativePath);
       await loadNotes();
       handleSelectNote(relativePath, { keep: true });
       setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
@@ -842,7 +897,7 @@ export default function App() {
       setNotice('Could not create “' + relativePath + '”.');
       return false;
     }
-  }, [loadNotes, handleSelectNote]);
+  }, [loadNotes, handleSelectNote, planForNewFile, applyLinkPlan]);
 
   const createSectionFolder = useCallback(async (path: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
@@ -925,6 +980,61 @@ export default function App() {
     setSaveStates((current) => (path in current ? { ...current, [path]: 'saved' } : current));
     if (content !== TOO_LARGE_TO_OPEN) setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content } : note)));
   }, [setConflict]);
+  /**
+   * Rename or move a file or folder (11E): F2, the menus, Move to… and a drop
+   * on a folder all end here, and main's workspace:rename does the move. Open
+   * tabs in every group follow it with their unsaved text, and links that
+   * reached it (or that a new duplicate name would take) are rewritten.
+   * Resolves to an error to show, or null.
+   */
+  const movePath = useCallback(async (from: string, to: string): Promise<string | null> => {
+    if (!window.electronAPI || from === to) return null;
+    const map = (path: string) => movedPath(path, from, to);
+    const files = notesRef.current;
+    const aliases = aliasesOf(notesDataRef.current);
+    // Planned from the workspace as it is now, before anything moves.
+    const plan = planLinkRewrites({
+      notes: notesDataRef.current,
+      before: buildWikiIndex(files, aliases),
+      after: buildWikiIndex(files.map((path) => map(path) ?? path), aliases.map(([path, list]) => [map(path) ?? path, list] as [string, string[]])),
+      move: map,
+    });
+    movedAway.current.set(from, Date.now());
+    let result: { success: boolean; error?: string };
+    try { result = await window.electronAPI.renamePath(from, to); } catch (error) { result = { success: false, error: String(error) }; }
+    if (!result.success) { movedAway.current.delete(from); return result.error ?? `Could not rename “${from}”.`; }
+    const remap = <T,>(record: Record<string, T>): Record<string, T> => {
+      if (!Object.keys(record).some((path) => map(path))) return record;
+      return Object.fromEntries(Object.entries(record).map(([path, value]) => [map(path) ?? path, value]));
+    };
+    const remapKeys = <T,>(store: Map<string, T>) => {
+      for (const [path, value] of [...store]) { const next = map(path); if (next) { store.delete(path); store.set(next, value); } }
+    };
+    // Unsaved text goes with the tab: the copy here is the user's latest.
+    const unsaved = Object.keys(docsRef.current).filter((path) => map(path) && docsRef.current[path] !== onDisk.current.get(path));
+    docsRef.current = remap(docsRef.current);
+    remapKeys(onDisk.current);
+    setDocs(remap);
+    setSaveStates(remap);
+    setEditorModes(remap);
+    setSurfaceSourceMode(remap);
+    setEditor((current) => renameInGroups(current, map));
+    setCreatedFolders((current) => current.map((path) => map(path) ?? path));
+    setExplorerFolder((current) => (current ? map(current) ?? current : current));
+    setExplorerRecents((current) => current.map((entry) => ({ ...entry, path: map(entry.path) ?? entry.path })));
+    for (const path of unsaved) { const next = map(path)!; void writeDoc(next, docsRef.current[next]); }
+    if (plan.edits.length) await applyLinkPlan(plan, plan.targets.length === 1 ? plan.targets[0] : to);
+    await loadNotes();
+    return null;
+  }, [writeDoc, applyLinkPlan, loadNotes]);
+  // A drop on a folder: the same move, keeping the name.
+  const moveInto = useCallback((path: string, folder: string) => {
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    const to = (folder ? folder + '/' : '') + name;
+    if (to === path) return;
+    void movePath(path, to).then((error) => { if (error) setNotice(error); });
+  }, [movePath]);
+
   const handleContentChange = useCallback((value: string) => { if (selectedNote) void writeDoc(selectedNote, value); }, [selectedNote, writeDoc]);
 
   const requestCreate = useCallback(async () => {
@@ -1089,8 +1199,9 @@ export default function App() {
     folders: explorerFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
     openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder, reveal: revealFile,
     editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
+    fileAction: setFileAction, moveInto,
   }), [atHome, repository, explorerFiles, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
-    handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents]);
+    handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents, moveInto]);
 
   // --- Derived --------------------------------------------------------------
   const filteredNotes = useMemo(
@@ -1187,7 +1298,7 @@ export default function App() {
   // What every editor group shares: the files' one copy and one save path, and
   // the actions each group's tabs and drops call with its index.
   const groupContext = useMemo<GroupContext>(() => ({
-    notes, tags, notesData, colorScheme, wide, properties: propsSettings,
+    notes, wikiIndex, tags, notesData, colorScheme, wide, properties: propsSettings,
     editorModes, onEditorMode: (path, mode) => setEditorModes((prev) => ({ ...prev, [path]: mode })),
     surfaceSource: surfaceSourceMode, onSurfaceSource: (path, source) => setSurfaceSourceMode((prev) => ({ ...prev, [path]: source })),
     docs, saveStates, onChange: writeDoc,
@@ -1214,6 +1325,8 @@ export default function App() {
         onCreateNote={explorerState.createNote}
         onCreateFolder={explorerState.createFolder}
         onOpenToSide={explorerState.openToSide}
+        onFileAction={explorerState.fileAction}
+        onMoveInto={explorerState.moveInto}
       />
     ),
     onOpen: (path, group) => handleSelectNote(path, { group }),
@@ -1224,7 +1337,7 @@ export default function App() {
     onFocus: focusEditorGroup,
     onSplit: (group, path, direction, move) => splitEditor(direction, group, path, move),
     onMoveTab: moveEditorTab,
-  }), [notes, tags, notesData, colorScheme, wide, propsSettings, editorModes, surfaceSourceMode, docs, saveStates, writeDoc, surfaceFor, entries,
+  }), [notes, wikiIndex, tags, notesData, colorScheme, wide, propsSettings, editorModes, surfaceSourceMode, docs, saveStates, writeDoc, surfaceFor, entries,
     conflicts, keepMyVersion, takeDiskVersion, explorerState, handleSelectNote, closeTab, goHome, focusEditorGroup, openWebsite, splitEditor, moveEditorTab]);
 
   // Home wins over a group's file, which is what lets the New tab action show
@@ -1375,12 +1488,21 @@ export default function App() {
                   tags={tags}
                   onSelectTag={setSelectedTag}
                   selectedTag={selectedTag}
+                  onFileAction={setFileAction}
+                  onMoveInto={moveInto}
                 />
               }>
               {/* One card, or one per group when the editor is split, like the docks. */}
               <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden',
                 !inShell && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
                 {noticeCallout}
+                {info && !notice && (
+                  <div role="status" data-callout-kind="info" data-link-notice className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+                    <CalloutIcon kind="info" />
+                    <span>{info}</span>
+                    <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setInfo(null)}>Dismiss</button>
+                  </div>
+                )}
                 {pendingShellConfig && !readableLayout(pendingShellConfig) && (
                   // A broken file is never offered: the layout on screen stays.
                   <div role="status" data-callout-kind="warning" data-layout-unreadable className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
@@ -1428,6 +1550,7 @@ export default function App() {
         </div>
 
         <ChromeImportDialog open={chromeImportOpen} onOpenChange={setChromeImportOpen} onImported={setNotice} />
+        <FileActionDialog action={fileAction} folders={treeFolders} onClose={() => setFileAction(null)} onMove={movePath} />
         <CommandPalette
           recents={recents}
           onOpenRepo={openRepository}

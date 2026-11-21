@@ -159,6 +159,25 @@ export function removeMissingAll(state: GroupsState, existing: readonly string[]
   return dropEmptyGroups({ ...state, groups: pruned });
 }
 
+/**
+ * Follow a rename or move in every group: each tab, preview and selection whose
+ * file `rename` maps (to its new path) takes the new path, in place. Unchanged
+ * when nothing open moved.
+ */
+export function renameInGroups(state: GroupsState, rename: (path: string) => string | null): GroupsState {
+  const next = (path: string | null) => (path === null ? null : rename(path) ?? path);
+  let changed = false;
+  const groups = state.groups.map((group) => {
+    const tabs = group.tabs.map((tab) => next(tab)!);
+    const preview = next(group.preview);
+    const selected = next(group.selected);
+    if (preview === group.preview && selected === group.selected && tabs.every((tab, i) => tab === group.tabs[i])) return group;
+    changed = true;
+    return { tabs: [...new Set(tabs)], preview, selected };
+  });
+  return changed ? { ...state, groups } : state;
+}
+
 /** Close the preview tab of every group, as a workspace switch does. */
 export function dropPreviews(state: GroupsState): GroupsState {
   if (state.groups.every((group) => group.preview === null)) return state;

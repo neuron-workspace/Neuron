@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { aliasesOf, buildWikiIndex } from '../lib/wikilinks';
+import { WikiCompletionContext } from '../components/wiki-completion';
 import { createPortal } from 'react-dom';
 import { Eye, PenLine, SplitSquareHorizontal } from 'lucide-react';
 import { Segmented, type SegmentedOption } from '../components/ui/segmented';
@@ -32,6 +34,11 @@ export function registerPanel(kind: string, renderer: PanelRenderer): void {
 
 export function getPanel(kind: string): PanelRenderer | undefined {
   return registry.get(kind);
+}
+
+/** The link index for a layout's notes, aliases included. */
+function useWikiIndex(notesData: SurfaceProps['notesData']) {
+  return useMemo(() => buildWikiIndex(notesData.map((note) => note.path), aliasesOf(notesData)), [notesData]);
 }
 
 function folderOf(path: string): string {
@@ -96,6 +103,8 @@ function ExplorerPane({ explorer }: { explorer: ExplorerState }) {
       onCreateNote={explorer.createNote}
       onCreateFolder={explorer.createFolder}
       onOpenToSide={explorer.openToSide}
+      onFileAction={explorer.fileAction}
+      onMoveInto={explorer.moveInto}
     />
   );
 }
@@ -104,6 +113,7 @@ function EditorPanel({ surface }: PanelContext) {
   const { selectedNote, noteContent, onChangeNote, colorScheme } = surface;
   const [modes, setModes] = useState<Record<string, EditMode>>({});
   const explorer = useExplorer();
+  const wikiIndex = useWikiIndex(surface.notesData);
   // App renders the slot in the same commit, so it is found after mount; a
   // layout that places the editor where no tab row exists keeps its own row.
   const [modeSlot, setModeSlot] = useState<HTMLElement | null>(null);
@@ -148,7 +158,6 @@ function EditorPanel({ surface }: PanelContext) {
   const scheme = colorScheme ?? 'dark';
   // Wiki-links need the note list and a way to open one. Both already arrive
   // on the surface props; nothing new has to be plumbed.
-  const notePaths = surface.notesData.map((note) => note.path);
   const openNote = surface.onSelectNote;
 
   const modeSwitch = <Segmented label="View mode" value={mode} onChange={setMode} options={EDIT_MODES} />;
@@ -161,17 +170,17 @@ function EditorPanel({ surface }: PanelContext) {
       <div className="min-h-0 flex-1">
         {mode === 'reading' && (
           <div className="h-full overflow-auto" onDoubleClick={() => setMode('live')}>
-            <MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} notes={notePaths} onWikiLinkClick={openNote} />
+            <MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} wikiIndex={wikiIndex} notePath={selectedNote} onWikiLinkClick={openNote} />
           </div>
         )}
-        {mode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={onChangeNote} colorScheme={scheme} notes={notePaths} onWikiLinkClick={openNote}
+        {mode === 'live' && <MDXPreview key={selectedNote} editable mdxContent={noteContent} onChangeSource={onChangeNote} colorScheme={scheme} wikiIndex={wikiIndex} notePath={selectedNote} onWikiLinkClick={openNote}
           onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }}
           onRequestRawMode={() => setMode('split')} tagSuggestions={surface.tagSuggestions} onTagClick={surface.onTagClick}
           removeEmptyFrontmatter={surface.removeEmptyFrontmatter} defaultPropertiesCollapsed={surface.defaultPropertiesCollapsed} />}
         {mode === 'split' && (
           <div className="flex h-full divide-x divide-[var(--divider)]">
-            <div className="min-w-0 flex-1"><Editor value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></div>
-            <div className="min-w-0 flex-1 overflow-auto"><MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} notes={notePaths} onWikiLinkClick={openNote} /></div>
+            <div className="min-w-0 flex-1"><WikiCompletionContext.Provider value={{ index: wikiIndex, from: selectedNote }}><Editor value={noteContent} onChange={onChangeNote} colorScheme={scheme} /></WikiCompletionContext.Provider></div>
+            <div className="min-w-0 flex-1 overflow-auto"><MDXPreview mdxContent={noteContent} onToggleTask={(line, checked) => { const next = toggleTaskLine(noteContent, line, checked); if (next !== null) onChangeNote(next); }} onLineClick={() => undefined} wikiIndex={wikiIndex} notePath={selectedNote} onWikiLinkClick={openNote} /></div>
           </div>
         )}
       </div>
@@ -200,7 +209,8 @@ function TreePanel({ surface }: PanelContext) {
 function PreviewPanel({ spec, surface }: PanelContext) {
   const path = typeof spec.path === 'string' ? spec.path : surface.selectedNote;
   const note = surface.notesData.find((item) => item.path === path);
-  return <MDXPreview mdxContent={note?.content ?? ''} onLineClick={() => undefined} notes={surface.notesData.map((item) => item.path)} onWikiLinkClick={surface.onSelectNote} />;
+  const wikiIndex = useWikiIndex(surface.notesData);
+  return <MDXPreview mdxContent={note?.content ?? ''} onLineClick={() => undefined} wikiIndex={wikiIndex} notePath={path} onWikiLinkClick={surface.onSelectNote} />;
 }
 
 registerPanel('editor', EditorPanel);

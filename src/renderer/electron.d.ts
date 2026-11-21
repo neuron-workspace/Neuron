@@ -116,6 +116,10 @@ export interface ElectronAPI {
   writeNote: (relativePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
   deleteNote: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
   createSection: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
+  /** Rename or move a file or folder. Refuses to overwrite; moves a managed CSV's settings with it. */
+  renamePath: (from: string, to: string) => Promise<{ success: boolean; error?: string }>;
+  /** Write notes whose links were rewritten, each journalled on its own. */
+  writeLinks: (edits: { path: string; content: string }[]) => Promise<{ success: boolean; error?: string; written?: number }>;
   getNotesDirectory: () => Promise<string | null>;
   logError: (errorData: {
     phase: 'COMPILATION' | 'RUNTIME' | 'IPC';

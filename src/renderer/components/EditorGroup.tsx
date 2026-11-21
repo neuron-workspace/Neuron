@@ -18,6 +18,8 @@ import type { NoteData, SaveResult, Surface } from '../surfaces';
 import { fileKind, MEDIA_KINDS } from '../../main/file-kinds';
 import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
 import { ExternalChangeBar, TooLargeMessage } from './FileNotices';
+import { WikiCompletionContext } from './wiki-completion';
+import type { WikiIndex } from '../lib/wikilinks';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 const SAVE_LABEL: Record<SaveState, string> = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' };
@@ -35,6 +37,8 @@ export { toggleTaskLine };
  */
 export interface GroupContext {
   notes: string[];
+  /** Every file and alias, for resolving links and `[[` autocomplete. */
+  wikiIndex: WikiIndex;
   tags: string[];
   notesData: NoteData[];
   colorScheme: 'dark' | 'light';
@@ -196,16 +200,20 @@ function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
       }
     }, 50);
   };
-  const source = <Editor ref={editorRef} value={content} onChange={change} colorScheme={colorScheme} />;
-  const preview = <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} notes={notes} onWikiLinkClick={open} />;
+  const source = (
+    <WikiCompletionContext.Provider value={{ index: ctx.wikiIndex, from: path }}>
+      <Editor ref={editorRef} value={content} onChange={change} colorScheme={colorScheme} />
+    </WikiCompletionContext.Provider>
+  );
+  const preview = <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} />;
 
   if (mode === 'live') {
-    return <MDXPreview key={path} editable mdxContent={content} onChangeSource={change} onToggleTask={toggleTask} colorScheme={colorScheme} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} onWikiLinkClick={open} onRequestRawMode={() => setMode('split')} removeEmptyFrontmatter={properties.removeEmpty} defaultPropertiesCollapsed={properties.collapsedByDefault} />;
+    return <MDXPreview key={path} editable mdxContent={content} onChangeSource={change} onToggleTask={toggleTask} colorScheme={colorScheme} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} onRequestRawMode={() => setMode('split')} removeEmptyFrontmatter={properties.removeEmpty} defaultPropertiesCollapsed={properties.collapsedByDefault} />;
   }
   if (mode === 'reading') {
     return (
       <div className="h-full" onDoubleClick={() => setMode('live')}>
-        <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} onWikiLinkClick={open} showProperties={properties.showInReading} defaultPropertiesCollapsed={properties.collapsedByDefault} />
+        <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} showProperties={properties.showInReading} defaultPropertiesCollapsed={properties.collapsedByDefault} />
       </div>
     );
   }

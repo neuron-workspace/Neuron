@@ -17,13 +17,15 @@ const bundle = await build({ stdin: { contents: `
   export { createSaveQueue, saveKey, writeAtomically } from './src/main/save-file';
   export { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './src/main/file-limits';
   export { decodeSecret, hasStoredSecret, carriesApiKey, rendererSettingsValue } from './src/main/secret-storage';
+  export * from './src/main/workspace-rename';
+  export { fileKind } from './src/main/file-kinds';
 `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', write: false });
 const policy = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 
 const source = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
 const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'saveQueue',
-  'storedSecret', 'readSecret', 'CONNECTOR_NAMES', 'connectorValues']);
+  'storedSecret', 'readSecret', 'CONNECTOR_NAMES', 'connectorValues', 'moveEntry']);
 // Walk every nesting level. A new handler cannot silently fall outside this test.
 function registrations(ast) {
   const found = [];
@@ -59,6 +61,9 @@ let failFallback = false;
 let checkRealPaths = false;
 let stat = { size: 1, isFile: () => true, isDirectory: () => false };
 let missing = false;
+// When set, which paths exist, for the rename checks.
+let exists = null;
+const renamed = [];
 let lstatError = null;
 const effects = [];
 const effect = (name) => (...args) => { effects.push([name, ...args]); };
@@ -112,10 +117,15 @@ const context = vm.createContext({
   shell: { showItemInFolder: (dir) => revealed.push(dir) },
   repoInfo: (dir) => ({ path: dir }),
   sessions: { get: effect('sessionGet'), revoke: effect('revoke') },
+  moveRefusal: policy.moveRefusal, normalizeRelative: policy.normalizeRelative, samePath: policy.samePath, tableMetaMove: policy.tableMetaMove,
+  fileKind: policy.fileKind, walkWorkspace: () => ({ files: ['inside.md'] }), setTimeout,
   fs: {
-    existsSync: () => !missing,
+    existsSync: (file) => (exists ? exists(file) : !missing),
     mkdirSync: effect('mkdir'),
-    promises: { readFile: async (...args) => { effect('read')(...args); return '# Note'; }, stat: async () => stat },
+    promises: {
+      readFile: async (...args) => { effect('read')(...args); return '# Note'; }, stat: async () => stat,
+      rename: async (from, to) => { renamed.push([from, to]); },
+    },
     statSync: () => stat,
     lstatSync: () => { if (lstatError) throw lstatError; return stat; },
     readFileSync: () => { effects.push(['imageRead']); return Buffer.from('image'); },
@@ -139,6 +149,7 @@ const contracts = {
   'notes:list': [], 'workspace:entries': [], 'workspace:file-base': [], 'workspace:reveal': ['note.md'],
   'notes:read': ['note.md'], 'notes:write': ['note.md', 'content'], 'notes:delete': ['note.md'],
   'journal:list': ['note.md'], 'journal:restore': ['123-entry'], 'notes:create-section': ['folder'], 'notes:get-dir': [],
+  'workspace:rename': ['note.md', 'renamed.md'], 'notes:write-links': [[{ path: 'note.md', content: '[[Linked]]' }]],
   'cookies:import-chrome': ['example.com'],
   'terminal:spawn': [{ key: 'default', cols: 80, rows: 24 }], 'terminal:history': [7],
   'terminal:write': [7, 'text'], 'terminal:resize': [7, 80, 24], 'terminal:windows-pty': [], 'terminal:kill': [7],
@@ -268,7 +279,7 @@ for (const key of ['__proto__', 'constructor', 'prototype']) {
 
 // All workspace-relative handlers exercise the real lexical AND realpath policy.
 const pathHandlers = ['workspace:reveal', 'notes:read', 'notes:write', 'notes:delete', 'notes:create-section',
-  'journal:list', 'htmx-views:open', 'htmx-views:approve', 'htmx-views:reset-approval'];
+  'journal:list', 'htmx-views:open', 'htmx-views:approve', 'htmx-views:reset-approval', 'workspace:rename'];
 const temp = realFs.mkdtempSync(path.join(tmpdir(), 'neuron-main-guards-'));
 try {
   const repo = path.join(temp, 'workspace');
@@ -289,6 +300,12 @@ try {
   for (const name of pathHandlers) {
     for (const bad of hostile) await rejectArgs(name, [bad, ...contracts[name].slice(1)]);
   }
+  // A rename's destination and every rewritten note are guarded the same way.
+  for (const bad of hostile) {
+    await rejectArgs('workspace:rename', ['note.md', bad]);
+    await rejectArgs('notes:write-links', [[{ path: 'note.md', content: 'ok' }, { path: bad.endsWith('.md') ? bad : bad + '/x.md', content: 'x' }]]);
+  }
+  assert.equal(renamed.length, 0, 'a refused rename moves nothing');
 } finally {
   entry.repo = '/workspace'; checkRealPaths = false;
   realFs.rmSync(temp, { recursive: true, force: true });
@@ -381,6 +398,101 @@ renameFailures = 6;
 failFallback = true;
 assert.equal((await save(event, 'note.md', 'failed fallback')).success, false);
 assert.equal(removed.at(-1), writes.at(-2).file, 'fallback failure cleans temp');
+
+// --- workspace:rename (11E) ---------------------------------------------------
+const ipc = async (name, ...args) => JSON.parse(JSON.stringify(await handlers.get(name)(event, ...args)));
+{
+  const call = ipc;
+  const fileStat = { size: 1, isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false };
+  const folderStat = { size: 0, isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false };
+  const rename = (from, to) => call('workspace:rename', from, to);
+  const full = (relative) => path.resolve('/workspace', relative);
+  const capturesBefore = captures;
+  stat = fileStat;
+  // Never over an existing file.
+  exists = () => true;
+  let result = await rename('note.md', 'taken.md');
+  assert.equal(result.success, false);
+  assert.match(result.error, /“taken\.md” already exists there/);
+  assert.equal(renamed.length, 0);
+  // A folder never into itself, nor a renamed config folder.
+  stat = folderStat;
+  for (const [from, to] of [['docs', 'docs/inner/docs'], ['docs', 'docs/x']]) {
+    result = await rename(from, to);
+    assert.deepEqual(result, { success: false, error: 'A folder can’t be moved into itself.' }, `${from} -> ${to}`);
+  }
+  result = await rename('.neuron', 'settings');
+  assert.equal(result.success, false);
+  stat = fileStat;
+  result = await rename('note.md', '.neuron/note.md');
+  assert.equal(result.success, false);
+  result = await rename('note.md', 'tool.exe');
+  assert.deepEqual(result, { success: false, error: 'Neuron doesn’t rename programs or scripts.' });
+  assert.equal(renamed.length, 0, 'every refusal moved nothing');
+  assert.equal(captures, capturesBefore, 'and journalled nothing');
+  // A rename that is allowed: journalled, moved, and nothing else touched.
+  exists = (file) => file === full('note.md');
+  assert.deepEqual(await rename('note.md', 'sub/renamed.md'), { success: true });
+  assert.deepEqual(renamed.splice(0), [[full('note.md'), full('sub/renamed.md')]]);
+  assert.equal(captures, capturesBefore + 1, 'the old path is journalled');
+  // A managed CSV's settings go with it.
+  exists = (file) => file === full('data.csv') || file === full('.neuron/tables/data.csv.json');
+  assert.deepEqual(await rename('data.csv', 'tables/data.csv'), { success: true });
+  assert.deepEqual(renamed.splice(0), [[full('data.csv'), full('tables/data.csv')], [full('.neuron/tables/data.csv.json'), full('.neuron/tables/tables/data.csv.json')]]);
+  // A folder takes the mirrored settings folder, so every CSV under it.
+  stat = folderStat;
+  exists = (file) => file === full('docs') || file === full('.neuron/tables/docs');
+  assert.deepEqual(await rename('docs', 'archive/docs'), { success: true });
+  assert.deepEqual(renamed.splice(0), [[full('docs'), full('archive/docs')], [full('.neuron/tables/docs'), full('.neuron/tables/archive/docs')]]);
+  // Case only: allowed although the "target" exists, through a temporary name.
+  stat = fileStat;
+  exists = () => true;
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    assert.deepEqual(await rename('note.md', 'Note.md'), { success: true });
+    const moves = renamed.splice(0);
+    assert.equal(moves.length, 2);
+    assert.equal(moves[0][0], full('note.md'));
+    assert.equal(moves[1][1], full('Note.md'));
+    assert.match(moves[0][1], /\.tmp$/);
+  } else {
+    assert.equal((await rename('note.md', 'Note.md')).success, false, 'Linux: another name, and it exists');
+  }
+  assert.deepEqual(await rename('note.md', 'note.md'), { success: true }, 'the same name is no change');
+  assert.equal(renamed.length, 0);
+  exists = null; stat = { size: 1, isFile: () => true, isDirectory: () => false };
+
+  // The refusal rules on their own, and the settings mapping.
+  assert.equal(policy.moveRefusal('a', 'a/b', true, false), 'A folder can’t be moved into itself.');
+  assert.equal(policy.moveRefusal('a', 'ab', true, false), null, 'a sibling that starts the same is fine');
+  assert.equal(policy.moveRefusal('A', 'a/x', true, true), 'A folder can’t be moved into itself.', 'case-insensitive where the disk is');
+  assert.equal(policy.moveRefusal('A', 'a', true, true), null, 'a case-only folder rename');
+  assert.equal(policy.moveRefusal('a.md', 'b/.hidden.md', false, false), 'Names can’t be empty or start with a dot.');
+  assert.deepEqual(policy.tableMetaMove('a/t.csv', 'b/t.csv', false), { from: '.neuron/tables/a/t.csv.json', to: '.neuron/tables/b/t.csv.json' });
+  assert.equal(policy.tableMetaMove('a/t.md', 'b/t.md', false), null);
+  assert.deepEqual(policy.tableMetaMove('a', 'b/a', true), { from: '.neuron/tables/a', to: '.neuron/tables/b/a' });
+  assert.equal(policy.tableMetaOf('x/t.csv', false), '.neuron/tables/x/t.csv.json');
+  assert.equal(policy.tableMetaOf('x', true), '.neuron/tables/x');
+  assert.equal(policy.normalizeRelative('\\a//b/'), 'a/b');
+}
+
+// --- notes:write-links: journalled on its own, notes only, never creates ------
+{
+  const call = ipc;
+  const capturesBefore = captures;
+  const writesBefore = writes.length;
+  missing = false;
+  let result = await call('notes:write-links', [{ path: 'a.md', content: 'one' }, { path: 'b.mdx', content: 'two' }]);
+  assert.deepEqual(result, { success: true, written: 2 });
+  assert.equal(captures, capturesBefore + 2);
+  assert.deepEqual(writes.slice(writesBefore).map((w) => w.content), ['one', 'two']);
+  result = await call('notes:write-links', [{ path: 'a.md', content: 'x' }, { path: 'data.csv', content: 'y' }]);
+  assert.deepEqual(result, { success: false, error: 'Links are rewritten in notes only.' });
+  missing = true;
+  result = await call('notes:write-links', [{ path: 'gone.md', content: 'x' }]);
+  assert.deepEqual(result, { success: false, written: 0 }, 'a note that is not there is not created');
+  missing = false;
+  assert.equal(writes.length, writesBefore + 2);
+}
 
 // --- Secrets (Module 10): write-only from the renderer ----------------------
 // Results are built inside the vm; copy them out so deepEqual compares plain values.
