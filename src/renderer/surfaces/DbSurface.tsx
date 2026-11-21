@@ -131,19 +131,22 @@ function SchemaOverview({ db, onOpen }: { db: DbFile; onOpen: (tableId: string) 
   );
 }
 
-export function DbSurface({ path, content }: SurfaceProps) {
+export function DbSurface({ path, content, onChangeNote, saveState }: SurfaceProps) {
   const title = path.split('/').pop()!.replace(/\.db$/i, '');
   const [db, setDbState] = useState<DbFile | null>(null);
   const [selectedTable, setSelectedTableState] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [editingProp, setEditingProp] = useState<string | null>(null);
-  // The app doesn't reload open-note content on disk changes, so the writer
-  // watches too: external edits (git pull, sync, another editor) land without a reload.
+  // In an editor group the file is the app's shared document: one copy and one
+  // writer however many groups show it, so an edit in one group reaches the
+  // others as `content` at once and no group's save overwrites another's. The
+  // app follows the disk and asks about outside changes. Without it the writer
+  // saves and watches on its own.
   const writer = useFileWriter(path, (text) => {
     const parsed = parseDb(text, title);
     adopt(parsed.db, parsed.error);
-  }, { askOnConflict: true });
+  }, { askOnConflict: true, save: onChangeNote, saveState });
   const { saveError } = writer;
   const dbRef = useRef<DbFile | null>(null);
   const selectedTableRef = useRef<string | null>(null);

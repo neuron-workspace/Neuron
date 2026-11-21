@@ -71,10 +71,10 @@ export default function LayoutSwitcher({ layouts, activeId, modified, onApply, o
         {active && (
           <>
             <div className="my-1.5 border-t border-[var(--divider)]" />
-            {modified && <button className={row} onClick={() => { onUpdate(); setOpen(false); }}><Save className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Update ?{active.name}?</span></button>}
+            {modified && <button className={row} onClick={() => { onUpdate(); setOpen(false); }}><Save className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Update “{active.name}”</span></button>}
             <button className={cn(row, confirmDelete && 'text-[var(--danger)] hover:text-[var(--danger)]')}
               onClick={() => { if (!confirmDelete) { setConfirmDelete(true); return; } onDelete(active.id); setConfirmDelete(false); }}>
-              <Trash2 className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{confirmDelete ? `Delete ?${active.name}?? Click again` : `Delete ?${active.name}?`}</span>
+              <Trash2 className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{confirmDelete ? `Delete “${active.name}”? Click again` : `Delete “${active.name}”`}</span>
             </button>
           </>
         )}

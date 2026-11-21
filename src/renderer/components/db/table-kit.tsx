@@ -5,6 +5,7 @@ import { Chip } from '@/components/db/DbCards';
 import type { DbOption } from '@/lib/db';
 import { rowWindow } from '@/lib/row-window';
 import { decideExternalChange } from '@/lib/external-change';
+import type { SaveResult } from '@/surfaces';
 
 // The pieces of a table surface that the database (.db) and CSV tables share:
 // toolbar styles, the echo-guarded file write, row virtualisation, and the
@@ -28,8 +29,20 @@ export const TOOL_FIELD = `${TOOL_FIELD_BASE} !w-auto px-2`;
  * outside version arriving while an edit is in flight or unsaved is not
  * dropped: `conflict` turns on, nothing is written until `keepMine` or
  * `takeDisk` is called, and the latter adopts the file on disk.
+ *
+ * With `save` (a surface showing a file an editor group shows), the file is the
+ * app's shared document: `save` is its one save path, the app follows the disk
+ * and asks about outside changes, and the surface learns of every change --
+ * another group's edits included -- through its `content`. The writer then
+ * neither watches the file nor asks; `ignores` only recognises the surface's
+ * own text coming back as `content`.
  */
-export function useFileWriter(path: string, onExternalChange?: (text: string) => void, options: { askOnConflict?: boolean } = {}) {
+export function useFileWriter(path: string, onExternalChange?: (text: string) => void, options: {
+  askOnConflict?: boolean;
+  save?: (text: string) => Promise<SaveResult | null> | void;
+  /** The shared document's save state: a save the app made (Keep my version) clears this writer's error. */
+  saveState?: string;
+} = {}) {
   // inFlight: every write not yet answered (several when edits come quickly);
   // onDisk: the last version known to be on disk (adopted or saved); latest:
   // the last text asked to be written, kept while a conflict holds writes.
@@ -41,11 +54,17 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
   const [conflict, setConflictState] = useState(false);
   const external = useRef(onExternalChange);
   external.current = onExternalChange;
-  const askOnConflict = options.askOnConflict === true;
+  const save = useRef(options.save);
+  save.current = options.save;
+  const shared = !!options.save;
+  const askOnConflict = options.askOnConflict === true && !shared;
   const setConflict = (open: boolean) => {
     state.current.conflict = open;
     setConflictState(open);
   };
+  useEffect(() => {
+    if (shared && options.saveState === 'saved') setSaveError(null);
+  }, [shared, options.saveState]);
 
   /** Call before adopting content: a new path forgets the old file's writes. Returns true when it did. */
   const follow = (next: string): boolean => {
@@ -68,6 +87,15 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
   const ignores = (text: string) => {
     const s = state.current;
     if (text === s.pending || text === s.lastWritten) return true;
+    if (shared) {
+      if (s.inFlight.includes(text)) return true;
+      // Someone else's text (another group, or the disk as the app adopted it):
+      // what this surface wrote before is history, and may legitimately return.
+      s.lastWritten = null;
+      s.latest = null;
+      s.onDisk = text;
+      return false;
+    }
     if (!askOnConflict) return s.unsaved;
     const decision = decideExternalChange({ disk: text, pending: s.unsaved || s.conflict, ours: [s.latest, s.onDisk, ...s.inFlight] });
     if (decision === 'ask') { if (!s.conflict) setConflict(true); return true; }
@@ -87,10 +115,14 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
     s.pending = text;
     s.inFlight.push(text);
     try {
-      const result = await window.electronAPI.writeNote(path, text);
+      const result = save.current ? await save.current(text) : await window.electronAPI.writeNote(path, text);
       if (sequence !== s.sequence) return false;
       s.pending = null;
       s.inFlight = [];
+      // The shared document reports nothing for a save a newer one overtook,
+      // or one held back by an outside change; that newer save, or the app's
+      // notice, speaks for it.
+      if (!result) { s.unsaved = false; return false; }
       if (result.success) {
         s.lastWritten = text;
         s.onDisk = text;
@@ -110,8 +142,10 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
   };
 
   // The open file follows its file on disk: external edits (git pull, sync,
-  // another editor) land without a reload.
+  // another editor) land without a reload. A shared document hears of them
+  // from the app, as its `content`.
   useEffect(() => {
+    if (shared) return;
     return window.electronAPI.onNotesChanged((event, changed) => {
       if (changed !== path || event === 'unlink') return;
       const s = state.current;
@@ -121,7 +155,7 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
         external.current?.(text);
       });
     });
-  }, [path]);
+  }, [path, shared]);
 
   /** Write the local version over the outside one. */
   const keepMine = () => {

@@ -8,9 +8,10 @@ import { getPanel, type PanelContext } from './panels';
 /**
  * The editor panel's two shapes. With one editor group the panel shows that
  * group: `header` is its tab strip and the panel renders the file. With more,
- * `groups` is the whole split editor, each group with its own strip.
+ * `groups` is the whole split editor, each group with its own strip. `zones`
+ * are the single group's split drop zones, laid over the panel's content.
  */
-interface EditorSlot { header?: ReactNode; groups?: ReactNode }
+interface EditorSlot { header?: ReactNode; groups?: ReactNode; zones?: ReactNode }
 
 function PanelBody({ spec, surface, label, editor }: PanelContext & { label: string; editor?: EditorSlot }) {
   const Renderer = getPanel(spec.type);
@@ -23,7 +24,10 @@ function PanelBody({ spec, surface, label, editor }: PanelContext & { label: str
     // The single editor is the one editor group, and is marked as such.
     <div className="shell-card relative flex h-full min-h-0 flex-col" {...(isEditor ? { 'data-editor-group': 0, 'data-focused': 'true' } : {})}>
       {isEditor && editor?.header ? editor.header : <header className="flex h-7 shrink-0 items-center border-b border-[var(--divider)] bg-[var(--surface)] px-3 text-xs text-[var(--ink-secondary)]">{label[0].toUpperCase() + label.slice(1)}</header>}
-      <div className="min-h-0 flex-1"><Renderer spec={spec} surface={surface} /></div>
+      <div className="relative min-h-0 flex-1">
+        <Renderer spec={spec} surface={surface} />
+        {isEditor && editor?.zones}
+      </div>
     </div>
   );
 }
@@ -57,7 +61,7 @@ function renderGroup(
   );
 }
 
-export function LayoutSurface(props: SurfaceProps & { editorHeader?: ReactNode; editorGroups?: ReactNode }) {
+export function LayoutSurface(props: SurfaceProps & { editorHeader?: ReactNode; editorGroups?: ReactNode; editorZones?: ReactNode }) {
   const group = useMemo(() => parseLayout(props.content), [props.content]);
   if (!group) {
     return (
@@ -70,7 +74,7 @@ export function LayoutSurface(props: SurfaceProps & { editorHeader?: ReactNode; 
 
   return (
     <div className="relative h-full w-full">
-      {renderGroup(group, props, '0', { header: props.editorHeader, groups: props.editorGroups })}
+      {renderGroup(group, props, '0', { header: props.editorHeader, groups: props.editorGroups, zones: props.editorZones })}
     </div>
   );
 }

@@ -55,7 +55,7 @@ const copyColumns = (columns: Record<string, CsvColumnMeta>) => {
   return next;
 };
 
-export function CsvSurface({ path, content }: SurfaceProps) {
+export function CsvSurface({ path, content, onChangeNote, saveState }: SurfaceProps) {
   const fileName = path.split('/').pop()!;
   const title = fileName.replace(/\.csv$/i, '');
   const metaPath = tableMetaPath(path);
@@ -104,7 +104,10 @@ export function CsvSurface({ path, content }: SurfaceProps) {
   // `content` prop can still be the previously open file's, so it is ignored.
   const loaded = useRef<string | null>(null);
   const adoptChange = (text: string) => { loaded.current = path; adoptText(text); };
-  const csv = useFileWriter(path, adoptChange, { askOnConflict: true });
+  // The CSV itself is the app's shared document in an editor group (one copy,
+  // one writer, every group in step; see DbSurface). Its metadata is a file no
+  // group shows, so it keeps a writer of its own and follows the disk.
+  const csv = useFileWriter(path, adoptChange, { askOnConflict: true, save: onChangeNote, saveState });
   const metaWriter = useFileWriter(metaPath, adoptMetaText);
   const [unreadable, setUnreadable] = useState(false);
 

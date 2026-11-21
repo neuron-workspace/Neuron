@@ -1,7 +1,7 @@
 import { test, expect, openNote } from './fixtures';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Page } from '@playwright/test';
+import type { ElectronApplication, Page } from '@playwright/test';
 
 // "Open to the side" is now a split to the right: the note opens in a second
 // editor group. Groups are `[data-editor-group="<index>"]`, each with its own
@@ -78,4 +78,92 @@ test('the same note in two groups stays in step, and a tab splits right from its
   // The other group shows the edit from the shared document, and the file gets it once.
   await expect(group(page, 1).locator('article.preview-prose h1').first()).toContainText('shared');
   await expect.poll(() => readFileSync(join(workspace, 'projects', 'Website refresh.mdx'), 'utf-8').split(' shared').length - 1).toBe(1);
+});
+
+// Split shows source and preview side by side from 1100 CSS pixels (App.tsx `wide`).
+// Set in window pixels, so the CSS width is checked against that line, not for equality.
+async function setWindowWidth(app: ElectronApplication, page: Page, width: number) {
+  await app.evaluate(({ BrowserWindow }, w) => {
+    const win = BrowserWindow.getAllWindows().find((candidate) => !candidate.webContents.getURL().includes('window=settings'));
+    win?.setContentSize(w, 820);
+  }, width);
+  await expect.poll(() => page.evaluate(() => window.innerWidth >= 1100)).toBe(width >= 1100);
+}
+
+const TASKS = [
+  '# Tasks',
+  '',
+  'Brackets [ ] and [x] in a paragraph are not tasks.',
+  '',
+  '- [ ] Write [x] the draft',
+  '- [x] Review [ ] the notes',
+  '- [ ] Ship it',
+  '',
+].join('\n');
+
+test.describe('split, line clicks and tasks', () => {
+  test.use({ prepareWorkspace: async ({}, use) => use((dir: string) => {
+    mkdirSync(join(dir, 'notes'), { recursive: true });
+    writeFileSync(join(dir, 'notes', 'split.md'), '# Split\n\nFirst paragraph.\n\nThird paragraph here.\n');
+    writeFileSync(join(dir, 'notes', 'tasks.md'), TASKS);
+  }) });
+  const mode = (page: Page, name: string) => group(page, 0).getByRole('button', { name, exact: true });
+
+  test('Split shows source and preview side by side, and a Source/Preview switch when the window is narrow', async ({ app, page }) => {
+    await setWindowWidth(app, page, 1320);
+    await openNote(page, 'notes/split.md');
+    await mode(page, 'Split').click();
+    const editor = group(page, 0).locator('.cm-content');
+    await expect(editor).toBeVisible();
+    await expect(group(page, 0).locator('article.preview-prose')).toBeVisible();
+    await expect(group(page, 0).getByRole('tab', { name: 'Source' })).toHaveCount(0);
+
+    await setWindowWidth(app, page, 900);
+    const source = group(page, 0).getByRole('tab', { name: 'Source', exact: true });
+    const preview = group(page, 0).getByRole('tab', { name: 'Preview', exact: true });
+    await expect(source).toHaveAttribute('aria-selected', 'true');
+    await expect(editor).toBeVisible();
+    await preview.click();
+    await expect(preview).toHaveAttribute('aria-selected', 'true');
+    await expect(group(page, 0).locator('article.preview-prose h1')).toHaveText('Split');
+    await expect(editor).toBeHidden();
+
+    await setWindowWidth(app, page, 1320);
+    await expect(source).toHaveCount(0);
+  });
+
+  test('clicking a block in Split\'s preview puts the source cursor on its line', async ({ app, page }) => {
+    await setWindowWidth(app, page, 1320);
+    await openNote(page, 'notes/split.md');
+    await mode(page, 'Split').click();
+    const active = group(page, 0).locator('.cm-lineNumbers .cm-activeLineGutter');
+    await group(page, 0).locator('article.preview-prose p').filter({ hasText: 'Third paragraph here.' }).click();
+    await expect(active).toHaveText('5');
+    await expect(group(page, 0).locator('.cm-activeLine')).toHaveText('Third paragraph here.');
+    await group(page, 0).locator('article.preview-prose p').filter({ hasText: 'First paragraph.' }).click();
+    await expect(active).toHaveText('3');
+  });
+
+  test('ticking a task in Reading and in Live writes that task\'s box and nothing else (4A)', async ({ page, workspace }) => {
+    const file = join(workspace, 'notes', 'tasks.md');
+    const lines = () => readFileSync(file, 'utf8').split('\n');
+    await openNote(page, 'notes/tasks.md');
+    await expect(mode(page, 'Reading')).toHaveAttribute('aria-pressed', 'true');
+    const box = (text: string) => group(page, 0).locator('li').filter({ hasText: text }).locator('input.task-checkbox');
+
+    // Reading: the third task.
+    await box('Ship it').check();
+    await expect.poll(() => lines()[6]).toBe('- [x] Ship it');
+    expect(lines()).toEqual([...TASKS.split('\n').slice(0, 6), '- [x] Ship it', '']);
+
+    // Live: untick the second, whose text holds an empty box of its own; tick the first, whose text holds a ticked one.
+    await mode(page, 'Live').click();
+    await expect(group(page, 0).locator('[data-live-preview]')).toBeVisible();
+    await box('Review').uncheck();
+    await expect.poll(() => lines()[5]).toBe('- [ ] Review [ ] the notes');
+    await box('Write').check();
+    await expect.poll(() => lines()[4]).toBe('- [x] Write [x] the draft');
+    expect(lines()[2]).toBe('Brackets [ ] and [x] in a paragraph are not tasks.');
+    expect(lines()).toEqual(['# Tasks', '', 'Brackets [ ] and [x] in a paragraph are not tasks.', '', '- [x] Write [x] the draft', '- [ ] Review [ ] the notes', '- [x] Ship it', '']);
+  });
 });

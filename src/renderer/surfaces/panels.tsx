@@ -11,23 +11,11 @@ import type { SurfaceProps } from './index';
 import type { PanelSpec } from './layout';
 import { TooLargeMessage } from '../components/FileNotices';
 import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
-
-/**
- * Tick or untick the task on one source line.
- *
- * The shell layout renders its own previews, so a workspace with a
- * .neuron/layout.json never reaches App's copy of this. That split is exactly
- * how reading-mode checkboxes stayed dead here after being fixed there.
- */
-function toggleTaskLine(content: string, lineIndex: number, checked: boolean): string | null {
-  const lines = content.split('\n');
-  const line = lines[lineIndex];
-  if (line === undefined) return null;
-  const next = checked ? line.replace(/\[ \]/, '[x]') : line.replace(/\[[xX]\]/, '[ ]');
-  if (next === line) return null;
-  lines[lineIndex] = next;
-  return lines.join('\n');
-}
+// The shell layout renders its own previews, so a workspace with a
+// .neuron/layout.json never reaches the editor groups' task toggle. It shares
+// the one in lib/task-line rather than keeping a copy: two copies is exactly
+// how reading-mode checkboxes stayed dead here after being fixed there.
+import { toggleTaskLine } from '../lib/task-line';
 
 export interface PanelContext {
   spec: PanelSpec;

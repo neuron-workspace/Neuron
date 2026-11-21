@@ -1,4 +1,4 @@
-import { test, expect, closeMenuByClickingOutside } from './fixtures';
+import { test, expect, closeMenuByClickingOutside, openNote } from './fixtures';
 import type { Page } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -93,6 +93,27 @@ test('double-clicking the tab or "Keep open" in its menu keeps it', async ({ pag
   await expectTabs(page, ['alpha', 'beta'], null);
   await row(page, 'gamma').click();
   await expectTabs(page, ['alpha', 'beta', 'gamma'], 'gamma');
+});
+
+// Pins today's rule (App.tsx handleSelectNote: "a preview by default"; also
+// relied on by editor-split.spec.ts): the palette opens like a single click.
+test('opening from the palette is a look, like a single click: it replaces the preview, and editing keeps it', async ({ page, workspace }) => {
+  await row(page, 'alpha').dblclick();
+  await openNote(page, 'beta');
+  await expectTabs(page, ['alpha', 'beta'], 'beta');
+  await openNote(page, 'gamma');
+  await expectTabs(page, ['alpha', 'gamma'], 'gamma');
+  await expect(page.getByLabel('Note path')).toHaveText('gamma.md');
+
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  await page.locator('p[data-live-line]').filter({ hasText: 'A paragraph' }).click();
+  await page.keyboard.press('End');
+  await page.keyboard.insertText(' Kept.');
+  await page.getByRole('button', { name: 'Live', exact: true }).first().focus();
+  await expect.poll(() => readFileSync(join(workspace, 'gamma.md'), 'utf8')).toContain('Kept.');
+  await expectTabs(page, ['alpha', 'gamma'], null);
+  await openNote(page, 'beta');
+  await expectTabs(page, ['alpha', 'gamma', 'beta'], 'beta');
 });
 
 test('each editor group has a preview of its own', async ({ page }) => {

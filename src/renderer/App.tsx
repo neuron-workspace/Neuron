@@ -17,7 +17,7 @@ import {
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
 import ChromeImportDialog from './components/ChromeImportDialog';
-import EditorGroups, { EditorGroupHeader, type GroupContext, type SaveState } from './components/EditorGroup';
+import EditorGroups, { EditorGroupHeader, ShellSplitZones, type GroupContext, type SaveState } from './components/EditorGroup';
 import SettingsWindow from './views/SettingsWindow';
 import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
 import type { SettingsSection } from '../main/workspace-windows';
@@ -25,7 +25,7 @@ import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { PluginProvider, usePlugins } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
-import { getKindSurface, getSurface } from './surfaces';
+import { getKindSurface, getSurface, type SaveResult } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
 import './surfaces/ImageSurface'; // registers the image surface
 import './surfaces/MediaSurface'; // registers the video and audio surface
@@ -41,7 +41,7 @@ import './surfaces/CsvSurface'; // registers the .csv table surface
 import { type EditMode } from './surfaces/panels';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, workspacePanelsPatch, type SavedLayout, type WorkbenchLayout } from './lib/layout';
-import { hasLayoutTree, parseWorkspacePanels, sameJson } from './surfaces/layout';
+import { hasLayoutTree, parseWorkspacePanels, readableLayout, sameJson } from './surfaces/layout';
 import LayoutSwitcher from './components/LayoutSwitcher';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
 import { ExplorerProvider } from './lib/explorer-state';
@@ -214,7 +214,9 @@ export default function App() {
   const commitLayout = useCallback((next: WorkbenchLayout) => {
     layoutRef.current = next;
     setLayout(next);
-    void window.electronAPI?.settings.set('layout', next);
+    // Zen is never stored, nor the chrome it hid: what is stored during zen is
+    // what leaving it restores, so a relaunch starts as zen found the window.
+    void window.electronAPI?.settings.set('layout', next.zen && zenPrevRef.current ? { ...zenPrevRef.current, zen: false } : next);
   }, []);
 
   const patchLayout = useCallback((patch: Partial<WorkbenchLayout>) => {
@@ -864,18 +866,19 @@ export default function App() {
   }, [loadNotes]);
 
   // The one save path for every file a group shows, however many show it: the
-  // new text reaches every group at once, and only the latest write reports.
-  const writeDoc = useCallback(async (path: string, value: string) => {
+  // new text reaches every group at once, and only the latest write reports:
+  // the others, and one held back by an outside change, resolve to null.
+  const writeDoc = useCallback(async (path: string, value: string): Promise<SaveResult | null> => {
     // Kept in the same update as the change itself, so a preview never holds
     // an unsaved edit and the next single click cannot replace a tab mid-save.
     setEditor((current) => keepEverywhere(current, path));
     setDocs((current) => (current[path] === value ? current : { ...current, [path]: value }));
     docsRef.current = { ...docsRef.current, [path]: value };
-    if (!window.electronAPI) return;
+    if (!window.electronAPI) return null;
     setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
     // Changed outside Neuron while this edit was pending: nothing is written
     // until the user picks a version.
-    if (conflictsRef.current[path]) return;
+    if (conflictsRef.current[path]) return null;
     const version = (saveVersions.current.get(path) ?? 0) + 1;
     saveVersions.current.set(path, version);
     setSaveStates((current) => ({ ...current, [path]: 'saving' }));
@@ -883,7 +886,7 @@ export default function App() {
     inFlight.current.set(path, [...(inFlight.current.get(path) ?? []), value]);
     let result: { success: boolean; error?: string };
     try { result = await window.electronAPI.writeNote(path, value); } catch (error) { result = { success: false, error: String(error) }; }
-    if (version !== saveVersions.current.get(path)) return;
+    if (version !== saveVersions.current.get(path)) return null;
     savingDocs.current.delete(path);
     // Saves of one file land in order (main queues them), so after the latest
     // only its text is on disk -- or, if it failed, what was there before.
@@ -892,6 +895,7 @@ export default function App() {
     setSaveStates((current) => (path in current ? { ...current, [path]: result.success ? 'saved' : 'error' } : current));
     if (result.success && path === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${path}” could not be saved.`);
+    return result;
   }, [offerShellConfig]);
 
   // The two ways out of a conflict (ExternalChangeBar).
@@ -1180,7 +1184,7 @@ export default function App() {
     notes, tags, notesData, colorScheme, wide, properties: propsSettings,
     editorModes, onEditorMode: (path, mode) => setEditorModes((prev) => ({ ...prev, [path]: mode })),
     surfaceSource: surfaceSourceMode, onSurfaceSource: (path, source) => setSurfaceSourceMode((prev) => ({ ...prev, [path]: source })),
-    docs, saveStates, onChange: (path, value) => { void writeDoc(path, value); },
+    docs, saveStates, onChange: writeDoc,
     conflicts, onKeepMine: keepMyVersion, onUseDisk: (path) => { void takeDiskVersion(path); },
     surfaceFor, fileSize: (path) => entries?.info[path]?.size, onTagClick: setSelectedTag,
     home: (
@@ -1241,6 +1245,9 @@ export default function App() {
         <div className="min-h-0 flex-1">
           <LayoutSurface
             editorGroups={shellGroups ? notesView : undefined}
+            // One group: the shell's editor panel is that group, so dragging
+            // a tab to its right or bottom edge makes the first split.
+            editorZones={shellGroups ? undefined : <ShellSplitZones ctx={groupContext} state={editor} />}
             editorHeader={<EditorGroupHeader ctx={groupContext} state={editor} index={editor.focused} showsHome={atHome} inLayout />}
             path={SHELL_CONFIG}
             content={layoutShell}
@@ -1296,7 +1303,8 @@ export default function App() {
     <PluginProvider catalog={builtinPlugins} bridge={bridge} workspace={repository?.path ?? null}>
       <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
-        <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
+        {/* Zen removes the chrome, the status bar with it; its own setting is untouched. */}
+        <div className={`workspace-grid app-shell font-sans${layout.statusBar && !layout.zen ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
           <TitleBar
             layoutSwitcher={layoutSwitcher}
             repository={repository}
@@ -1367,7 +1375,15 @@ export default function App() {
               <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden',
                 !inShell && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
                 {noticeCallout}
-                {pendingShellConfig && (
+                {pendingShellConfig && !readableLayout(pendingShellConfig) && (
+                  // A broken file is never offered: the layout on screen stays.
+                  <div role="status" data-callout-kind="warning" data-layout-unreadable className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+                    <CalloutIcon kind="warning" />
+                    <span>Neuron can’t read the workspace layout (.neuron/layout.json): it isn’t a valid layout. The current layout stays until the file is fixed.</span>
+                    <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Dismiss</button>
+                  </div>
+                )}
+                {pendingShellConfig && readableLayout(pendingShellConfig) && (
                   <div role="status" data-callout-kind="info" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="info" />
                     <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
@@ -1400,7 +1416,7 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
+          {layout.statusBar && !layout.zen && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
           <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
           <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>

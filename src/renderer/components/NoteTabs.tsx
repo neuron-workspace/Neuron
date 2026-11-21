@@ -121,6 +121,9 @@ export default function NoteTabs({ tabs, previewTab = null, activeTab, focused =
               className="interactive flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 text-left text-xs"
               onClick={() => onSelect(note)}
               onDoubleClick={() => onKeep?.(note)}
+              // A middle press over the scrollable strip would start the
+              // browser's autoscroll, which swallows the click that closes.
+              onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
               onAuxClick={(event) => { if (event.button === 1) onClose(note); }}
             >
               {isUrl(note)

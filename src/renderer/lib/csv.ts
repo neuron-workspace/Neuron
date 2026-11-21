@@ -211,7 +211,7 @@ export const exceedsCsvRows = (rows: number) => rows > CSV_MAX_ROWS;
  * Text read as UTF-8 that was not: the reader replaced bytes it could not
  * decode, so writing it back would change characters the person never touched.
  */
-export const notUtf8 = (text: string) => text.includes('�') || text.includes('\u0000');
+export const notUtf8 = (text: string) => text.includes('\uFFFD') || text.includes('\u0000');
 
 /** Why a file can only be read, or null when Neuron may manage it. */
 export function csvReadOnlyReason(text: string, rowCount: number): string | null {
