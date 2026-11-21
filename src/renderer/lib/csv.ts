@@ -16,6 +16,8 @@ export interface CsvDialect {
   /** Every field in the file was quoted, so new fields are too. */
   quoteAll: boolean;
   finalNewline: boolean;
+  /** Excel's optional delimiter directive, including its original line ending. */
+  separatorLine?: string;
 }
 
 export interface CsvParseResult {
@@ -109,6 +111,8 @@ function scan(text: string, start: number, delimiter: string, limit = Infinity):
  */
 export function detectDelimiter(text: string): CsvDelimiter {
   const start = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const directive = /^sep=([,;\t])(?:\r\n|\n|\r)/i.exec(text.slice(start));
+  if (directive) return directive[1] as CsvDelimiter;
   let best: CsvDelimiter = ',';
   let bestScore = 0;
   let fallback: CsvDelimiter = ',';
@@ -151,7 +155,9 @@ export function uniqueHeaders(raw: readonly string[]): string[] {
 export function parseCsv(text: string): CsvParseResult {
   const bom = text.charCodeAt(0) === 0xfeff;
   const delimiter = detectDelimiter(text);
-  const { records, lineEnd, finalNewline } = scan(text, bom ? 1 : 0, delimiter);
+  const start = bom ? 1 : 0;
+  const separatorLine = /^sep=[,;\t](?:\r\n|\n|\r)/i.exec(text.slice(start))?.[0];
+  const { records, lineEnd, finalNewline } = scan(text, start + (separatorLine?.length ?? 0), delimiter);
   let width = 0;
   for (const record of records) if (record.fields.length > width) width = record.fields.length;
   // An empty line carries no data. In a one-column file it is an empty value;
@@ -161,7 +167,7 @@ export function parseCsv(text: string): CsvParseResult {
   const rawHeaders = kept.length ? pad(kept[0].fields) : [];
   const rows = kept.slice(1).map((record) => pad(record.fields));
   const quoteAll = kept.length > 0 && kept.every((record) => record.quoted.every(Boolean));
-  const dialect: CsvDialect = { delimiter, lineEnd: lineEnd ?? '\n', bom, quoteAll, finalNewline };
+  const dialect: CsvDialect = { delimiter, lineEnd: lineEnd ?? '\n', bom, quoteAll, finalNewline, ...(separatorLine ? { separatorLine } : {}) };
   return {
     headers: uniqueHeaders(rawHeaders),
     rawHeaders,
@@ -177,7 +183,7 @@ function needsQuotes(value: string, delimiter: string): boolean {
 }
 
 export function serializeCsv(headers: readonly string[], rows: readonly (readonly string[])[], dialect: CsvDialect): string {
-  const prefix = dialect.bom ? '﻿' : '';
+  const prefix = (dialect.bom ? '﻿' : '') + (dialect.separatorLine ?? '');
   if (!headers.length && !rows.length) return prefix;
   const { delimiter, quoteAll } = dialect;
   const field = (value: string) => (quoteAll || needsQuotes(value, delimiter) ? `"${value.replace(/"/g, '""')}"` : value);

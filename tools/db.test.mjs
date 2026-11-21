@@ -277,4 +277,34 @@ const ids = (rows) => rows.map((r) => r.id);
   assert.equal(m.serializeDb(m.parseDb(nulled, 'Views.db').db), nulled);
 }
 
-console.log('db: all checks passed');
+// M5: all levels of future data survive the only migration trigger.
+{
+  const legacy = structuredClone(v1);
+  legacy.schema.extraSchema = { keep: true };
+  legacy.schema.order.push('status');
+  legacy.schema.properties.status = { name: 'Status', type: 'select', future: 7, options: [{ id: 'a', name: 'Alpha', color: '#fff', future: true }] };
+  legacy.rows[0].extraRow = 42;
+  legacy.rows[0].values.status = 'a';
+  legacy.view = { mode: 'board', groupBy: 'status', futureView: 99 };
+  const parsed = m.parseDb(JSON.stringify(legacy), 'Legacy.db').db;
+  assert.deepEqual(JSON.parse(m.serializeDb(parsed)), legacy);
+  const migrated = JSON.parse(m.serializeDb(m.addDbTable(parsed, 'Second').db));
+  assert.deepEqual(migrated.tables.legacy, { ...legacy, name: 'Legacy' });
+}
+{
+  const dangling = structuredClone(v2);
+  delete dangling.tables.tasks.schema.properties.project;
+  delete dangling.tables.projects;
+  const parsed = m.parseDb(JSON.stringify(dangling), 'Gone.db').db;
+  assert.doesNotThrow(() => m.drawableRelations(parsed));
+  assert.deepEqual(JSON.parse(m.serializeDb(parsed)).relations, v2.relations, 'descriptive broken relations remain stored');
+}
+{
+  const base = JSON.stringify(v1);
+  assert.ok(m.parseDb(base + ' '.repeat(m.MAX_DB_BYTES - base.length), 'Big.db').db);
+  assert.match(m.parseDb(base + ' '.repeat(m.MAX_DB_BYTES - base.length + 1), 'Big.db').error, /2 MB/);
+  const unicode = JSON.stringify({ ...v1, padding: 'é'.repeat(m.MAX_DB_BYTES / 2) });
+  assert.match(m.parseDb(unicode, 'Big.db').error, /2 MB/, 'limit is bytes, not UTF-16 characters');
+}
+
+console.log('db: all checks passed (including M5 migration, dangling relations and byte boundaries)');

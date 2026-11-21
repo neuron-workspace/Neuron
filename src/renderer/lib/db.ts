@@ -1,6 +1,8 @@
 // Pure .db persistence model. Parsing is deliberately separate from the React
 // surfaces so malformed files can never be "repaired" by an editor write.
 
+import { utf8Length } from './csv';
+
 export const MAX_DB_BYTES = 2 * 1024 * 1024;
 
 /** Colors a select option cycles through, in the database and in CSV tables. */
@@ -136,7 +138,7 @@ function normalizeTable(raw: Record<string, unknown>, fallbackName: string, v2: 
 
 /** Parse v1 (top-level schema) or D28 v2 without performing any writes. */
 export function parseDb(text: string, fileName: string): DbParseResult {
-  if (text.length > MAX_DB_BYTES) return { db: null, error: 'Database exceeds the 2 MB size limit.' };
+  if (utf8Length(text) > MAX_DB_BYTES) return { db: null, error: 'Database exceeds the 2 MB size limit.' };
   let raw: unknown;
   try {
     raw = JSON.parse(text);

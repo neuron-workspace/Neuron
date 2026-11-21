@@ -100,13 +100,13 @@ try {
     assert.equal(fileKind('.env.example.bak'), 'other', 'only the whole name');
   });
   check('notes:list lists notes, Neuron documents and workspace configuration, and nothing else', () => {
-    for (const name of ['a.md', 'b.mdx', 'v.html', 'p.db', 'i.canvas', 'f.mmd', 'f.mermaid', 't.csv', 'neuron.config', 'x.neuron.json',
+    for (const name of ['a.md', 'b.mdx', 'v.html', 'p.db', 'i.canvas', 'f.mmd', 'f.mermaid', 't.csv', 'T.CSV', 'data/t.Csv', 'neuron.config', 'x.neuron.json',
       '.neuron/layout.json', '.neuron/tables/t.csv.json', '.neuron/fragments/f.html', '.neuron/styles/s.css']) assert.equal(isListedFile(name), true, name);
-    for (const name of ['a.json', 'readme.txt', 'Makefile', 'a.png', 'tool.exe', 'docs/neuron.config', '.neuron/notes.txt', 'x.pdf']) assert.equal(isListedFile(name), false, name);
+    for (const name of ['a.json', 'readme.txt', 'Makefile', 'a.png', 'tool.exe', 'docs/neuron.config', '.neuron/notes.txt', 'x.pdf', 'x.csv.bak']) assert.equal(isListedFile(name), false, name);
   });
   check('text files outside that listing are reported to an open copy; media and binaries are not', () => {
     for (const name of ['config.json', 'compose.YAML', 'notes.txt', 'Makefile', 'LICENSE', '.env.example', '.neuron/notes.txt']) assert.equal(isUnlistedText(name), true, name);
-    for (const name of ['a.md', '.neuron/layout.json', 'a.png', 'clip.mp4', 'x.pdf', 'tool.exe', 'run.sh']) assert.equal(isUnlistedText(name), false, name);
+    for (const name of ['a.md', 'T.CSV', '.neuron/layout.json', 'a.png', 'clip.mp4', 'x.pdf', 'tool.exe', 'run.sh']) assert.equal(isUnlistedText(name), false, name);
   });
   check('names the table does not know are sniffed, and are other until then', () => {
     for (const name of ['Makefile', 'LICENSE', 'data.dat', 'weird.xyz', 'neuron.config', '.gitignore']) {

@@ -84,7 +84,7 @@
     "test:tabs": "node tools/tabs.test.mjs && node tools/task-line.test.mjs",
     "test:keybindings": "node tools/keybindings.test.mjs",
     "test:text-encoding": "node tools/text-encoding.test.mjs",
-    "test:callout-kind": "node tools/callout-kind.test.mjs && node tools/mdx-components.test.mjs",
+    "test:callout-kind": "node tools/callout-kind.test.mjs && node tools/mdx-components.test.mjs && node tools/mdx-security.test.mjs",
     "test:workspace-windows": "node tools/workspace-windows.test.mjs",
     "test:connectors": "node tools/connectors.test.mjs",
     "test:file-kinds": "node tools/file-kinds.test.mjs",

@@ -114,6 +114,30 @@ try {
     assert.ok(demo.name && demo.description, 'it should describe itself in template.json');
     assert.ok(demo.noteCount > 0, 'it should contain notes');
   });
+  check('a newly copied demo shifts dates together, including dated note links and filenames', () => {
+    const demo = join(store, 'demo-repo');
+    const database = '{"schema":{"order":["due"],"properties":{"due":{"name":"Due","type":"date"}}},"rows":[{"id":"one","values":{"due":"2020-02-29"}}]}\n';
+    const note = '# Dates\r\n2020-02-28 to 2020-02-29; [[guides/2020-02-28]]\r\nUntouched: café, 2020-02-31, v1.2.3\r\n';
+    writeFileSync(join(demo, 'Planner.db'), database);
+    writeFileSync(join(demo, 'dates.mdx'), note);
+    writeFileSync(join(demo, 'guides', '2020-02-28.md'), '2020-02-28\n');
+    writeFileSync(join(demo, 'asset.txt'), '2020-02-29 remains literal\n');
+    const out = join(scratch, 'dated-demo');
+    copyTemplate(demo, out, new Date(2026, 10, 21, 23, 59));
+    assert.equal(JSON.parse(readFileSync(join(out, 'Planner.db'), 'utf8')).rows[0].values.due, '2026-11-28', 'latest due is seven local calendar days from creation');
+    assert.equal(readFileSync(join(out, 'dates.mdx'), 'utf8'), note.replaceAll('2020-02-28', '2026-11-27').replaceAll('2020-02-29', '2026-11-28'));
+    assert.equal(readFileSync(join(out, 'guides', '2026-11-27.md'), 'utf8'), '2026-11-27\n');
+    assert.equal(readFileSync(join(out, 'asset.txt'), 'utf8'), '2020-02-29 remains literal\n');
+    assert.equal(readFileSync(join(demo, 'Planner.db'), 'utf8'), database);
+    assert.equal(readFileSync(join(demo, 'dates.mdx'), 'utf8'), note);
+  });
+  check('other templates keep their authored dates', () => {
+    const source = join(store, 'research-vault');
+    writeFileSync(join(source, 'sources.md'), '2020-02-29\n');
+    const out = join(scratch, 'unchanged-dates');
+    copyTemplate(source, out, new Date(2026, 10, 21));
+    assert.equal(readFileSync(join(out, 'sources.md'), 'utf8'), '2020-02-29\n');
+  });
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

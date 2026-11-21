@@ -56,11 +56,14 @@ export function needsSniff(path: string): boolean {
 
 // Notes and Neuron's own documents (views, databases, canvases, diagrams, CSV
 // tables) and the workspace's configuration: what notes:list returns.
-const LISTED_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid|csv)$)/;
+const LISTED_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid)$)/;
+// A CSV is a table whatever the case of its extension (Excel writes .CSV), as
+// everywhere else that asks (fileKind, isCsvPath, the surface registry).
+const CSV_FILE = /\.csv$/i;
 
 /** Whether notes:list lists this path, and the renderer keeps it among its notes. */
 export function isListedFile(path: string): boolean {
-  return LISTED_FILE.test(path);
+  return LISTED_FILE.test(path) || CSV_FILE.test(path);
 }
 
 /**

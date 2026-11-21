@@ -9,7 +9,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outfile = join(root, 'tools', '.csv.tmp.mjs');
 await build({
   stdin: {
-    contents: `export * from './src/renderer/lib/csv'; export * from './src/renderer/lib/csv-table'; export * from './src/renderer/lib/new-file'; export { SURFACE_EXTENSIONS, isSurfaceFile } from './src/renderer/surfaces/index';`,
+    contents: `export * from './src/renderer/lib/csv'; export * from './src/renderer/lib/csv-table'; export * from './src/renderer/lib/new-file'; export { listFolder } from './src/renderer/lib/workspace-explorer'; export { SURFACE_EXTENSIONS, isSurfaceFile } from './src/renderer/surfaces/index';`,
     resolveDir: root,
     loader: 'ts',
   },
@@ -260,6 +260,44 @@ check('metadata path, the csv surface and the new table', () => {
   assert.equal(companions[0].path, '.neuron/tables/lists/Untitled.csv.json');
   assert.equal(m.parseTableMeta(companions[0].content, ['Name']).columns.Name.type, 'text');
   assert.deepEqual(m.startingCompanions('note', 'a.md'), []);
+});
+
+check('Excel sep directive is not a header and round-trips with BOM and CRLF', () => {
+  const text = '\uFEFFsep=;\r\nName;Note\r\nAda;"a;b\r\nc"';
+  const parsed = m.parseCsv(text);
+  assert.deepEqual(parsed.headers, ['Name', 'Note']);
+  assert.deepEqual(parsed.rows, [['Ada', 'a;b\r\nc']]);
+  assert.equal(parsed.exact, true);
+  assert.equal(roundTrip(text), text);
+});
+check('combined BOM, CRLF and no final newline is byte-identical', () => {
+  const text = '\uFEFFName;Note\r\nAda;"a;b"';
+  assert.equal(m.parseCsv(text).exact, true);
+  assert.equal(roundTrip(text), text);
+});
+check('actual parsed row and UTF-8 byte boundaries keep the inclusive limit', () => {
+  for (const count of [50_000, 50_001]) {
+    const text = 'Name\n' + 'Ada\n'.repeat(count);
+    const parsed = m.parseCsv(text);
+    assert.equal(parsed.rows.length, count);
+    assert.equal(m.csvReadOnlyReason(text, parsed.rows.length), count === 50_000 ? null : 'This CSV has more than 50,000 rows, so it opens read-only.');
+  }
+  const at = 'Name\n' + 'é'.repeat((m.CSV_MAX_BYTES - 6) / 2) + 'x';
+  assert.equal(Buffer.byteLength(at), m.CSV_MAX_BYTES);
+  assert.equal(m.csvReadOnlyReason(at, m.parseCsv(at).rows.length), null);
+  assert.match(m.csvReadOnlyReason(at + 'x', 1), /5 MB/);
+  assert.match(m.csvReadOnlyReason(Buffer.from([0x4e, 0x0a, 0xe9]).toString('utf8'), 1), /UTF-8/);
+  assert.equal(m.isSurfaceFile('data/PEOPLE.CSV'), true);
+  assert.equal(m.listFolder(['data/PEOPLE.CSV'], 'data').files[0].extension, 'csv');
+});
+check('prototype-shaped header names survive parse, metadata and serialization', () => {
+  const text = '__proto__,constructor\nAda,Lin\n';
+  const parsed = m.parseCsv(text);
+  const meta = m.inferTableMeta(parsed.headers, parsed.rows);
+  assert.equal(m.columnMeta(meta, '__proto__').type, 'text');
+  assert.equal(m.columnMeta(meta, 'constructor').type, 'text');
+  assert.deepEqual(Object.keys(JSON.parse(m.serializeTableMeta(meta, parsed.headers)).columns), parsed.headers);
+  assert.equal(roundTrip(text), text);
 });
 
 console.log(`csv: ${checks} checks passed`);
