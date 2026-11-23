@@ -5,6 +5,8 @@ import type { ElectronApplication, Page } from '@playwright/test';
 
 type Api = { electronAPI: any };
 const api = (page: Page, run: string) => page.evaluate(`(async () => { const api = window.electronAPI; return ${run}; })()`);
+/** Reads one setting, passing the key as a value rather than as code. */
+const getSetting = (page: Page, key: string) => page.evaluate((k) => (window as unknown as Api).electronAPI.settings.get(k), key);
 
 /** A second workspace beside the test's own, with one note that exists nowhere else. */
 function otherWorkspace(workspace: string): string {
@@ -109,7 +111,7 @@ test('a plugin switched on and off in Workspace settings adds and removes its pa
   await dialog.getByPlaceholder('Search plugins').fill('Daily Notes');
   const toggle = dialog.getByRole('switch', { name: 'Enable Daily Notes' });
   await toggle.check();
-  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
+  await expect.poll(() => getSetting(page, pluginsKey(workspace)).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
   await page.keyboard.press('Escape');
   await expect(daily).toBeVisible();
   const again = await openWorkspaceSettings(page, 'plugins');
@@ -118,7 +120,7 @@ test('a plugin switched on and off in Workspace settings adds and removes its pa
   await page.keyboard.press('Escape');
   await expect(daily).toHaveCount(0);
   // Kept per workspace, and the old global record is not written.
-  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(false);
+  await expect.poll(() => getSetting(page, pluginsKey(workspace)).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(false);
   expect(await api(page, 'api.settings.get("plugins")')).toBeNull();
 });
 
@@ -139,7 +141,7 @@ test('the Terminal switched on in one workspace stays off in another', async ({ 
   await expect(page.getByRole('complementary', { name: 'Bottom plugin peek' }).getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
   // The other workspace's window did not follow.
   await expect(offIn(second)).toBeVisible();
-  expect(await api(second, `api.settings.get(${JSON.stringify(pluginsKey(other))})`).then((s: any) => s?.enabled?.terminal)).toBe(false);
+  expect(await getSetting(second, pluginsKey(other)).then((s: any) => s?.enabled?.terminal)).toBe(false);
 });
 
 test('Settings shows Connectors and no plugin switches; a saved key is never shown again', async ({ app, page }) => {
@@ -195,12 +197,12 @@ test('a plugin switched on in one workspace is off in another', async ({ app, pa
   const second = await nextWindow(app, () => page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.switch(dir), other));
   // Daily Notes is off by default; switch it on in the first workspace only.
   await setPluginEnabled(app, page, 'Daily Notes', true);
-  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
+  await expect.poll(() => getSetting(page, pluginsKey(workspace)).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
   const dialog = await openWorkspaceSettings(second, 'plugins');
   await dialog.getByPlaceholder('Search plugins').fill('Daily Notes');
   await expect(dialog.getByRole('switch', { name: 'Enable Daily Notes' })).not.toBeChecked();
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-  expect(await api(second, `api.settings.get(${JSON.stringify(pluginsKey(other))})`).then((s: any) => s?.enabled?.['daily-calendar'])).not.toBe(true);
+  expect(await getSetting(second, pluginsKey(other)).then((s: any) => s?.enabled?.['daily-calendar'])).not.toBe(true);
   // And its panel is not offered there.
   await second.getByRole('button', { name: 'Show panel', exact: true }).click();
   await expect(second.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Graph', exact: true })).toBeVisible();

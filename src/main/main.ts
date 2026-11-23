@@ -913,12 +913,18 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
     // Read whole, so never past NOTE_READ_LIMIT: a 500 MB CSV read into a
     // string would exhaust the main process. The size is checked first and the
     // file is not opened at all past it.
-    if ((await fs.promises.stat(resolved.fullPath)).size > NOTE_READ_LIMIT) return TOO_LARGE_TO_OPEN;
+    // One handle for the size check and the read, so both see the same file.
     // Async: opening a workspace reads every note at once, and synchronous
     // reads hold the main thread -- which in Electron is also the browser's UI
     // thread -- for the whole batch. Opening 5,000 freshly written notes on
     // Windows: explorer after 33 s with sync reads, 7-8 s with these.
-    return await fs.promises.readFile(resolved.fullPath, 'utf-8');
+    const note = await fs.promises.open(resolved.fullPath, 'r');
+    try {
+      if ((await note.stat()).size > NOTE_READ_LIMIT) return TOO_LARGE_TO_OPEN;
+      return await note.readFile('utf-8');
+    } finally {
+      await note.close();
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // Missing files are an expected probe result (e.g. optional .neuron/layout.json);
