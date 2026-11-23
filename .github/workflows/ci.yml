@@ -111,6 +111,9 @@ jobs:
       RUN: ${{ needs.changes.outputs.code }}
       SCOPE: ${{ needs.changes.outputs.scope }}
       SPECS: ${{ needs.changes.outputs.specs }}
+      # End-to-end tests are paused during the security review (owner decision,
+      # 2026-11-24). Set to 'false' to run them again.
+      E2E_PAUSED: 'true'
     steps:
       - name: Skip for a documentation-only change
         if: env.RUN != 'true'
@@ -153,7 +156,7 @@ jobs:
       # real keychain: a session bus with an unlocked gnome-keyring on it.
       # e2e/fixtures.ts points Electron at it with --password-store.
       - name: Start a keychain for the end-to-end tests
-        if: env.RUN == 'true' && runner.os == 'Linux' && env.SPECS != ''
+        if: env.RUN == 'true' && runner.os == 'Linux' && env.SPECS != '' && env.E2E_PAUSED != 'true'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends dbus gnome-keyring libsecret-tools
@@ -169,7 +172,7 @@ jobs:
       # Chromium's os_crypt logging, in a later step than the one that started
       # it (so it also shows whether the daemon survived the step boundary).
       - name: Check the keychain from Electron
-        if: env.RUN == 'true' && runner.os == 'Linux' && env.SPECS != ''
+        if: env.RUN == 'true' && runner.os == 'Linux' && env.SPECS != '' && env.E2E_PAUSED != 'true'
         continue-on-error: true
         run: |
           pgrep -a gnome-keyring || echo "gnome-keyring-daemon is not running"
@@ -184,17 +187,20 @@ jobs:
           EOF
           timeout 90 xvfb-run --auto-servernum npx electron "$RUNNER_TEMP/keychain-probe.cjs" --password-store=gnome-libsecret --enable-logging=stderr --vmodule='*os_crypt*=2,*key_storage*=2,*libsecret*=2' 2>&1 | grep -Ei 'keychain-probe|crypt|secret|keyring|key_storage|dbus' || true
       - name: Run Electron end-to-end tests
-        if: env.RUN == 'true' && env.SPECS == 'all'
+        if: env.RUN == 'true' && env.SPECS == 'all' && env.E2E_PAUSED != 'true'
         run: ${{ matrix.wrap }} npm run test:e2e
       - name: Run affected Electron end-to-end tests
-        if: env.RUN == 'true' && env.SPECS != 'all' && env.SPECS != ''
+        if: env.RUN == 'true' && env.SPECS != 'all' && env.SPECS != '' && env.E2E_PAUSED != 'true'
         shell: bash
         run: |
           echo "Affected specs: $SPECS"
           read -r -a specs <<< "$SPECS"
           npm run build:main && ${{ matrix.wrap }} npx playwright test "${specs[@]}"
+      - name: End-to-end tests paused
+        if: env.RUN == 'true' && env.E2E_PAUSED == 'true'
+        run: echo "End-to-end tests are paused during the security review (E2E_PAUSED in ci.yml)."
       - name: No affected end-to-end specs
-        if: env.RUN == 'true' && env.SPECS == ''
+        if: env.RUN == 'true' && env.SPECS == '' && env.E2E_PAUSED != 'true'
         run: echo "Nothing this change touches has an end-to-end spec."
 
       # Launch what a user would actually download.
