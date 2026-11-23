@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Readable } from 'node:stream';
+import { openSafe } from './safe-fs';
 import { resolveInside, realpathInside } from './repoPath';
 import { extensionOf, fileKind, MEDIA_KINDS } from './file-kinds';
 
@@ -83,23 +84,34 @@ function resolveInRepo(repo: string, relativePath: string): string | null {
  */
 export async function respondWithFile(request: Request, lookup: FileWindowLookup): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 403 });
-  const decision = authorizeFileUrl(request.url, lookup);
+  let repo = '';
+  const decision = authorizeFileUrl(request.url, (id) => {
+    const entry = lookup(id);
+    repo = entry?.repo ?? '';
+    return entry;
+  });
   if (!decision.ok) return new Response(null, { status: 403 });
-  let stat: fs.Stats;
-  try { stat = await fs.promises.stat(decision.fullPath); } catch { return new Response(null, { status: 404 }); }
-  if (!stat.isFile()) return new Response(null, { status: 403 });
-  const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
-  const range = parseRange(request.headers.get('range'), stat.size);
-  if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
-  const start = range ? range.start : 0;
-  const end = range ? range.end : stat.size - 1;
-  const length = Math.max(0, end - start + 1);
-  headers['Content-Length'] = String(length);
-  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
-  const body = request.method === 'HEAD' || length === 0
-    ? null
-    : Readable.toWeb(fs.createReadStream(decision.fullPath, { start, end })) as unknown as ReadableStream<Uint8Array>;
-  return new Response(body, { status: range ? 206 : 200, headers });
+  let handle: fs.promises.FileHandle;
+  try { handle = await openSafe(repo, decision.fullPath); } catch (error) {
+    return new Response(null, { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 403 });
+  }
+  let streaming = false;
+  try {
+    const stat = await handle.stat();
+    const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
+    const range = parseRange(request.headers.get('range'), stat.size);
+    if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
+    const start = range ? range.start : 0;
+    const end = range ? range.end : stat.size - 1;
+    const length = Math.max(0, end - start + 1);
+    headers['Content-Length'] = String(length);
+    if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+    const body = request.method === 'HEAD' || length === 0
+      ? null
+      : Readable.toWeb(handle.createReadStream({ start, end, autoClose: true })) as unknown as ReadableStream<Uint8Array>;
+    streaming = body !== null;
+    return new Response(body, { status: range ? 206 : 200, headers });
+  } finally { if (!streaming) await handle.close(); }
 }
 
 /**

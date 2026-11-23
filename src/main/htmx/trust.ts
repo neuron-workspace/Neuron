@@ -16,6 +16,7 @@
 // Electron-free so the unit suite can run it in plain Node.
 
 import * as fs from 'fs';
+import { openSafeSync } from '../safe-fs';
 import { createHash } from 'crypto';
 import { resolveInWorkspace } from './pathPolicy';
 import { manifestPathFor, legacyManifestPathFor } from './appPaths';
@@ -55,8 +56,8 @@ export function sha256Bytes(bytes: Buffer): string {
  * Read a plain file up to `limit` bytes through one open handle, so the size
  * check and the read see the same file (no swap between a stat and a read).
  */
-function readLimited(full: string, limit: number): Buffer | 'not-a-file' | { tooLarge: number } {
-  const fd = fs.openSync(full, 'r');
+function readLimited(root: string, full: string, limit: number): Buffer | 'not-a-file' | { tooLarge: number } {
+  const fd = openSafeSync(root, full);
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) return 'not-a-file';
@@ -108,7 +109,7 @@ export function computeTrust(root: string, viewRel: string): TrustSnapshot {
     let digest: string;
     try {
       if (!resolved) throw new Error('outside');
-      const read = readLimited(resolved.full, limit);
+      const read = readLimited(root, resolved.full, limit);
       if (read === 'not-a-file') digest = 'not-a-file';
       // Over its limit the server will not serve it; say so without reading it.
       else if (!Buffer.isBuffer(read)) digest = `too-large:${read.tooLarge}`;
@@ -140,7 +141,7 @@ export function readTrusted(trusted: ReadonlyMap<string, string>, root: string, 
   if (!resolved) return null;
   let bytes: Buffer;
   try {
-    const read = readLimited(resolved.full, limit);
+    const read = readLimited(root, resolved.full, limit);
     if (!Buffer.isBuffer(read)) return null;
     bytes = read;
   } catch { return null; }

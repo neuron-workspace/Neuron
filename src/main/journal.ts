@@ -1,6 +1,8 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { checkSafePath, mkdirSafeSync, openSafeSync, readSafeSync, writeSafeAtomicSync, trashSafe, unlinkSafeSync } from './safe-fs';
+import { writeAtomically } from './save-file';
 
 export type JournalOperation = 'overwrite' | 'delete';
 
@@ -41,7 +43,10 @@ export interface JournalEntry {
   state: 'captured' | 'skipped';
   sha256?: string;
   skipReason?: 'file-too-large';
+  writer?: string;
 }
+
+export interface CaptureOptions { coalesce?: boolean; required?: boolean; writer?: string }
 
 export type CaptureResult =
   | { status: 'captured' | 'skipped'; entry: JournalEntry }
@@ -54,6 +59,7 @@ export type RestoreResult =
 
 interface JournalOptions {
   limits?: Partial<JournalLimits>;
+  writerLimits?: Partial<JournalLimits>;
   now?: () => number;
   reportError?: (message: string, error?: unknown) => void;
 }
@@ -82,12 +88,15 @@ function validateLimits(limits: JournalLimits): void {
 
 export class WriteJournal {
   private readonly limits: JournalLimits;
+  private readonly writerLimits: JournalLimits;
   private readonly now: () => number;
   private readonly reportError: (message: string, error?: unknown) => void;
 
   constructor(private readonly userDataDirectory: string, options: JournalOptions = {}) {
     this.limits = { ...DEFAULT_JOURNAL_LIMITS, ...options.limits };
     validateLimits(this.limits);
+    this.writerLimits = { ...DEFAULT_JOURNAL_LIMITS, ...options.writerLimits };
+    validateLimits(this.writerLimits);
     this.now = options.now ?? Date.now;
     this.reportError = options.reportError ?? ((message, error) => console.error(message, error));
   }
@@ -96,47 +105,71 @@ export class WriteJournal {
    * `coalesce: false` records this pre-image even inside the coalescing
    * window: a change Neuron makes on its own (links rewritten after a rename)
    * has to be undoable by itself, not folded into the user's last edit.
+   *
+   * `required: true` (unattended writers, D42) reports `failed` instead of a
+   * skip marker when the pre-image cannot be kept -- store unwritable, file
+   * over the size cap or the whole budget -- so the caller can refuse to
+   * overwrite; it is never coalesced away. Typing keeps D19.4: a failure never
+   * blocks the write. `writer` (e.g. 'sync') tags the entry; tagged entries
+   * have their own budget (`writerLimits`) and are pruned apart from the
+   * user's own history, so a large pull never pushes that out.
    */
-  capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation, options: { coalesce?: boolean } = {}): CaptureResult {
+  capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation, options: CaptureOptions = {}): CaptureResult {
     const target = this.existingWorkspaceFile(workspaceRoot, filePath);
     if (target === 'missing') return { status: 'not-needed' };
-    if (!target) return { status: 'rejected' };
+    if (!target) return options.required ? { status: 'failed', error: 'Unsafe journal source.' } : { status: 'rejected' };
 
-    if (operation === 'overwrite' && options.coalesce !== false && this.recentlyCaptured(target.workspaceRoot, target.relativePath)) {
+    if (!options.required && operation === 'overwrite' && options.coalesce !== false && this.recentlyCaptured(target.workspaceRoot, target.relativePath, options.writer)) {
       return { status: 'not-needed' };
     }
 
     try {
-      const stat = fs.statSync(target.fullPath);
+      const limits = options.writer ? this.writerLimits : this.limits;
+      // Size and bytes through one checked handle: no swap between them (P0-1).
+      const fd = openSafeSync(target.safeRoot, target.fullPath);
+      let bytes: Buffer | undefined;
+      let size: number;
+      try {
+        size = fs.fstatSync(fd).size;
+        if (size <= limits.maxFileBytes) {
+          bytes = fs.readFileSync(fd);
+          size = bytes.length;
+        }
+      } finally { fs.closeSync(fd); }
+      if (options.required && (size > limits.maxFileBytes || size > limits.maxTotalBytes)) {
+        throw new Error('Required pre-image exceeds the journal budget.');
+      }
       const entry: JournalEntry = {
         id: `${this.now()}-${crypto.randomBytes(8).toString('hex')}`,
         relativePath: target.relativePath,
         operation,
         createdAt: this.now(),
-        originalBytes: stat.size,
-        state: stat.size > this.limits.maxFileBytes ? 'skipped' : 'captured',
+        originalBytes: size,
+        state: size > limits.maxFileBytes ? 'skipped' : 'captured',
+        ...(options.writer ? { writer: options.writer } : {}),
       };
       const store = this.storeDirectory(target.workspaceRoot);
-      fs.mkdirSync(store, { recursive: true });
+      fs.mkdirSync(this.userDataDirectory, { recursive: true });
+      mkdirSafeSync(this.userDataDirectory, store);
 
       if (entry.state === 'skipped') {
         entry.skipReason = 'file-too-large';
       } else {
-        const bytes = fs.readFileSync(target.fullPath);
-        entry.originalBytes = bytes.length;
-        entry.sha256 = sha256(bytes);
-        fs.writeFileSync(path.join(store, `${entry.id}.bin`), bytes, { flag: 'wx' });
+        entry.sha256 = sha256(bytes!);
+        const bin = openSafeSync(this.userDataDirectory, path.join(store, `${entry.id}.bin`), 'create');
+        try { fs.writeFileSync(bin, bytes!); fs.fsyncSync(bin); } finally { fs.closeSync(bin); }
       }
 
       try {
         this.writeEntry(store, entry);
       } catch (error) {
         if (entry.state === 'captured') {
-          try { fs.unlinkSync(path.join(store, `${entry.id}.bin`)); } catch { /* best effort */ }
+          try { unlinkSafeSync(this.userDataDirectory, path.join(store, `${entry.id}.bin`)); } catch { /* best effort */ }
         }
         throw error;
       }
       this.pruneStore(store);
+      if (options.required && !fs.existsSync(path.join(store, `${entry.id}.json`))) throw new Error('Required pre-image was not retained.');
       return { status: entry.state, entry };
     } catch (error) {
       const message = `Failed to journal ${operation} pre-image for ${target.relativePath}.`;
@@ -167,20 +200,12 @@ export class WriteJournal {
 
       const destination = this.restoreDestination(root, entry.relativePath);
       if (!destination) return { success: false, error: 'Journal entry points outside the workspace.' };
-      const bytes = fs.readFileSync(path.join(store, `${entry.id}.bin`));
+      const bytes = readSafeSync(this.userDataDirectory, path.join(store, `${entry.id}.bin`));
       if (bytes.length !== entry.originalBytes || sha256(bytes) !== entry.sha256) {
         return { success: false, error: 'Journal pre-image failed its integrity check.' };
       }
 
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
-      const temporary = `${destination}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.journal.tmp`;
-      try {
-        fs.writeFileSync(temporary, bytes, { flag: 'wx' });
-        fs.renameSync(temporary, destination);
-      } catch (error) {
-        try { fs.unlinkSync(temporary); } catch { /* best effort */ }
-        throw error;
-      }
+      writeSafeAtomicSync(root, destination, bytes);
       return { success: true, path: destination, bytes: bytes.length };
     } catch (error) {
       const message = 'Failed to restore journal entry.';
@@ -190,13 +215,13 @@ export class WriteJournal {
   }
 
   /** True when an overwrite pre-image for this file is younger than coalesceMs. */
-  private recentlyCaptured(workspaceRoot: string, relativePath: string): boolean {
+  private recentlyCaptured(workspaceRoot: string, relativePath: string, writer?: string): boolean {
     try {
       const store = this.storeDirectory(workspaceRoot);
       if (!fs.existsSync(store)) return false;
-      const cutoff = this.now() - this.limits.coalesceMs;
+      const cutoff = this.now() - (writer ? this.writerLimits : this.limits).coalesceMs;
       return this.readEntries(store).some(
-        (entry) => entry.relativePath === relativePath && entry.createdAt >= cutoff,
+        (entry) => entry.relativePath === relativePath && entry.writer === writer && entry.createdAt >= cutoff,
       );
     } catch {
       // Unreadable store: fall through and attempt the capture. Capturing one
@@ -214,23 +239,31 @@ export class WriteJournal {
     }
   }
 
+  /**
+   * `workspaceRoot` is the real root (it keys the store); `safeRoot` is the
+   * root as the caller gave it, which `fullPath` is lexically under, for the
+   * handle-based read.
+   */
   private existingWorkspaceFile(workspaceRoot: string, filePath: string):
-    | { workspaceRoot: string; fullPath: string; relativePath: string }
+    | { workspaceRoot: string; safeRoot: string; fullPath: string; relativePath: string }
     | 'missing'
     | null {
     const root = this.workspaceRoot(workspaceRoot);
     if (!root) return null;
+    const lexicalRoot = path.resolve(workspaceRoot);
     const lexicalTarget = path.resolve(filePath);
-    if (!isInside(path.resolve(workspaceRoot), lexicalTarget) || lexicalTarget === path.resolve(workspaceRoot)) return null;
-    if (!fs.existsSync(lexicalTarget)) return 'missing';
+    if (!isInside(lexicalRoot, lexicalTarget) || lexicalTarget === lexicalRoot) return null;
     try {
+      checkSafePath(lexicalRoot, lexicalTarget, true);
+      if (!fs.existsSync(lexicalTarget)) return 'missing';
       const lstat = fs.lstatSync(lexicalTarget);
       if (!lstat.isFile() || lstat.isSymbolicLink()) return null;
       const fullPath = fs.realpathSync.native(lexicalTarget);
       if (!isInside(root, fullPath) || fullPath === root) return null;
       return {
         workspaceRoot: root,
-        fullPath,
+        safeRoot: lexicalRoot,
+        fullPath: lexicalTarget,
         relativePath: path.relative(root, fullPath).split(path.sep).join('/'),
       };
     } catch {
@@ -264,25 +297,21 @@ export class WriteJournal {
 
   private writeEntry(store: string, entry: JournalEntry): void {
     const destination = path.join(store, `${entry.id}.json`);
-    const temporary = `${destination}.tmp`;
-    fs.writeFileSync(temporary, JSON.stringify(entry), { encoding: 'utf-8', flag: 'wx' });
-    try {
-      fs.renameSync(temporary, destination);
-    } catch (error) {
-      try { fs.unlinkSync(temporary); } catch { /* best effort */ }
-      throw error;
-    }
+    writeSafeAtomicSync(this.userDataDirectory, destination, JSON.stringify(entry));
   }
 
   private readEntry(file: string): JournalEntry | null {
     try {
+      // Plain read: the store is in userData, never in a workspace (D19.1), and
+      // every prune reads every entry -- a checked walk each is not worth it here.
       const value = JSON.parse(fs.readFileSync(file, 'utf-8')) as Partial<JournalEntry>;
       if (!value || typeof value.id !== 'string' || !ENTRY_ID.test(value.id)
         || typeof value.relativePath !== 'string'
         || (value.operation !== 'overwrite' && value.operation !== 'delete')
         || typeof value.createdAt !== 'number' || !Number.isFinite(value.createdAt)
         || typeof value.originalBytes !== 'number' || !Number.isSafeInteger(value.originalBytes) || value.originalBytes < 0
-        || (value.state !== 'captured' && value.state !== 'skipped')) return null;
+        || (value.state !== 'captured' && value.state !== 'skipped')
+        || (value.writer !== undefined && (typeof value.writer !== 'string' || !value.writer))) return null;
       return value as JournalEntry;
     } catch {
       return null;
@@ -297,18 +326,83 @@ export class WriteJournal {
   }
 
   private pruneStore(store: string): void {
-    let entries = this.readEntries(store).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-    const cutoff = this.now() - this.limits.maxAgeMs;
+    const all = this.readEntries(store);
+    for (const unattended of [false, true]) {
+      this.pruneEntries(store, all.filter((entry) => Boolean(entry.writer) === unattended), unattended ? this.writerLimits : this.limits);
+    }
+  }
+
+  private pruneEntries(store: string, entries: JournalEntry[], limits: JournalLimits): void {
+    entries.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    const cutoff = this.now() - limits.maxAgeMs;
     for (const entry of entries.filter((item) => item.createdAt < cutoff)) this.removeEntry(store, entry);
     entries = entries.filter((item) => item.createdAt >= cutoff);
 
-    while (entries.length > this.limits.maxEntries) this.removeEntry(store, entries.shift()!);
+    while (entries.length > limits.maxEntries) this.removeEntry(store, entries.shift()!);
     let totalBytes = entries.reduce((sum, entry) => sum + (entry.state === 'captured' ? entry.originalBytes : 0), 0);
-    while (totalBytes > this.limits.maxTotalBytes && entries.length > 1) {
+    while (totalBytes > limits.maxTotalBytes && entries.length > 1) {
       const oldest = entries.shift()!;
       this.removeEntry(store, oldest);
       if (oldest.state === 'captured') totalBytes -= oldest.originalBytes;
     }
+  }
+
+  /**
+   * For sync (D42); nothing calls it yet but tests. A write nobody watches:
+   * the pre-image capture is required, and the write is atomic with no
+   * in-place fallback. If the capture fails (store unwritable, file over the
+   * size cap or the writer budget), the file is NOT overwritten: the incoming
+   * version goes beside it as `<name> (conflict <device> <date>).<ext>`, and
+   * the result says so. Sync must call this inside the per-file save queue.
+   */
+  async writeUnattended(workspaceRoot: string, file: string, data: string | Buffer, device: string, writer = 'sync'):
+    Promise<{ path: string; conflict: boolean }> {
+    checkSafePath(workspaceRoot, file, true);
+    const captured = this.capturePreImage(workspaceRoot, file, 'overwrite', { required: true, coalesce: false, writer });
+    const conflict = captured.status !== 'captured' && captured.status !== 'not-needed';
+    let destination = file;
+    let reserved = false;
+    if (conflict) {
+      const ext = path.extname(file);
+      const name = path.basename(file, ext);
+      const label = device.replace(/[^a-zA-Z0-9_-]/g, '_') || 'device';
+      const date = new Date(this.now()).toISOString().replace(/[:.]/g, '-');
+      const base = path.join(path.dirname(file), `${name} (conflict ${label} ${date})`);
+      destination = `${base}${ext}`;
+      // Reserve a unique name: repeated conflicts must never replace one another.
+      for (let n = 1; ; n++) {
+        try {
+          fs.closeSync(openSafeSync(workspaceRoot, destination, 'create'));
+          reserved = true;
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || n > 1000) throw error;
+          destination = `${base} (${n})${ext}`;
+        }
+      }
+    }
+    try {
+      await writeAtomically(destination, data, `${destination}.${crypto.randomBytes(8).toString('hex')}.tmp`, { root: workspaceRoot, noInPlaceFallback: true });
+    } catch (error) {
+      if (reserved) try { unlinkSafeSync(workspaceRoot, destination); } catch { /* the empty reservation only */ }
+      throw error;
+    }
+    return { path: destination, conflict };
+  }
+
+  /**
+   * For sync (D42); nothing calls it yet but tests. A delete nobody watches:
+   * the pre-image is captured (required), then the file goes to the OS trash
+   * through `trash` (Electron's shell.trashItem, injected). No trash, a failed
+   * capture or a failed trash all refuse: the file is never unlinked instead.
+   */
+  async deleteUnattended(workspaceRoot: string, file: string, trash?: (file: string) => Promise<void>, writer = 'sync'):
+    Promise<{ success: boolean; error?: string }> {
+    if (!trash) return { success: false, error: 'OS trash is unavailable.' };
+    const captured = this.capturePreImage(workspaceRoot, file, 'delete', { required: true, coalesce: false, writer });
+    if (captured.status !== 'captured') return { success: false, error: 'Required delete pre-image was not captured.' };
+    try { await trashSafe(workspaceRoot, file, trash); return { success: true }; }
+    catch { return { success: false, error: 'Could not move file to OS trash.' }; }
   }
 
   private removeEntry(store: string, entry: JournalEntry): void {
@@ -328,7 +422,7 @@ export function configureWriteJournal(userDataDirectory: string, options: Journa
   return activeJournal;
 }
 
-export function capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation, options: { coalesce?: boolean } = {}): CaptureResult {
+export function capturePreImage(workspaceRoot: string, filePath: string, operation: JournalOperation, options: CaptureOptions = {}): CaptureResult {
   if (!activeJournal) {
     const error = 'Write journal is not configured.';
     console.error(error);

@@ -19,6 +19,7 @@ const bundle = await build({ stdin: { contents: `
   export { decodeSecret, hasStoredSecret, carriesApiKey, rendererSettingsValue } from './src/main/secret-storage';
   export * from './src/main/workspace-rename';
   export { fileKind } from './src/main/file-kinds';
+  export * from './src/main/safe-fs';
 `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', write: false });
 const policy = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 
@@ -82,10 +83,11 @@ const context = vm.createContext({
   NOTE_READ_LIMIT: policy.NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN: policy.TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE: policy.TOO_LARGE_TO_SAVE,
   // The real save helper over this file system, with no waits between renames.
   writeAtomically: (fullPath, content, tmp) => policy.writeAtomically(fullPath, content, tmp, {
-    writeFile: async (file, text) => {
+    open: async (file) => ({ writeFile: async (text) => {
       writes.push({ file, content: text });
       if (failWrite || (failFallback && !file.endsWith('.tmp'))) throw new Error('write failed');
-    },
+    }, truncate: async () => {}, sync: async () => {}, close: async () => {} }),
+    syncDirectory: async () => {},
     rename: async () => {
       attempts++;
       if (renameFailures-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
@@ -140,6 +142,10 @@ const context = vm.createContext({
   },
 });
 context.deps = { getRepoRoot: (event) => context.checkEntry(event)?.repo ?? null };
+context.openSafe = (_root, file) => context.fs.promises.open(file);
+context.mkdirSafeSync = (_root, dir) => context.fs.mkdirSync(dir, { recursive: true });
+context.unlinkSafeSync = (_root, file) => context.fs.unlinkSync(file);
+context.renameSafe = (_root, from, to) => context.fs.promises.rename(from, to);
 vm.runInContext(outputText + '\nglobalThis.checkEntry = entryOf;', context);
 assert.equal(handlers.size, calls.length, 'every registration has a unique tested channel');
 // Valid argument specimens, including explicit no-argument contracts. Adding a
@@ -574,4 +580,63 @@ assert.deepEqual(await call('ai:complete', { provider: 'google', messages: [{ ro
 delete settings.__secrets; delete settings.connectors;
 keychain.codec = { available: true };
 
+// P0-1: actual IPC bodies over the real disk and the shared safe-fs hook.
+const raceScratch = realFs.mkdtempSync(path.join(tmpdir(), 'neuron-ipc-race-'));
+let raceFailures = 0;
+try {
+  context.fs = realFs;
+  context.openSafe = policy.openSafe;
+  context.mkdirSafeSync = policy.mkdirSafeSync;
+  context.unlinkSafeSync = policy.unlinkSafeSync;
+  context.renameSafe = policy.renameSafe;
+  context.writeAtomically = policy.writeAtomically;
+  context.realpathInside = policy.realpathInside;
+  for (const [channel, phase] of [
+    ['notes:read', 'after-open'], ['notes:write', 'before-open'],
+    ['notes:delete', 'before-path-check'], ['workspace:rename', 'before-path-check'],
+    ['notes:write-links', 'before-open'],
+  ]) {
+    try {
+    const ws = path.join(raceScratch, channel.replace(':', '-'));
+    const parent = path.join(ws, 'folder');
+    const outside = path.join(ws, '..', `${path.basename(ws)}-outside`);
+    realFs.mkdirSync(parent, { recursive: true }); realFs.mkdirSync(outside);
+    realFs.writeFileSync(path.join(parent, 'note.md'), 'inside');
+    realFs.writeFileSync(path.join(outside, 'note.md'), 'outside secret');
+    entry.repo = ws;
+    let swapped = false;
+    policy.setSafeFsTestHook((at, file) => {
+      if (!swapped && at === phase && file.startsWith(parent + path.sep)) {
+        const held = path.join(ws, 'held-open-file');
+        const relocate = process.platform === 'win32' && phase === 'after-open';
+        if (relocate) realFs.renameSync(file, held);
+        realFs.renameSync(parent, `${parent}-original`);
+        realFs.symlinkSync(outside, parent, process.platform === 'win32' ? 'junction' : 'dir');
+        if (relocate) realFs.renameSync(held, path.join(`${parent}-original`, path.basename(file)));
+        swapped = true;
+      }
+    });
+    const args = channel === 'workspace:rename' ? ['folder/note.md', 'folder/renamed.md'] :
+      channel === 'notes:write-links' ? [[{ path: 'folder/note.md', content: 'incoming' }]] : ['folder/note.md', 'incoming'];
+    const result = await handlers.get(channel)(event, ...args);
+    policy.setSafeFsTestHook();
+    assert.ok(swapped, `${channel}: exercised the race`);
+    if (channel === 'notes:read') assert.match(result, /^Error:/);
+    else assert.equal(result.success, false, channel);
+    assert.equal(realFs.readFileSync(path.join(outside, 'note.md'), 'utf8'), 'outside secret');
+    assert.deepEqual(realFs.readdirSync(outside), ['note.md'], `${channel}: no outside writes`);
+    assert.equal(realFs.readFileSync(path.join(`${parent}-original`, 'note.md'), 'utf8'), 'inside');
+    console.log(`  ok  P0-1 ${channel} refuses a parent swap`);
+    } catch (error) {
+      raceFailures++;
+      console.error(`  FAIL P0-1 ${channel}: ${error.message}`);
+    } finally { policy.setSafeFsTestHook(); }
+  }
+} finally {
+  policy.setSafeFsTestHook();
+  realFs.rmSync(raceScratch, { recursive: true, force: true });
+}
+assert.equal(raceFailures, 0, 'every IPC race must be refused');
+
 console.log(`main-guards: ${handlers.size} handlers, ${refused} sender refusals, ${badTypes} argument/path refusals; reveal, 25 MB limit, delete, 5 save scenarios, secrets and ai:complete passed`);
+

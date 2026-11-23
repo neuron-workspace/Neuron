@@ -1,19 +1,49 @@
 import * as fs from 'fs';
+import * as path from 'path';
+import { openSafe, renameSafe, unlinkSafeSync, checkSafePath } from './safe-fs';
 
-// How notes:write puts text on disk: through a temporary file renamed over the
-// target, one save of a file at a time, never holding the main process.
+// How notes:write puts text (and, for sync, bytes) on disk: through a temporary
+// file fsynced and renamed over the target, one save of a file at a time, never
+// holding the main process.
 
 export interface SaveFs {
-  writeFile(file: string, content: string): Promise<void>;
+  open(file: string, exclusive: boolean): Promise<Pick<fs.promises.FileHandle, 'writeFile' | 'truncate' | 'sync' | 'close'>>;
   rename(from: string, to: string): Promise<void>;
   unlink(file: string): Promise<void>;
+  syncDirectory(directory: string): Promise<void>;
 }
 
-const nodeSaveFs: SaveFs = {
-  writeFile: (file, content) => fs.promises.writeFile(file, content, 'utf-8'),
-  rename: (from, to) => fs.promises.rename(from, to),
-  unlink: (file) => fs.promises.unlink(file),
-};
+export interface SaveOptions {
+  root?: string;
+  noInPlaceFallback?: boolean;
+  /** Injected filesystem for unit tests. */
+  io?: SaveFs;
+}
+
+function nodeSaveFs(root: string): SaveFs {
+  return {
+    open: async (file, exclusive) => {
+      try { return await openSafe(root, file, exclusive ? 'create' : 'write'); }
+      catch (error) {
+        if (exclusive || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        return openSafe(root, file, 'create');
+      }
+    },
+    rename: (from, to) => renameSafe(root, from, to),
+    unlink: async (file) => unlinkSafeSync(root, file),
+    syncDirectory: async (directory) => {
+      if (process.platform === 'win32') return;
+      checkSafePath(root, directory);
+      let handle: fs.promises.FileHandle | undefined;
+      try {
+        handle = await fs.promises.open(directory, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        await handle.sync();
+      } catch (error) {
+        if (!['EINVAL', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      } finally { await handle?.close(); }
+    },
+  };
+}
 
 /** Rename errors that mean "held open for a moment", not "cannot". */
 export const RENAME_RETRY_CODES: readonly string[] = ['EPERM', 'EBUSY', 'EACCES'];
@@ -31,26 +61,53 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
  * so it is retried with an awaited timer -- the old Atomics.wait froze the
  * whole main process, which is also the browser's UI thread, for up to 225 ms.
  * Still held after that, the file is written in place rather than the edit
- * lost. The temporary file is removed whatever happens.
+ * lost -- unless noInPlaceFallback is set (sync): then the save fails, the temp
+ * file is removed and the old file is left as it was.
+ *
+ * Durable: the temp file is fsynced before the rename and, on POSIX, its folder
+ * after it (best effort: EINVAL/EPERM, where a folder cannot be synced, are
+ * ignored). Cleanup never follows a swapped path.
  */
-export async function writeAtomically(fullPath: string, content: string, tmp: string, io: SaveFs = nodeSaveFs, delay: (ms: number) => Promise<void> = wait): Promise<void> {
+export async function writeAtomically(fullPath: string, content: string | Buffer, tmp: string, options: SaveOptions | SaveFs = {}, delay: (ms: number) => Promise<void> = wait): Promise<void> {
+  const config = 'open' in options ? { io: options } : options;
+  const root = config.root ?? path.dirname(path.resolve(fullPath));
+  const io = config.io ?? nodeSaveFs(root);
+  // The temp file is created (by handle, O_EXCL) in the checked folder, and the
+  // rename re-checks both ends: see safe-fs.ts.
+  if (!config.io && path.dirname(path.resolve(tmp)) !== path.dirname(path.resolve(fullPath))) throw new Error('Temporary file must be beside its destination.');
+  const write = async (file: string, exclusive: boolean) => {
+    const handle = await io.open(file, exclusive);
+    try {
+      if (!exclusive) await handle.truncate(0);
+      await handle.writeFile(content);
+      await handle.sync();
+    } finally { await handle.close(); }
+  };
+  let created = false;
   try {
-    await io.writeFile(tmp, content);
+    // Exclusive creation prevents a pre-existing temp link or file being clobbered.
+    // An open failure does not confer ownership of the name for cleanup.
+    const handle = await io.open(tmp, true);
+    created = true;
+    try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
     for (let attempt = 1; ; attempt++) {
       try {
         await io.rename(tmp, fullPath);
-        return;
       } catch (error) {
         if (!RENAME_RETRY_CODES.includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
         if (attempt >= RENAME_ATTEMPTS) {
-          await io.writeFile(fullPath, content);
+          if (config.noInPlaceFallback) throw error;
+          await write(fullPath, false);
           return;
         }
         await delay(15 * attempt);
+        continue;
       }
+      await io.syncDirectory(path.dirname(fullPath));
+      return;
     }
   } finally {
-    await io.unlink(tmp).catch(() => undefined); // renamed, or never written
+    if (created) await io.unlink(tmp).catch(() => undefined); // never follow a swapped path during cleanup
   }
 }
 

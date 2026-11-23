@@ -9,6 +9,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
+import { readSafeSync, writeSafeAtomicSync, unlinkSafeSync } from '../safe-fs';
 import { SessionManager, ViewSession, sha256 } from './sessions';
 import { compileGlob, policyAllows, resolveInWorkspace } from './pathPolicy';
 import { validateVariablesFile, VariableDef } from './manifest';
@@ -135,12 +136,7 @@ function parseBody(req: http.IncomingMessage, body: Buffer): Record<string, unkn
 
 // --- workspace helpers -------------------------------------------------------
 
-function atomicWrite(fullPath: string, content: string): void {
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  const tmp = `${fullPath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, content, 'utf-8');
-  fs.renameSync(tmp, fullPath);
-}
+const atomicWrite = writeSafeAtomicSync;
 
 /** Recursive workspace walk (posix rel paths), skipping dot-entries except .neuron. */
 function walkFiles(root: string, subdir: string): string[] {
@@ -169,7 +165,7 @@ function loadVariables(root: string): { vars: Record<string, VariableDef>; error
   const file = path.join(root, '.neuron', 'variables.json');
   if (!fs.existsSync(file)) return { vars: {}, errors: [] };
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const parsed = JSON.parse(readSafeSync(root, file).toString('utf-8'));
     const result = validateVariablesFile(parsed);
     return result.ok ? { vars: result.value!, errors: [] } : { vars: {}, errors: result.errors };
   } catch {
@@ -451,7 +447,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const file = path.join(ctx.session.root, '.neuron', 'variables.json');
     let doc: { version: number; variables: Record<string, unknown> };
     try {
-      doc = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : { version: 1, variables: {} };
+      doc = fs.existsSync(file) ? JSON.parse(readSafeSync(ctx.session.root, file).toString('utf-8')) : { version: 1, variables: {} };
     } catch { fail(ctx, 500, 'config_invalid', 'variables.json is not valid JSON.'); return; }
     const { vars, errors } = loadVariables(ctx.session.root);
     if (errors.length) { fail(ctx, 500, 'config_invalid', `Invalid .neuron/variables.json: ${errors[0]}`); return; }
@@ -468,7 +464,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
 
     doc.variables[key] = { ...(doc.variables[key] as Record<string, unknown>), value };
     capturePreImage(ctx.session.root, file, 'overwrite');
-    atomicWrite(file, JSON.stringify(doc, null, 2));
+    atomicWrite(ctx.session.root, file, JSON.stringify(doc, null, 2));
     // htmx callers get a small confirmation to swap into a live region; others get JSON.
     if (isHx(ctx.req)) send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, `<p class="neuron-empty">Saved — now “${esc(String(value))}”.</p>`);
     else sendJson(ctx.res, 200, { key, value });
@@ -502,7 +498,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!resolved) return;
     if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'File not found.'); return; }
     if (fs.statSync(resolved.full).size > MAX_READ_BYTES) { fail(ctx, 413, 'too_large', 'File exceeds the 2 MB read limit.'); return; }
-    const content = fs.readFileSync(resolved.full, 'utf-8');
+    const content = readSafeSync(ctx.session.root, resolved.full, MAX_READ_BYTES).toString('utf-8');
     sendJson(ctx.res, 200, { path: resolved.rel, content, hash: sha256(content) });
   }
 
@@ -517,11 +513,11 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!fs.existsSync(resolved.full)) { fail(ctx, 404, 'not_found', 'File does not exist — use POST /api/v1/files to create it.'); return; }
     // Optimistic concurrency: refuse to clobber an edit made elsewhere.
     if (typeof body.baseHash === 'string') {
-      const current = sha256(fs.readFileSync(resolved.full, 'utf-8'));
+      const current = sha256(readSafeSync(ctx.session.root, resolved.full, MAX_READ_BYTES).toString('utf-8'));
       if (current !== body.baseHash) { fail(ctx, 409, 'conflict', 'The file changed since it was read. Re-fetch and retry.'); return; }
     }
     capturePreImage(ctx.session.root, resolved.full, 'overwrite');
-    atomicWrite(resolved.full, body.content);
+    atomicWrite(ctx.session.root, resolved.full, body.content);
     sendJson(ctx.res, 200, { path: resolved.rel, hash: sha256(body.content) });
   }
 
@@ -535,7 +531,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!resolved) return;
     if (fs.existsSync(resolved.full)) { fail(ctx, 409, 'exists', 'A file already exists at that path.'); return; }
     const content = typeof body.content === 'string' ? body.content : '';
-    atomicWrite(resolved.full, content);
+    atomicWrite(ctx.session.root, resolved.full, content);
     sendJson(ctx.res, 201, { path: resolved.rel, hash: sha256(content) });
   }
 
@@ -545,7 +541,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!resolved) return;
     if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'File not found.'); return; }
     capturePreImage(ctx.session.root, resolved.full, 'delete');
-    fs.unlinkSync(resolved.full);
+    unlinkSafeSync(ctx.session.root, resolved.full);
     sendJson(ctx.res, 200, { path: resolved.rel, deleted: true });
   }
 
@@ -565,7 +561,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const full = path.join(ctx.session.root, rel.split('/').join(path.sep));
       try {
         if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue;
-        const content = fs.readFileSync(full, 'utf-8');
+        const content = readSafeSync(ctx.session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8');
         const idx = content.toLowerCase().indexOf(needle);
         if (idx < 0) continue;
         const snippet = content.slice(Math.max(0, idx - 40), idx + query.length + 60).replace(/\s+/g, ' ').trim();
@@ -589,7 +585,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const full = path.join(ctx.session.root, rel.split('/').join(path.sep));
       try {
         if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue;
-        const content = fs.readFileSync(full, 'utf-8');
+        const content = readSafeSync(ctx.session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8');
         const tags = noteTags(content);
         if (tag && !tags.includes(tag)) continue;
         rows.push({ path: rel, title: noteTitle(rel, content), tags, modified: fs.statSync(full).mtime.toISOString() });
@@ -607,7 +603,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const full = path.join(ctx.session.root, rel.split('/').join(path.sep));
       try {
         if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue;
-        for (const t of noteTags(fs.readFileSync(full, 'utf-8'))) tags.add(t);
+        for (const t of noteTags(readSafeSync(ctx.session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8'))) tags.add(t);
       } catch { /* skip */ }
     }
     const sorted = [...tags].sort();
@@ -646,7 +642,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
 
     let doc: Record<string, unknown>;
     try {
-      const parsed = JSON.parse(fs.readFileSync(resolved.full, 'utf-8'));
+      const parsed = JSON.parse(readSafeSync(ctx.session.root, resolved.full, MAX_READ_BYTES).toString('utf-8'));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
       doc = parsed as Record<string, unknown>;
     } catch {
@@ -754,7 +750,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       notes++;
       try {
         const full = path.join(session.root, rel.split('/').join(path.sep));
-        if (fs.statSync(full).size <= MAX_SEARCH_FILE_BYTES) for (const t of noteTags(fs.readFileSync(full, 'utf-8'))) tags.add(t);
+        if (fs.statSync(full).size <= MAX_SEARCH_FILE_BYTES) for (const t of noteTags(readSafeSync(session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8'))) tags.add(t);
       } catch { /* skip */ }
     }
     return `<div class="neuron-metric-label">${esc(path.basename(session.root))}</div>` +

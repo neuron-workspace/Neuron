@@ -25,7 +25,13 @@ function memoryFs({ onRename = async () => {}, onWrite = async () => {} } = {}) 
     files,
     calls,
     io: {
-      writeFile: async (file, content) => { calls.push(['write', file]); await onWrite(file, content); files.set(file, content); },
+      open: async (file) => ({
+        writeFile: async (content) => { calls.push(['write', file]); await onWrite(file, content); files.set(file, content); },
+        truncate: async () => {},
+        sync: async () => { calls.push(['fsync', file]); },
+        close: async () => {},
+      }),
+      syncDirectory: async (directory) => { calls.push(['fsync-directory', directory]); },
       rename: async (from, to) => {
         calls.push(['rename', from, to]);
         await onRename(from, to);
@@ -50,12 +56,43 @@ try {
   const { writeAtomically, createSaveQueue, saveKey, RENAME_ATTEMPTS } = await import(pathToFileURL(modulePath));
   const noWait = async () => {};
 
+  await check('binary writes round trip every byte value', async () => {
+    const bytes = Buffer.from(Array.from({ length: 256 }, (_, n) => n));
+    const file = path.join(temp, 'binary.bin');
+    await writeAtomically(file, bytes, `${file}.tmp`, { noInPlaceFallback: true });
+    assert.deepEqual(fs.readFileSync(file), bytes);
+  });
+
+  await check('required atomic rename failure never truncates the old file', async () => {
+    const { files, io } = memoryFs({ onRename: async () => { throw busy(); } });
+    files.set('note.md', 'old');
+    await assert.rejects(writeAtomically('note.md', Buffer.from('new'), 'note.md.tmp', { io, noInPlaceFallback: true }, noWait), /EPERM/);
+    assert.equal(files.get('note.md'), 'old');
+    assert.deepEqual(temps(files), []);
+  });
+
+  await check('temp fsync precedes rename and directory fsync follows it', async () => {
+    const { calls, io } = memoryFs();
+    await writeAtomically('note.md', 'new', 'note.md.tmp', io, noWait);
+    assert.deepEqual(calls.map(([op]) => op), ['write', 'fsync', 'rename', 'fsync-directory', 'unlink']);
+  });
+
+  await check('a failed temp fsync leaves the old file and removes the temp', async () => {
+    const { files, io } = memoryFs();
+    const open = io.open;
+    io.open = async (...args) => ({ ...await open(...args), sync: async () => { throw busy('EIO'); } });
+    files.set('note.md', 'old');
+    await assert.rejects(writeAtomically('note.md', 'new', 'note.md.tmp', io, noWait), /EIO/);
+    assert.equal(files.get('note.md'), 'old');
+    assert.deepEqual(temps(files), []);
+  });
+
   await check('a save goes through a temporary file that is gone afterwards', async () => {
     const { files, io, calls } = memoryFs();
     await writeAtomically('note.md', 'text', 'note.md.1.tmp', io, noWait);
     assert.equal(files.get('note.md'), 'text');
     assert.deepEqual(temps(files), []);
-    assert.deepEqual(calls.map(([op]) => op), ['write', 'rename', 'unlink']);
+    assert.deepEqual(calls.map(([op]) => op), ['write', 'fsync', 'rename', 'fsync-directory', 'unlink']);
   });
 
   await check('a rename held for a moment is retried after an awaited wait, then lands', async () => {

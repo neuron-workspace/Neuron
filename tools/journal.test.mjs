@@ -1,7 +1,7 @@
 // Runnable check for src/main/journal.ts -- no test framework needed:
 // transpile with vite's bundled esbuild, then assert.
 // Run: node tools/journal.test.mjs
-import { transform } from 'esbuild';
+import { build } from 'esbuild';
 import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -9,10 +9,9 @@ import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const src = readFileSync(join(root, 'src/main/journal.ts'), 'utf-8');
-const { code } = await transform(src, { loader: 'ts', format: 'esm' });
+const { outputFiles } = await build({ entryPoints: [join(root, 'src/main/journal.ts')], bundle: true, platform: 'node', format: 'esm', write: false });
 const tmpModule = join(root, 'tools/.journal.tmp.mjs');
-writeFileSync(tmpModule, code);
+writeFileSync(tmpModule, outputFiles[0].text);
 const { WriteJournal, DEFAULT_JOURNAL_LIMITS } = await import(pathToFileURL(tmpModule));
 rmSync(tmpModule);
 

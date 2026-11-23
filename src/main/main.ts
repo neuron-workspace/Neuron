@@ -24,6 +24,7 @@ import { configureCrashReporter } from './crash-reporter';
 import { installDirectory, isInsideInstall, workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
+import { openSafe, mkdirSafeSync, unlinkSafeSync, renameSafe } from './safe-fs';
 import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -833,7 +834,7 @@ ipcMain.handle('workspace:entries', async (event): Promise<WorkspaceEntries> => 
   const text: string[] = [];
   for (let i = 0; i < unknown.length; i += 32) {
     const batch = unknown.slice(i, i + 32);
-    const results = await Promise.all(batch.map((file) => startsAsText(path.join(repo, file))));
+    const results = await Promise.all(batch.map((file) => startsAsText(repo, path.join(repo, file))));
     batch.forEach((file, index) => { if (results[index]) text.push(file); });
   }
   return { ...listing, text };
@@ -844,10 +845,10 @@ const SNIFF_FILE_LIMIT = 2000;
 const TEXT_READ_LIMIT = 5 * 1024 * 1024;
 
 /** Whether a file's first SNIFF_BYTES are UTF-8 text with no NUL byte. */
-async function startsAsText(fullPath: string): Promise<boolean> {
+async function startsAsText(repo: string, fullPath: string): Promise<boolean> {
   let handle: fs.promises.FileHandle | undefined;
   try {
-    handle = await fs.promises.open(fullPath, 'r');
+    handle = await openSafe(repo, fullPath);
     const sample = Buffer.alloc(SNIFF_BYTES);
     const { bytesRead } = await handle.read(sample, 0, SNIFF_BYTES, 0);
     return looksLikeText(sample.subarray(0, bytesRead));
@@ -898,7 +899,7 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   try {
     if (guard === 'text' || guard === 'unknown') {
       // At most TEXT_READ_LIMIT; the renderer opens a larger file read-only.
-      const handle = await fs.promises.open(resolved.fullPath, 'r');
+      const handle = await openSafe(resolved.repo, resolved.fullPath);
       try {
         const size = (await handle.stat()).size;
         const buffer = Buffer.alloc(Math.min(size, TEXT_READ_LIMIT));
@@ -918,7 +919,7 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
     // reads hold the main thread -- which in Electron is also the browser's UI
     // thread -- for the whole batch. Opening 5,000 freshly written notes on
     // Windows: explorer after 33 s with sync reads, 7-8 s with these.
-    const note = await fs.promises.open(resolved.fullPath, 'r');
+    const note = await openSafe(resolved.repo, resolved.fullPath);
     try {
       if ((await note.stat()).size > NOTE_READ_LIMIT) return TOO_LARGE_TO_OPEN;
       return await note.readFile('utf-8');
@@ -951,15 +952,15 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
       if (guard === 'text' || guard === 'unknown') {
         // Never write back a file that was opened truncated, or one that is not text.
         if (size > TEXT_READ_LIMIT) return { success: false, error: 'This file is too large to edit in Neuron.' };
-        if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.fullPath))) return { success: false, error: 'This file is not text.' };
+        if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.repo, resolved.fullPath))) return { success: false, error: 'This file is not text.' };
       } else if (size > NOTE_READ_LIMIT) {
         // Never opened (notes:read refused it), so nothing here is a version of it.
         return { success: false, error: 'This file is too large to edit in Neuron (over 25 MB).' };
       }
       const dir = path.dirname(resolved.fullPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      mkdirSafeSync(resolved.repo, dir);
       capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
-      await writeAtomically(resolved.fullPath, content, tmp);
+      await writeAtomically(resolved.fullPath, content, tmp, { root: resolved.repo });
       return { success: true };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -976,7 +977,7 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
     const stat = fs.lstatSync(resolved.fullPath);
     if (stat.isDirectory()) return { success: false, error: 'Use the folder delete for folders.' };
     if (stat.isFile()) capturePreImage(resolved.repo, resolved.fullPath, 'delete');
-    fs.unlinkSync(resolved.fullPath);
+    unlinkSafeSync(resolved.repo, resolved.fullPath);
     return { success: true };
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { success: true };
@@ -991,16 +992,16 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
  * name, which Windows and macOS need to change only the case. A rename held
  * for a moment (the watcher, an indexer) is retried, as a save's is.
  */
-async function moveEntry(fromFull: string, toFull: string, caseOnly: boolean): Promise<void> {
+async function moveEntry(repo: string, fromFull: string, toFull: string, caseOnly: boolean): Promise<void> {
   const once = async (a: string, b: string) => {
     for (let attempt = 1; ; attempt++) {
-      try { await fs.promises.rename(a, b); return; } catch (error) {
+      try { await renameSafe(repo, a, b); return; } catch (error) {
         if (attempt >= 6 || !['EPERM', 'EBUSY', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
         await new Promise((resolve) => setTimeout(resolve, 15 * attempt));
       }
     }
   };
-  fs.mkdirSync(path.dirname(toFull), { recursive: true });
+  mkdirSafeSync(repo, path.dirname(toFull));
   if (!caseOnly) { await once(fromFull, toFull); return; }
   const between = `${fromFull}.${randomBytes(6).toString('hex')}.tmp`;
   await once(fromFull, between);
@@ -1039,12 +1040,12 @@ ipcMain.handle('workspace:rename', async (event, from: string, to: string) => {
       // content, and it would push the rest of the history out.
       const files = folder ? walkWorkspace(source.fullPath, { limit: 201 }).files.map((file) => path.join(source.fullPath, file)) : [source.fullPath];
       if (files.length <= 200) for (const file of files) capturePreImage(source.repo, file, 'delete');
-      await moveEntry(source.fullPath, target.fullPath, caseOnly);
+      await moveEntry(source.repo, source.fullPath, target.fullPath, caseOnly);
       const meta = tableMetaMove(fromPath, toPath, folder);
       const metaFrom = meta && resolveInRepo(event, meta.from);
       const metaTo = meta && resolveInRepo(event, meta.to);
       if (metaFrom && metaTo && fs.existsSync(metaFrom.fullPath) && (caseOnly || !fs.existsSync(metaTo.fullPath))) {
-        await moveEntry(metaFrom.fullPath, metaTo.fullPath, caseOnly).catch((error) => console.error(`Failed to move table settings for ${fromPath}:`, error));
+        await moveEntry(metaFrom.repo, metaFrom.fullPath, metaTo.fullPath, caseOnly).catch((error) => console.error(`Failed to move table settings for ${fromPath}:`, error));
       }
       return { success: true };
     } catch (err: unknown) {
@@ -1078,7 +1079,7 @@ ipcMain.handle('notes:write-links', async (event, edits: unknown) => {
     const ok = await saveQueue(saveKey(edit.fullPath), async () => {
       if (!fs.existsSync(edit.fullPath)) return false;
       capturePreImage(repo, edit.fullPath, 'overwrite', { coalesce: false });
-      await writeAtomically(edit.fullPath, edit.content, `${edit.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`);
+      await writeAtomically(edit.fullPath, edit.content, `${edit.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`, { root: repo });
       return true;
     }).catch((error) => { console.error('Failed to rewrite links:', error); return false; });
     if (ok) written++;
