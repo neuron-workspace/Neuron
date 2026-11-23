@@ -109,7 +109,7 @@ console.log('knowledge graph: resolution, incremental updates, traversal, stabil
   assert.equal(g.graph.getEdgeAttribute(g.graph.edges('src.md', 'embedded.md')[0], 'kind'), 'embed');
   assert.ok(out('src.md').has('linked.md'), 'a Markdown link makes an edge');
   assert.equal(g.graph.getEdgeAttribute(g.graph.edges('src.md', 'linked.md')[0], 'kind'), 'markdown-link');
-  assert.equal([...out('src.md')].some((id) => id.includes('example.com')), false, 'a web link is not a note');
+  assert.equal([...out('src.md')].some((id) => /^[a-z][a-z0-9+.-]*:/i.test(id)), false, 'a web link is not a note');
   assert.deepEqual(out('board.canvas'), new Set(['linked.md']), 'a canvas file node is an edge; its text node is not parsed');
   assert.equal(g.graph.getEdgeAttribute(g.graph.edges('board.canvas', 'linked.md')[0], 'kind'), 'canvas-reference');
 

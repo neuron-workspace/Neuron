@@ -51,6 +51,22 @@ export function sha256Bytes(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+/**
+ * Read a plain file up to `limit` bytes through one open handle, so the size
+ * check and the read see the same file (no swap between a stat and a read).
+ */
+function readLimited(full: string, limit: number): Buffer | 'not-a-file' | { tooLarge: number } {
+  const fd = fs.openSync(full, 'r');
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return 'not-a-file';
+    if (stat.size > limit) return { tooLarge: stat.size };
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** The manifest loadManifest() would read for this view, if any. */
 export function activeManifestPath(root: string, viewRel: string): string | null {
   for (const rel of [manifestPathFor(viewRel), legacyManifestPathFor(viewRel)]) {
@@ -92,12 +108,12 @@ export function computeTrust(root: string, viewRel: string): TrustSnapshot {
     let digest: string;
     try {
       if (!resolved) throw new Error('outside');
-      const stat = fs.statSync(resolved.full);
-      if (!stat.isFile()) digest = 'not-a-file';
+      const read = readLimited(resolved.full, limit);
+      if (read === 'not-a-file') digest = 'not-a-file';
       // Over its limit the server will not serve it; say so without reading it.
-      else if (stat.size > limit) digest = `too-large:${stat.size}`;
+      else if (!Buffer.isBuffer(read)) digest = `too-large:${read.tooLarge}`;
       else {
-        digest = sha256Bytes(fs.readFileSync(resolved.full));
+        digest = sha256Bytes(read);
         files.set(trustKey(rel), digest);
       }
     } catch {
@@ -124,9 +140,9 @@ export function readTrusted(trusted: ReadonlyMap<string, string>, root: string, 
   if (!resolved) return null;
   let bytes: Buffer;
   try {
-    const stat = fs.statSync(resolved.full);
-    if (!stat.isFile() || stat.size > limit) return null;
-    bytes = fs.readFileSync(resolved.full);
+    const read = readLimited(resolved.full, limit);
+    if (!Buffer.isBuffer(read)) return null;
+    bytes = read;
   } catch { return null; }
   return sha256Bytes(bytes) === expected ? bytes : null;
 }

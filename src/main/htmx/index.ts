@@ -111,7 +111,11 @@ function ensureScaffold(root: string): void {
   }
   for (const [rel, content] of Object.entries(SCAFFOLD)) {
     const resolved = resolveInWorkspace(root, `.neuron/${rel}`);
-    if (resolved && !fs.existsSync(resolved.full)) fs.writeFileSync(resolved.full, content, 'utf-8');
+    if (!resolved) continue;
+    // 'wx' creates only when absent, in one step: never overwrites a file that appears meanwhile.
+    try { fs.writeFileSync(resolved.full, content, { encoding: 'utf-8', flag: 'wx' }); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
   }
 }
 
