@@ -130,6 +130,13 @@ jobs:
       - name: Install dependencies
         if: env.RUN == 'true'
         run: npm ci
+      # `npm ci` does not fetch the Electron binary (the package has no install
+      # script); the first require('electron') does, which would be inside the
+      # first test, under its timeout. Fetch it here, where a failure says what
+      # failed.
+      - name: Download the Electron binary
+        if: env.RUN == 'true'
+        run: npx --no install-electron
       - name: Type-check main and renderer
         if: env.RUN == 'true'
         run: npm run typecheck

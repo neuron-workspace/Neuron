@@ -1,0 +1,54 @@
+name: CodeQL
+
+# Static analysis of the JavaScript and TypeScript sources (main, preload,
+# renderer, tools). Results go to the repository's code scanning alerts.
+#
+# Actions are pinned to full commit SHAs; the comment names the release.
+# Dependabot (.github/dependabot.yml) keeps both up to date.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  schedule:
+    # Weekly, Monday 03:17 UTC: new queries find old code.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload the results
+      actions: read # read the workflow run for the results
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          languages: javascript-typescript
+          # Interpreted language: nothing to build. Only the source is analysed.
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - dist
+              - release
+              - node_modules
+      - name: Analyze
+        uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          category: /language:javascript-typescript

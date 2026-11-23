@@ -1,0 +1,27 @@
+# Dependency updates, weekly. Minor and patch updates arrive as one grouped
+# pull request per ecosystem; a major version gets a pull request of its own,
+# because it is the one that can break something.
+#
+# Pull requests go to dev, where code enters (dev -> test -> main).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]

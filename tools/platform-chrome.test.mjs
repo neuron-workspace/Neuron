@@ -3,7 +3,7 @@
 // Native chrome on every platform, without launching Electron.
 // Evaluate the constructor options with host stubs so every platform is covered.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
@@ -92,6 +92,18 @@ function overlayHandler(platform) {
     windowOf: (event) => event.window,
   });
   return { calls, set: (colors, from = window) => handler({ window: from }, colors) };
+}
+
+/** The real will-attach-webview listener, run against the webPreferences a page asked for. */
+function attachWebview(requested) {
+  const start = main.indexOf("contents.on('will-attach-webview'");
+  assert.notEqual(start, -1, "main.ts listens for 'will-attach-webview'");
+  const call = 'contents.on' + balanced(main, main.indexOf('(', start), '(', ')') + ';';
+  let listener;
+  runInNewContext(strip(call), { contents: { on: (name, fn) => { assert.equal(name, 'will-attach-webview'); listener = fn; } } });
+  const webPreferences = { ...requested };
+  listener({ preventDefault: () => {} }, webPreferences, { src: 'https://example.com/' });
+  return JSON.parse(JSON.stringify(webPreferences));
 }
 
 /** menu.ts with Electron stubbed: buildFromTemplate hands the template back. */
@@ -204,6 +216,47 @@ const tests = [
     assert.equal(background.show, false, 'shown later, without focus');
     assert.equal(background.webPreferences.backgroundThrottling, false, 'still renders while unseen');
     assert.match(main, /testInBackground = !app\.isPackaged &&/, 'never available to an installed build');
+  }],
+  ['every window is sandboxed and isolated, on every platform and in every mode', () => {
+    // Workspace and Settings windows both come from createWindow's one constructor.
+    const constructors = readdirSync(join(root, 'src', 'main'), { recursive: true })
+      .filter((name) => /\.ts$/.test(name))
+      .flatMap((name) => [...read('src', 'main', name).matchAll(/new BrowserWindow\b/g)].map(() => name));
+    assert.deepEqual(constructors, ['main.ts'], 'one BrowserWindow constructor, so these options are every window kind');
+    const create = main.slice(main.indexOf('function createWindow('), main.indexOf('new BrowserWindow'));
+    assert.match(create, /kind: WindowKind = 'workspace'/, 'createWindow builds every kind');
+    for (const platform of ['win32', 'linux', 'darwin']) {
+      for (const background of [false, true]) {
+        const { webPreferences } = windowOptions(platform, background);
+        const where = `${platform}${background ? ' (e2e background)' : ''}`;
+        assert.equal(webPreferences.sandbox, true, `${where}: sandbox stated explicitly`);
+        assert.equal(webPreferences.contextIsolation, true, `${where}: contextIsolation`);
+        assert.equal(webPreferences.nodeIntegration, false, `${where}: nodeIntegration`);
+        assert.notEqual(webPreferences.nodeIntegrationInSubFrames, true, `${where}: nodeIntegrationInSubFrames`);
+        assert.notEqual(webPreferences.webSecurity, false, `${where}: webSecurity`);
+        assert.notEqual(webPreferences.allowRunningInsecureContent, true, `${where}: allowRunningInsecureContent`);
+      }
+    }
+  }],
+  ['the sandboxed preload needs nothing but electron', () => {
+    const imports = [...preload.matchAll(/(?:from\s+|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    assert.deepEqual([...new Set(imports)], ['electron'], 'a sandboxed preload cannot load Node modules');
+    // Electron 45 removed these from sandboxed preloads.
+    assert.doesNotMatch(preload, /\b(Buffer|setImmediate|clearImmediate)\b/);
+  }],
+  ['will-attach-webview forces sandbox, isolation and no Node, and strips any preload', () => {
+    const hostile = {
+      preload: 'C:\\evil\\preload.js', nodeIntegration: true, nodeIntegrationInSubFrames: true,
+      contextIsolation: false, sandbox: false,
+    };
+    for (const requested of [hostile, {}, { preload: '/tmp/p.js' }]) {
+      const actual = attachWebview(requested);
+      assert.equal('preload' in actual, false, 'preload stripped');
+      assert.equal(actual.sandbox, true);
+      assert.equal(actual.contextIsolation, true);
+      assert.equal(actual.nodeIntegration, false);
+      assert.equal(actual.nodeIntegrationInSubFrames, false);
+    }
   }],
   ['Windows and Linux use native frame and Window Controls Overlay', () => {
     for (const platform of ['win32', 'linux']) {

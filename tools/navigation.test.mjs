@@ -156,9 +156,9 @@ for (const isDev of [false, true]) {
       assert.equal(openWindow({ url }).action, 'deny');
       assert.deepEqual(external, type !== 'view' && /^https?:\/\//.test(url) ? [url] : []);
     }
-    const prefs = { preload: '/malicious.js', nodeIntegration: true, contextIsolation: false, sandbox: false };
+    const prefs = { preload: '/malicious.js', nodeIntegration: true, nodeIntegrationInSubFrames: true, contextIsolation: false, sandbox: false };
     listeners.get('will-attach-webview')({}, prefs);
-    assert.deepEqual(prefs, { nodeIntegration: false, contextIsolation: true, sandbox: true });
+    assert.deepEqual(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true });
     if (type !== 'app') permission({}, 'camera', (allowed) => assert.equal(allowed, false));
   }
 }

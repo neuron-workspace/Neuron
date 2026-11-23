@@ -1,0 +1,13 @@
+# OSV-Scanner configuration (.github/workflows/security-scan.yml).
+#
+# Every entry here is an advisory that was looked at and accepted, with the
+# reason and a date after which the scanner reports it again. Do not add one
+# for a package that ships in the app (`dependencies`).
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+effectiveUntil = 2027-03-01
+reason = """minimatch 9.x/10.x, build-only: pulled in by electron-builder (app-builder-lib pins ^10.2.5, \
+@electron/universal pins ^9). The fix is minimatch 11, which neither allows, and no electron-builder release \
+(26.18.x, November 2026) moves to it. The DoS needs an attacker-chosen glob pattern; the patterns here come from the project's own build config. \
+Nothing of it ships in the app. Drop this when electron-builder moves to minimatch 11."""

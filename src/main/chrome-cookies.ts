@@ -38,13 +38,20 @@ function getAesKey(userData: string): Buffer {
   return dpapiUnprotect(encryptedKey);
 }
 
-function decryptValue(encrypted: Buffer, aesKey: Buffer): string | null {
-  const prefix = encrypted.subarray(0, 3).toString('latin1');
+const PREFIX_BYTES = 3; // "v10" / "v11"
+const NONCE_BYTES = 12;
+const TAG_BYTES = 16;
+
+export function decryptValue(encrypted: Buffer, aesKey: Buffer): string | null {
+  const prefix = encrypted.subarray(0, PREFIX_BYTES).toString('latin1');
   if (prefix !== 'v10' && prefix !== 'v11') return null; // app-bound (v20) or legacy DPAPI — skip
-  const nonce = encrypted.subarray(3, 15);
-  const tag = encrypted.subarray(encrypted.length - 16);
-  const ciphertext = encrypted.subarray(15, encrypted.length - 16);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce);
+  // Too short to hold a whole nonce and tag. Sliced anyway, the "tag" would be
+  // shorter than 16 bytes, and GCM would check only that many bytes of it.
+  if (encrypted.length < PREFIX_BYTES + NONCE_BYTES + TAG_BYTES) return null;
+  const nonce = encrypted.subarray(PREFIX_BYTES, PREFIX_BYTES + NONCE_BYTES);
+  const tag = encrypted.subarray(encrypted.length - TAG_BYTES);
+  const ciphertext = encrypted.subarray(PREFIX_BYTES + NONCE_BYTES, encrypted.length - TAG_BYTES);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce, { authTagLength: TAG_BYTES });
   decipher.setAuthTag(tag);
   let plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   // Chrome ≥ v104 prepends a 32-byte SHA-256 of the domain to the plaintext.

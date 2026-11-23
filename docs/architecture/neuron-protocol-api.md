@@ -2,6 +2,11 @@
 
 **Status:** Decision record for T-008  
 **Target:** Electron `42.4.1`, htmx `2.0.10`  
+**Electron now:** `45.4.1`. The findings below were researched against 42.4.1
+and are kept as they were. The Electron 43, 44 and 45 breaking-change notes
+change nothing in the protocol, session, web request or webview APIs this record
+relies on; the items marked unverified must still be checked against the
+shipping version before implementation.  
 **Decision:** **C — hybrid.** Ship `neuron://` as the production transport,
 retain the loopback adapter only behind a development-only flag, and put both
 behind one transport-neutral dispatcher.

@@ -31,6 +31,7 @@ import { fileKind, isListedFile, isUnlistedText, looksLikeText, needsSniff, SNIF
 import { FILE_SCHEME, respondWithFile } from './file-protocol';
 import { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './file-limits';
 import { createSaveQueue, saveKey, writeAtomically } from './save-file';
+import { createSettingsReader } from './settings-file';
 import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import { moveRefusal, normalizeRelative, samePath, tableMetaMove } from './workspace-rename';
@@ -164,17 +165,20 @@ interface Settings {
 const settingsFile = () => path.join(app.getPath('userData'), 'neuron-settings.json');
 const legacySettingsFile = () => path.join(app.getPath('userData'), 'autonote-settings.json');
 
+// A damaged file is moved aside before anything can write over it, and the
+// user is told once, when the app can show a dialog. See ./settings-file.
+const settingsReader = createSettingsReader({
+  fs,
+  file: settingsFile,
+  legacyFile: legacySettingsFile,
+  notify: (message) => {
+    void diagnostics.write({ level: 'warn', category: 'settings.damaged', message });
+    void app.whenReady().then(() => dialog.showMessageBox({ type: 'warning', title: 'Neuron', message }));
+  },
+});
+
 function readSettings(): Settings {
-  try {
-    const raw = fs.readFileSync(fs.existsSync(settingsFile()) ? settingsFile() : legacySettingsFile(), 'utf-8').trim();
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<Settings>;
-      return { repositories: { current: null, recent: [] }, ...parsed } as Settings;
-    }
-  } catch {
-    /* first run or unreadable — fall through to defaults */
-  }
-  return { repositories: { current: null, recent: [] } };
+  return { repositories: { current: null, recent: [] }, ...settingsReader.read() } as Settings;
 }
 
 function writeSettingsAtomically(file: string, settings: Record<string, unknown>): void {
@@ -188,6 +192,8 @@ function writeSettingsAtomically(file: string, settings: Record<string, unknown>
 }
 
 function writeSettings(settings: Settings): boolean {
+  // The damaged file is still where this would write. Keep it rather than the change.
+  if (!settingsReader.canWrite()) return false;
   try {
     writeSettingsAtomically(settingsFile(), settings);
     return true;
@@ -415,6 +421,10 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
       : { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 39, color: '#f3f4f6', symbolColor: '#171a1f' } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      // Electron's defaults, stated so a later change cannot drop them unseen.
+      // The preload needs nothing but `electron` (contextBridge, ipcRenderer),
+      // which is what a sandboxed preload is allowed.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true, // enables in-app browser tabs (<webview>)
@@ -1269,7 +1279,7 @@ ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: numbe
 // ConPTY wraps long lines itself. xterm.js reflows them again on resize unless
 // told it is attached to ConPTY -- which is what split a prompt path across two
 // lines after narrowing the panel. node-pty uses ConPTY on every Windows build
-// Electron 42 supports, so the build number is all the renderer needs.
+// Electron supports (Windows 10 and later), so the build number is all the renderer needs.
 ipcMain.handle('terminal:windows-pty', (event) => {
   if (!entryOf(event)) return null;
   if (process.platform !== 'win32') return null;
@@ -1308,6 +1318,8 @@ function migrateConnectorSecrets(): void {
     if (!fs.existsSync(file)) continue;
     try {
       const original = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      // Not a settings object: readSettings moves it aside, so leave it as it is.
+      if (!isRecord(original)) continue;
       const migrated = migrateSecretSettings(original, codec);
       if (JSON.stringify(migrated) !== JSON.stringify(original)) writeSettingsAtomically(file, migrated);
     } catch {
@@ -1468,6 +1480,7 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_e, webPreferences) => {
     delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
   });

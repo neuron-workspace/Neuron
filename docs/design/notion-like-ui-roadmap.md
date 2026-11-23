@@ -40,7 +40,7 @@ Inspected before evaluating any dependency (no dependency was added during the a
 
 | Area | Implementation | Notes |
 | --- | --- | --- |
-| Renderer framework | React 18.3 + Vite + TypeScript 5.4 | `type: commonjs` main; Electron 42. |
+| Renderer framework | React 18.3 + Vite + TypeScript 5.4 | `type: commonjs` main; Electron 45. |
 | Styling system | Tailwind 3.4 + `tailwindcss-animate`, CVA, `clsx`, `tailwind-merge` | shadcn "new-york", `baseColor: neutral`, `cssVariables: true`, no prefix (`components.json`). |
 | Design tokens | CSS variables in `src/renderer/index.css` | `--canvas/--nav/--surface/--surface-hover/--divider/--ink*/--accent*/--positive/--danger/--warning/--info`, a **shadcn bridge** (`--background/--card/--primary/--border/--ring…`), `--radius: 4px`, `--focus` ring, `--ease-out`, **semantic z-scale** `--z-titlebar…--z-toast`. Themes (Graphite/Void/Nord/Light) override on `<html>` at runtime via `lib/theme.ts`. `color-mix(in oklch …)` used throughout. |
 | Component library | **Owned shadcn/ui**, ~60 files in `components/ui/` | button, input, textarea, dialog, alert-dialog, tabs, tooltip, popover, dropdown-menu, context-menu, menubar, navigation-menu, command (cmdk), badge, card, empty, skeleton, spinner, alert, sidebar, breadcrumb, resizable, sonner, table, data-table, kbd, avatar, calendar, date-picker, select, native-select, combobox, checkbox, radio-group, switch, slider, progress, separator, scroll-area, toggle(+group), pagination, field, input-group, button-group, item, typography, chart, carousel, drawer/sheet, hover-card, collapsible, accordion, aspect-ratio, input-otp, direction. |
