@@ -124,6 +124,13 @@ const context = vm.createContext({
     mkdirSync: effect('mkdir'),
     promises: {
       readFile: async (...args) => { effect('read')(...args); return '# Note'; }, stat: async () => stat,
+      // notes:read opens one handle for the size check and the read.
+      open: async (file) => ({
+        stat: async () => stat,
+        readFile: async (...args) => { effect('read')(file, ...args); return '# Note'; },
+        read: async (buffer) => ({ bytesRead: 0, buffer }),
+        close: async () => {},
+      }),
       rename: async (from, to) => { renamed.push([from, to]); },
     },
     statSync: () => stat,
