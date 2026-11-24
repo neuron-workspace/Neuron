@@ -6,7 +6,8 @@ import { resolve } from 'node:path';
 // needs (D44). Changed files map to features; a feature is its integration
 // spec. Shared or unmapped code selects every integration spec ('all'), never
 // the detailed specs: those are the full suite, run for test and main only.
-// Documentation, tools and workflow changes select nothing.
+// Documentation, tools and workflow changes select nothing, except
+// tools/procs.mjs, which the e2e fixtures import.
 
 // Paths are relative to src/renderer. Areas may overlap: take every match.
 export const areas = [
@@ -85,8 +86,9 @@ export function selectSpecs(changedFiles, integrationSpecs) {
       const features = detailedSpecs[path.slice('e2e/'.length, -'.spec.ts'.length)];
       if (!features) return 'all';
       features.forEach(add);
-    // examples/demo-repo is the workspace every spec copies (e2e/fixtures.ts).
-    } else if (/^(e2e|examples)\//.test(path) || shared.test(path)) {
+    // examples/demo-repo is the workspace every spec copies, and e2e/fixtures.ts
+    // starts and stops every app through tools/procs.mjs.
+    } else if (/^(e2e|examples)\//.test(path) || path === 'tools/procs.mjs' || shared.test(path)) {
       return 'all';
     } else if (path.startsWith('src/main/')) {
       const matches = mainAreas.filter(([pattern]) => pattern.test(path.slice('src/main/'.length)));

@@ -27,6 +27,7 @@ check('an unmapped renderer file runs all integration specs', () => {
 });
 check('docs only selects nothing', () => assert.deepEqual(select('docs/distribution.md', 'README.md'), []));
 check('tools only selects nothing', () => assert.deepEqual(select('tools/publish-gate.test.mjs'), []));
+check('the process helper the e2e fixtures import runs all integration specs', () => assert.equal(select('tools/procs.mjs'), 'all'));
 check('the shared table pieces select both tables and MDX pages', () => assert.deepEqual(select('src/renderer/components/DbView.tsx'), expected('mdx', 'tables')));
 check('two features are unioned', () => assert.deepEqual(select('src/renderer/lib/db.ts', 'src/renderer/lib/graph-layout.ts'), expected('graph', 'tables')));
 check('package and shared config changes run all integration specs', () => {
