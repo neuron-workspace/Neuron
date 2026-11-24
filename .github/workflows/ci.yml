@@ -96,9 +96,6 @@ jobs:
           - name: Windows
             os: windows-latest
             wrap: ''
-          - name: macOS
-            os: macos-latest
-            wrap: ''
           # Electron needs a display server and the Linux runner has none, so
           # everything that opens a window runs under a virtual framebuffer.
           # Without it the failure reads as "Electron crashed" rather than as a
@@ -107,14 +104,14 @@ jobs:
             os: ubuntu-latest
             wrap: 'xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24"'
     runs-on: ${{ matrix.os }}
-    env:
+    env: &build-env
       RUN: ${{ needs.changes.outputs.code }}
       SCOPE: ${{ needs.changes.outputs.scope }}
       SPECS: ${{ needs.changes.outputs.specs }}
       # End-to-end tests are paused during the security review (owner decision,
       # 2026-11-24). Set to 'false' to run them again.
       E2E_PAUSED: 'true'
-    steps:
+    steps: &build-steps
       - name: Skip for a documentation-only change
         if: env.RUN != 'true'
         run: echo "Only documentation changed, so there is nothing to build or test."
@@ -222,3 +219,22 @@ jobs:
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  # macOS runners queue longest on GitHub, so macOS starts only once Windows and
+  # Linux have finished (passed or failed): a slow macOS queue no longer holds
+  # back the other two results. Same steps as the job above (YAML anchors).
+  # The job is still named "macOS", so the required check is unchanged.
+  build-macos:
+    name: ${{ matrix.name }}
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            wrap: ''
+    runs-on: ${{ matrix.os }}
+    env: *build-env
+    steps: *build-steps
