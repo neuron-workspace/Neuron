@@ -406,12 +406,14 @@ export class WriteJournal {
   }
 
   private removeEntry(store: string, entry: JournalEntry): void {
+    // Unpublish first: a crash must never leave a captured entry with no bytes.
+    // The cost of the other order is at worst an orphan .bin, which nothing lists.
+    fs.unlinkSync(path.join(store, `${entry.id}.json`));
     if (entry.state === 'captured') {
       try { fs.unlinkSync(path.join(store, `${entry.id}.bin`)); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     }
-    fs.unlinkSync(path.join(store, `${entry.id}.json`));
   }
 }
 

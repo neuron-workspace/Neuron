@@ -123,13 +123,25 @@ function readBody(req: http.IncomingMessage): Promise<Buffer | null> {
 function parseBody(req: http.IncomingMessage, body: Buffer): Record<string, unknown> | null {
   const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
   try {
+    let parsed: unknown;
     if (type === 'application/json') {
-      const parsed = JSON.parse(body.toString('utf-8'));
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+      parsed = JSON.parse(body.toString('utf-8'));
+    } else if (type === 'application/x-www-form-urlencoded' || type === '') {
+      parsed = Object.fromEntries(new URLSearchParams(body.toString('utf-8')));
+    } else return null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    // Bound nesting before later JSON serialization, and never persist magic
+    // object keys supplied by a view. Iterate so validation cannot overflow too.
+    const pending: { value: object; depth: number }[] = [{ value: parsed, depth: 0 }];
+    while (pending.length) {
+      const { value, depth } = pending.pop()!;
+      if (depth > 64) return null;
+      for (const [key, child] of Object.entries(value)) {
+        if (['__proto__', 'constructor', 'prototype'].includes(key)) return null;
+        if (child && typeof child === 'object') pending.push({ value: child, depth: depth + 1 });
+      }
     }
-    if (type === 'application/x-www-form-urlencoded' || type === '') {
-      return Object.fromEntries(new URLSearchParams(body.toString('utf-8')));
-    }
+    return parsed as Record<string, unknown>;
   } catch { /* malformed */ }
   return null;
 }
@@ -398,6 +410,17 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     return false;
   }
 
+  /**
+   * Re-check the session after awaiting a request body. The body can arrive
+   * long after authentication; a view revoked meanwhile (tab closed, workspace
+   * switched) must not write with the authority it had when the request began.
+   */
+  function stillLive(ctx: Ctx): boolean {
+    if (sessions.get(ctx.session.id) === ctx.session) return true;
+    fail(ctx, 401, 'unauthorized', 'Missing or invalid view session.');
+    return false;
+  }
+
   /** Resolve + policy-check a path from the query/body. Fails the request itself on error. */
   function checkedPath(ctx: Ctx, rawPath: unknown, mode: 'read' | 'write'): { full: string; rel: string } | null {
     const resolved = resolveInWorkspace(ctx.session.root, rawPath);
@@ -440,6 +463,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
   async function apiVariablePut(ctx: Ctx, key: string): Promise<void> {
     if (!requireCap(ctx, 'variables.write')) return;
     const raw = await readBody(ctx.req);
+    if (!stillLive(ctx)) return;
     if (!raw) { fail(ctx, 413, 'body_too_large', 'Request body missing or too large.'); return; }
     const body = parseBody(ctx.req, raw);
     if (!body || !('value' in body)) { fail(ctx, 400, 'invalid_body', 'Body must include a "value" field.'); return; }
@@ -505,6 +529,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
   async function apiFileWrite(ctx: Ctx): Promise<void> {
     if (!requireCap(ctx, 'workspace.files.write')) return;
     const raw = await readBody(ctx.req);
+    if (!stillLive(ctx)) return;
     if (!raw) { fail(ctx, 413, 'body_too_large', 'Request body missing or too large.'); return; }
     const body = parseBody(ctx.req, raw);
     if (!body || typeof body.path !== 'string' || typeof body.content !== 'string') { fail(ctx, 400, 'invalid_body', 'Body must include "path" and "content".'); return; }
@@ -524,6 +549,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
   async function apiFileCreate(ctx: Ctx): Promise<void> {
     if (!requireCap(ctx, 'workspace.files.create')) return;
     const raw = await readBody(ctx.req);
+    if (!stillLive(ctx)) return;
     if (!raw) { fail(ctx, 413, 'body_too_large', 'Request body missing or too large.'); return; }
     const body = parseBody(ctx.req, raw);
     if (!body || typeof body.path !== 'string') { fail(ctx, 400, 'invalid_body', 'Body must include "path".'); return; }
