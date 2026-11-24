@@ -328,3 +328,33 @@ test('clicking a node animates the camera through intermediate positions', async
   const samples = await canvas.evaluate((el: any) => el.cameraSamples);
   expect(new Set(samples.map(([x,y]: number[]) => `${x.toFixed(4)},${y.toFixed(4)}`)).size).toBeGreaterThan(2);
 });
+
+// A computer with no WebGL -- no GPU, and no software fallback, which Chromium
+// no longer turns on by itself -- is what the macOS runner was until the fixture
+// gave it SwiftShader. No GPU and no software rasterizer makes one anywhere (the
+// fixture then leaves SwiftShader out). Not `--disable-webgl`: Electron's own
+// `webgl` web preference, on by default, overrides that switch.
+test.describe('without WebGL', () => {
+  test.use({ launchArgs: ['--disable-gpu', '--disable-software-rasterizer'] });
+
+  test('the graph says it needs WebGL, and the editor beside it carries on', async ({ page }) => {
+    const graph = page.getByRole('complementary', { name: 'Workspace graph' });
+    await expect(graph.getByRole('alert')).toHaveText("The graph needs WebGL, which isn't available on this computer.");
+    // In place of the picture, not beside an empty canvas that promises links.
+    await expect(graph.locator('canvas')).toHaveCount(0);
+    await expect(graph.getByText('Links between notes appear here.')).toHaveCount(0);
+
+    // Notes still open and render, in Reading and in Split, with the graph open.
+    await openNote(page, 'guides/markdown-basics');
+    await expect(page.locator('article.preview-prose h1').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Split', exact: true }).click();
+    await expect(page.locator('.cm-content')).toBeVisible();
+    await expect(graph.getByRole('alert')).toBeVisible();
+
+    // And the graph still closes and comes back, still saying why it is empty.
+    await graph.getByRole('button', { name: 'Hide graph' }).click();
+    await expect(graph).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show graph', exact: true }).click();
+    await expect(graph.getByRole('alert')).toHaveText("The graph needs WebGL, which isn't available on this computer.");
+  });
+});

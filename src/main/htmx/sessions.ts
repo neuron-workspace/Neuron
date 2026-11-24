@@ -4,6 +4,7 @@
 // compared in constant time and never logged or persisted.
 
 import { randomBytes, timingSafeEqual, createHash } from 'crypto';
+import type { GlobMatcher } from './pathPolicy';
 
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -16,8 +17,14 @@ export interface ViewSession {
   name: string;
   theme: 'light' | 'dark';
   caps: ReadonlySet<string>;
-  readPolicy: RegExp[];
-  writePolicy: RegExp[];
+  readPolicy: GlobMatcher[];
+  writePolicy: GlobMatcher[];
+  /**
+   * The workspace files this view was trusted with (trust.ts): trustKey(rel)
+   * -> SHA-256 of the trusted bytes. The server serves a workspace file as code
+   * or style only when it is in here and still matches.
+   */
+  trusted: ReadonlyMap<string, string>;
   /** One-time token authenticating the initial document request; null once used. */
   bootToken: string | null;
   cookieToken: string;
@@ -42,7 +49,7 @@ function safeEqual(a: string, b: string): boolean {
 export class SessionManager {
   private sessions = new Map<string, ViewSession>();
 
-  create(init: Pick<ViewSession, 'viewPath' | 'root' | 'name' | 'theme' | 'caps' | 'readPolicy' | 'writePolicy'>): ViewSession {
+  create(init: Pick<ViewSession, 'viewPath' | 'root' | 'name' | 'theme' | 'caps' | 'readPolicy' | 'writePolicy' | 'trusted'>): ViewSession {
     const session: ViewSession = {
       ...init,
       id: token(),
@@ -62,14 +69,6 @@ export class SessionManager {
     if (!safeEqual(s.bootToken, boot)) return null;
     s.bootToken = null;
     return s;
-  }
-
-  /** Re-arm the boot token so an existing session's document can be reloaded. */
-  rearmBoot(id: string): string | null {
-    const s = this.sessions.get(id);
-    if (!s || Date.now() > s.expiresAt) return null;
-    s.bootToken = token();
-    return s.bootToken;
   }
 
   /** Validate a cookie value of the form `${id}:${cookieToken}`. */

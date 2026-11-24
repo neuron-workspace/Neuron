@@ -1,0 +1,114 @@
+name: Security scan
+
+# The scanners the security sweep ran by hand, on every pull request and weekly:
+#
+# - OSV-Scanner: known advisories in package-lock.json. Accepted advisories
+#   are listed, with a reason and an end date, in osv-scanner.toml.
+# - Gitleaks: secrets anywhere in the history, not just the diff.
+# - Semgrep OSS: JavaScript/TypeScript/Node/React rules and secrets; any
+#   finding fails the job.
+# - Electronegativity: Electron misconfiguration. Report only.
+#
+# Actions are pinned to full commit SHAs (the comment names the release), and
+# downloaded tools to an exact version; Gitleaks also to its checksum.
+
+on:
+  # Pull requests and pushes run it from ci.yml, before the platform jobs.
+  workflow_call:
+  schedule:
+    # Weekly, Monday 04:23 UTC: new advisories appear for unchanged code.
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  osv-scanner:
+    name: OSV-Scanner (lockfile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan package-lock.json
+        uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+        with:
+          # osv-scanner.toml beside the lockfile is read automatically.
+          scan-args: |-
+            --lockfile=./package-lock.json
+
+  gitleaks:
+    name: Gitleaks (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # sha256 of gitleaks_8.30.1_linux_x64.tar.gz, from the release's checksums.txt.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Gitleaks
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan every commit
+        run: '"$RUNNER_TEMP/gitleaks" git . --redact --no-banner --exit-code 1'
+
+  semgrep:
+    name: Semgrep OSS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install Semgrep
+        run: python -m pip install --disable-pip-version-check semgrep==1.186.0
+      - name: Scan
+        run: >-
+          semgrep scan --metrics=off
+          --config p/javascript --config p/typescript --config p/nodejs
+          --config p/react --config p/secrets
+          --error
+
+  electronegativity:
+    name: Electronegativity (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Scan src
+        # Report only: the findings are for a person to read, not a gate.
+        continue-on-error: true
+        run: |
+          # The Electron the app actually ships, from the lockfile, so this
+          # never goes stale after an upgrade.
+          electron=$(node -p "require('./package-lock.json').packages['node_modules/electron'].version")
+          echo "Electron $electron"
+          npx --yes @doyensec/electronegativity@1.10.3 -i src -e "$electron" -o "$RUNNER_TEMP/electronegativity.csv"
+          { echo '### Electronegativity'; echo '```'; cat "$RUNNER_TEMP/electronegativity.csv"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

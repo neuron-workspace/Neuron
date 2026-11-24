@@ -107,6 +107,17 @@ export function hasLayoutTree(content: string): boolean {
   return !parsed.ok || !isPlainObject(parsed.value) || 'children' in parsed.value;
 }
 
+/**
+ * Whether the text is a layout file Neuron can use: a JSON object, and when it
+ * asks for a layout tree, a tree that parses. A file changed on disk into
+ * something else is not offered in place of the layout on screen.
+ */
+export function readableLayout(content: string): boolean {
+  const parsed = readParsed(content);
+  if (!parsed.ok || !isPlainObject(parsed.value)) return false;
+  return !('children' in parsed.value) || parseLayout(content) !== null;
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
   if (isPlainObject(value)) {

@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { Plug, ShieldCheck } from 'lucide-react';
 import { usePlugins } from '../plugins/host';
-import type { Connector } from '../plugins/connectors';
+import type { Connector, ConnectorStatus } from '../plugins/connectors';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 
-export function ConnectorBadge({ status }: { status: 'connected' | 'not-set-up' }) {
-  return status === 'connected' ? <Badge variant="default">Connected</Badge> : <Badge variant="outline">Not set up</Badge>;
+/** Configured: saved. Connected: a call through it has succeeded in this window (D43.5). */
+export function ConnectorBadge({ status }: { status: ConnectorStatus }) {
+  if (status === 'connected') return <Badge variant="default">Connected</Badge>;
+  if (status === 'configured') return <Badge variant="info">Configured</Badge>;
+  return <Badge variant="outline">Not set up</Badge>;
 }
 
 function ConnectorForm({ connector, onDone }: { connector: Connector; onDone: () => void }) {
@@ -18,13 +21,20 @@ function ConnectorForm({ connector, onDone }: { connector: Connector; onDone: ()
   // the person asks to replace it.
   const [replacing, setReplacing] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const save = async () => {
     setSaving(true);
-    await saveConnector(connector.id, values);
-    // The typed secret does not stay in renderer state once it is stored.
-    setValues({});
-    setSaving(false);
-    onDone();
+    setError('');
+    try {
+      await saveConnector(connector.id, values);
+      // The typed secret does not stay in renderer state once it is stored.
+      setValues({});
+      onDone();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not save the connector.');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <form className="mt-3 space-y-3 border-t border-[var(--divider)] pt-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
@@ -53,6 +63,7 @@ function ConnectorForm({ connector, onDone }: { connector: Connector; onDone: ()
           </div>
         );
       })}
+      {error && <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={saving}>Save</Button>
         <Button type="button" size="sm" variant="ghost" onClick={onDone}>Cancel</Button>
@@ -80,7 +91,7 @@ function ConnectorRow({ connector }: { connector: Connector }) {
         </div>
         {!editing && (
           <div className="flex shrink-0 gap-2">
-            {status === 'connected' ? (
+            {status !== 'not-set-up' ? (
               <>
                 <Button size="sm" variant="outline" onClick={() => setEditing(true)} aria-label={`Change ${connector.name}`}>Change</Button>
                 <Button size="sm" variant="ghost" onClick={() => void disconnect(connector.id)} aria-label={`Disconnect ${connector.name}`}>Disconnect</Button>

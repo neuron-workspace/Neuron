@@ -33,10 +33,11 @@ const NAMES = new Map<string, FileKind>([['.env.example', 'text']]);
 
 const nameOf = (path: string) => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1).toLowerCase();
 
-/** Lowercase, no dot; '' for none. A leading dot (".gitignore") is not an extension. */
+/** Lowercase, no dot; '' for none. A leading dot is an extension only for blocked files. */
 export function extensionOf(path: string): string {
   const name = nameOf(path);
   const dot = name.lastIndexOf('.');
+  if (dot === 0 && EXTENSIONS.get(name.slice(1)) === 'blocked') return name.slice(1);
   return dot > 0 ? name.slice(dot + 1) : '';
 }
 
@@ -51,6 +52,27 @@ export function fileKind(path: string): FileKind {
  */
 export function needsSniff(path: string): boolean {
   return !NAMES.has(nameOf(path)) && !EXTENSIONS.has(extensionOf(path));
+}
+
+// Notes and Neuron's own documents (views, databases, canvases, diagrams, CSV
+// tables) and the workspace's configuration: what notes:list returns.
+const LISTED_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid)$)/;
+// A CSV is a table whatever the case of its extension (Excel writes .CSV), as
+// everywhere else that asks (fileKind, isCsvPath, the surface registry).
+const CSV_FILE = /\.csv$/i;
+
+/** Whether notes:list lists this path, and the renderer keeps it among its notes. */
+export function isListedFile(path: string): boolean {
+  return LISTED_FILE.test(path) || CSV_FILE.test(path);
+}
+
+/**
+ * A text file outside that listing (JSON, YAML, a README with no extension):
+ * the watcher reports its changes too, so an open copy follows the disk. A
+ * name the table does not know counts; reading it decides whether it is text.
+ */
+export function isUnlistedText(path: string): boolean {
+  return !isListedFile(path) && (fileKind(path) === 'text' || needsSniff(path));
 }
 
 /** Kinds Neuron opens as a file of its own, outside the note listing. */

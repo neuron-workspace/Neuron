@@ -49,6 +49,41 @@ test.describe('terminal on the right', () => {
   });
 });
 
+test.describe('a layout tree edited on disk', () => {
+  const editorOnly = { direction: 'horizontal', children: [{ size: 100, panel: { type: 'editor' } }] };
+  const withGraph = { direction: 'horizontal', children: [{ size: 65, panel: { type: 'editor' } }, { size: 35, panel: { type: 'graph' } }] };
+  test.use({ prepareWorkspace: async ({}, use) => use(withLayout(JSON.stringify(editorOnly))) });
+
+  test('applies when asked, and a broken file says so and keeps the last good layout', async ({ page, workspace }) => {
+    const file = join(workspace, '.neuron', 'layout.json');
+    const graph = page.locator('[data-graph-root]');
+    const changed = page.getByRole('status').filter({ hasText: 'The workspace layout (.neuron/layout.json) changed.' });
+    const unreadable = page.locator('[data-layout-unreadable]');
+    await expect(page.locator('[data-editor-group="0"]')).toBeVisible({ timeout: 30_000 });
+    await expect(graph).toHaveCount(0);
+
+    writeFileSync(file, JSON.stringify(withGraph, null, 2));
+    await expect(changed).toBeVisible({ timeout: 10_000 });
+    await changed.getByRole('button', { name: 'Update view', exact: true }).click();
+    await expect(changed).toHaveCount(0);
+    await expect(graph.first()).toBeVisible();
+
+    // Half-written or broken: not offered, the layout on screen stays.
+    writeFileSync(file, '{ "direction": "horizontal", "children": [ { "size": 65, ');
+    await expect(unreadable).toBeVisible({ timeout: 10_000 });
+    await expect(unreadable).toContainText('can’t read the workspace layout');
+    await expect(page.getByRole('button', { name: 'Update view', exact: true })).toHaveCount(0);
+    await expect(graph.first()).toBeVisible();
+    await expect(page.getByText('.neuron/layout.json is empty or invalid JSON', { exact: false })).toHaveCount(0);
+
+    // Fixed back to what is shown: nothing to say any more.
+    writeFileSync(file, JSON.stringify(withGraph));
+    await expect(unreadable).toHaveCount(0, { timeout: 10_000 });
+    await expect(changed).toHaveCount(0);
+    await expect(graph.first()).toBeVisible();
+  });
+});
+
 test.describe('the layout changed notice', () => {
   const original = { sidebar: 'open', terminal: { state: 'closed', position: 'bottom' } };
   test.use({ prepareWorkspace: async ({}, use) => use(withLayout(JSON.stringify(original))) });

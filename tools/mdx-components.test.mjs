@@ -69,4 +69,22 @@ const nestedColumn = '<Column><Card><Column>Nested column</Column></Card></Colum
 assert.equal(moveColumn(row(nestedColumn, last), 0, 0, 1), row(last, nestedColumn), 'matching close includes a directly nested Column');
 assert.equal(moveColumn(row('<Column />', last), 0, 0, 1), row(last, '<Column />'), 'empty columns can move');
 
-console.log('mdx components: 51 assertions passed (badge aliases, numeric columns, Columns widths and moves)');
+// M5: changing an outer row preserves every other attribute and nested byte.
+const attributed = '<Column id="left" width="12%" title="Keep">\r\nLeft\r\n</Column>';
+const emptyColumn = '<Column title="Empty" />';
+const crlf = row(attributed, emptyColumn).replace(/(?<!\r)\n/g, '\r\n');
+assert.equal(writeColumnWidths(crlf, [20, 80]), crlf.replace('width="12%"', 'width="20%"').replace('<Column title="Empty"', '<Column width="80%" title="Empty"'));
+assert.equal(moveColumn(crlf, 0, 0, 1), row(emptyColumn, attributed).replace(/(?<!\r)\n/g, '\r\n'));
+assert.deepEqual(resolveWidths(['10', '30']), [25, 75], 'under-full widths are scaled too');
+assert.deepEqual(resolveWidths(['25']), [100]);
+assert.equal(moveColumn(row(first), 0, 0, 1), row(first));
+assert.equal(writeColumnWidths(row(first), [100]), row(first.replace('40%', '100%')));
+const five = Array.from({ length: 5 }, (_, i) => `<Column data-id="${i}">${i}</Column>`);
+assert.deepEqual(resolveWidths(five.map(() => undefined)), [20, 20, 20, 20, 20]);
+assert.equal(moveColumn(row(...five), 0, 4, 0), row(five[4], ...five.slice(0, 4)));
+assert.deepEqual(splitColumns(writeColumnWidths(row(...five), [10, 15, 20, 25, 30])).map(s => s.width), ['10%', '15%', '20%', '25%', '30%']);
+// Editing the nested row itself must leave the outer widths alone.
+const nestedLine = block.split('\n').findIndex((line, i) => i > 0 && line === '<Columns>');
+assert.ok(moveColumn(block, nestedLine, 0, 1).includes('<Column>\nInner 2\n</Column>\n<Column>\nInner\n</Column>'));
+
+console.log('mdx components: existing checks + 10 M5 column assertions passed');

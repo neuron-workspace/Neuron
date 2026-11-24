@@ -15,7 +15,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = mkdtempSync(join(tmpdir(), 'neuron-updater-'));
 const file = join(out, 'updater.mjs');
 await build({ entryPoints: [join(root, 'src/main/updater.ts')], outfile: file, format: 'esm', bundle: true });
-const { updatePolicy } = await import('file://' + file.replace(/\\/g, '/'));
+const { updatePolicy, configureUpdater } = await import('file://' + file.replace(/\\/g, '/'));
 
 const base = { platform: 'win32', packaged: true, windowsStore: false, version: '0.4.5', signed: false };
 let checks = 0;
@@ -76,6 +76,56 @@ check('the prerelease decision is made even when not checking', () => {
   const d = updatePolicy({ ...base, packaged: false, version: '0.4.5-beta.1' });
   assert.equal(d.check, false);
   assert.equal(d.allowPrerelease, true);
+});
+
+// --- the whole policy as one table (Module 12) --------------------------------
+// Every combination, so a new branch cannot quietly change one cell.
+// beta→beta: a prerelease build is offered prereleases; stable never is.
+// Store and unpackaged builds never check; unsigned macOS never checks.
+check('the update policy table holds for every combination', () => {
+  let rows = 0;
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    for (const packaged of [true, false]) {
+      for (const windowsStore of [false, true]) {
+        for (const signed of [false, true]) {
+          for (const version of ['0.4.5', '0.4.6-beta.1']) {
+            const beta = version.includes('-');
+            const d = updatePolicy({ platform, packaged, windowsStore, signed, version });
+            const expected = packaged && !windowsStore && !(platform === 'darwin' && !signed);
+            const where = JSON.stringify({ platform, packaged, windowsStore, signed, version });
+            assert.equal(d.check, expected, `check: ${where}`);
+            assert.equal(d.allowPrerelease, beta, `allowPrerelease: ${where}`);
+            if (!d.check) assert.equal(typeof d.reason, 'string', `a refusal says why: ${where}`);
+            if (!packaged) assert.match(d.reason, /development/, where);
+            else if (windowsStore) assert.match(d.reason, /Store/, where);
+            rows++;
+          }
+        }
+      }
+    }
+  }
+  assert.equal(rows, 48);
+});
+
+check('configureUpdater applies the table and nothing else', () => {
+  const fake = () => ({ allowPrerelease: 'untouched', handlers: [], on(name, fn) { this.handlers.push(name); } });
+  const quiet = { info: () => {}, error: () => {} };
+  const stable = fake();
+  configureUpdater(stable, { ...base, version: '0.4.5' }, quiet);
+  assert.equal(stable.allowPrerelease, false, 'stable never takes a beta');
+  assert.deepEqual(stable.handlers, ['error'], 'an update error is logged, never thrown');
+  const beta = fake();
+  configureUpdater(beta, { ...base, version: '0.4.6-beta.1' }, quiet);
+  assert.equal(beta.allowPrerelease, true, 'beta takes the next beta');
+  for (const context of [
+    { ...base, packaged: false }, { ...base, windowsStore: true },
+    { ...base, platform: 'darwin', signed: false }, { ...base, platform: 'darwin', signed: false, version: '0.4.6-beta.1' },
+  ]) {
+    const idle = fake();
+    assert.equal(configureUpdater(idle, context, quiet).check, false, JSON.stringify(context));
+    assert.equal(idle.allowPrerelease, 'untouched', 'a build that does not check leaves the updater alone');
+    assert.deepEqual(idle.handlers, []);
+  }
 });
 
 // --- what the module must not do ---------------------------------------------

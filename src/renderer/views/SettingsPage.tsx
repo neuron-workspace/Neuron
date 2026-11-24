@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { ChevronDown, Keyboard, ListTree, RotateCcw, Sparkles } from 'lucide-react';
-import changelog from '../../../CHANGELOG.md?raw';
+import { APP_VERSION, changelog } from '../lib/appVersion';
 import MDXPreview from '../components/MDXPreview';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
@@ -76,7 +76,7 @@ function LinksAndLogs() {
 // The bundled CHANGELOG, rendered on demand so Settings stays light.
 function WhatsNewSection() {
   const [open, setOpen] = useState(false);
-  const version = changelog.match(/## \[([^\]]+)\]/)?.[1] ?? '';
+  const version = APP_VERSION;
 
   return (
     <section aria-labelledby="whatsnew-heading">

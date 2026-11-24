@@ -183,6 +183,24 @@ Live editor and Reading view, and resolved links form edges in the graph. In
 the current Reading view they are labels, not clickable navigation links; use
 the Explorer, command palette, or graph node to open the target.
 
+How a link finds its note (matching ignores capitals and the extension):
+
+- `[[Name]]` links by name. When several notes share it, the one in the
+  linking note's own folder wins; then the one with the shortest path (the
+  fewest folders from the workspace root); then the first alphabetically by
+  path.
+- `[[Folder/Name]]` is a path: the note at that path, or one whose path ends in
+  it. It never falls back to a note that only shares the name.
+- `[[/Name]]` is the note at the workspace root, and nothing else
+  (`[[/Folder/Name]]` is a full path from the root). This is a Neuron
+  extension: Obsidian shows such links as unresolved.
+- A note's `aliases:` (frontmatter) are names it can be linked by too. A
+  file's own name always wins over another note's alias; aliases follow the
+  same tie rules.
+
+Typing `[[` in the source editor offers every note and writes the shortest
+link that reaches it.
+
 Tags can be inline (`#project`) or stored in a frontmatter `tags` value. Choose
 **Tags** in the activity rail to see the collected tag list and filter the
 Explorer to notes containing a selected tag. The inline matcher expects a tag
@@ -292,10 +310,11 @@ gets an isolated session. The API exposes specific operations for files,
 directories, note metadata, tags, search, typed variables, and reusable HTML
 fragments. There is no command-execution endpoint or generic filesystem proxy.
 
-Without a manifest, an `.html` file renders but receives no capabilities and
+Every `.html` view asks before it runs, and asks again after any change to its
+HTML, its manifest, or the styles and fragments it can load: trust is bound to
+that exact content. Without a manifest a view receives no capabilities and
 cannot read workspace data. A manifest requests named capabilities and allowed
-paths; every requested capability prompts for one-time or persistent approval
-tied to the exact manifest content. A manifest with no permissions grants nothing. Network policy is
+paths, which the prompt lists. A manifest with no permissions grants nothing. Network policy is
 always `none`: views cannot fetch remote content, navigate away, or open popups.
 
 Follow the full [HTMX view user guide](htmx-views.md#user-guide) for templates,
@@ -410,7 +429,9 @@ Browser tabs use a persistent browser partition, separate from HTMX view
 sessions.
 
 The command palette can import Chrome cookies into that browser partition so
-compatible websites reuse existing logins. This copies cookies into Neuron's
+compatible websites reuse existing logins. It imports one site at a time: you
+name a hostname such as `github.com`, and only cookies for that host and its
+subdomains are copied. This copies cookies into Neuron's
 browser session; treat it as sensitive account data. It is not a general Chrome
 profile sync and may skip cookies it cannot import.
 

@@ -7,6 +7,14 @@ export interface NoteData {
   content: string;
 }
 
+/** How a save through the shared document ended; null when a newer save, or an outside change, speaks for it. */
+export interface SaveResult {
+  success: boolean;
+  error?: string;
+  /** Not written: the file changed outside Neuron while the save was on its way. */
+  conflict?: boolean;
+}
+
 /**
  * Props every file-surface receives. A surface replaces the Markdown editor for
  * files whose extension is registered below — the file itself is a small JSON
@@ -24,8 +32,14 @@ export interface SurfaceProps {
   selectedNote: string | null;
   /** Live content of the active note when rendering the internal neuron.config shell. */
   noteContent?: string;
-  /** Persist a change to the active note from the internal shell editor panel. */
-  onChangeNote?: (value: string) => void;
+  /**
+   * Persist a change. In an editor group this is the file's shared document:
+   * every group showing the file gets the text at once, and the one save path
+   * writes it and says how that went.
+   */
+  onChangeNote?: (value: string) => void | Promise<SaveResult | null>;
+  /** The shared document's save state, in an editor group. */
+  saveState?: 'idle' | 'saving' | 'saved' | 'error';
   /** Editor color scheme for the internal shell editor panel. */
   colorScheme?: 'light' | 'dark';
   tagSuggestions?: string[];

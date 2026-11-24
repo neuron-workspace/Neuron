@@ -51,6 +51,10 @@ export interface ExplorerState {
   editorModes: Record<string, 'reading' | 'live' | 'split'>;
   recents: RecentEntry[];
   clearRecents: () => void;
+  /** Rename (F2) or Move to… a file or folder. */
+  fileAction?: (action: { kind: 'rename' | 'move'; path: string; folder: boolean }) => void;
+  /** A file or folder dropped onto a folder. */
+  moveInto?: (path: string, folder: string) => void;
 }
 
 const ExplorerContext = React.createContext<ExplorerState | null>(null);

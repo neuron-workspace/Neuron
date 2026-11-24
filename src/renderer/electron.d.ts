@@ -9,6 +9,14 @@ export interface RepositoryInfo {
   cloud: boolean;
 }
 
+/** A workspace in a window's list: Recent in a workspace window, every known one in Settings. */
+export interface RecentWorkspace extends RepositoryInfo {
+  /** Its folder is not there now (moved, deleted, or on a drive that is not connected). */
+  missing: boolean;
+  /** Settings only: the workspace whose window opened Settings, while that window shows it. */
+  isOpener: boolean;
+}
+
 /**
  * A workspace template: a folder that gets copied into wherever the user picks.
  * Adding one means dropping a directory into `examples/` — there is no registry
@@ -61,8 +69,23 @@ export interface JournalEntry {
 
 export type HtmxViewOpenResult =
   | { status: 'ready'; sessionId: string; url: string; partition: string; name: string }
-  | { status: 'needs-approval'; name: string; permissions: string[]; description?: string; readPaths: string[]; writePaths: string[] }
+  | {
+    status: 'needs-approval'; path: string; name: string; permissions: string[]; description?: string;
+    readPaths: string[]; writePaths: string[];
+    /** The version this prompt shows; approve() trusts exactly this one. */
+    contentHash: string;
+    /** It was trusted before, and has changed since. */
+    changed: boolean;
+  }
   | { status: 'error'; message: string };
+
+/** An HTML view trusted in this workspace (Workspace settings). */
+export interface TrustedHtmlView {
+  path: string;
+  name: string;
+  /** ISO time it was trusted. */
+  grantedAt: string;
+}
 
 /** Whether the toolbar should be hidden for native full screen. */
 export interface WindowChromeState {
@@ -86,10 +109,22 @@ export interface ElectronAPI {
   fileUrl: (relativePath: string) => string;
   /** A file or folder appeared or went away. */
   onWorkspaceChanged: (callback: () => void) => () => void;
+  /** The workspace watcher stopped: the system ran out of folder watches or file handles. */
+  onWatchLimit: (callback: () => void) => () => void;
+  /** A file's text, or a message starting "Error:" (TOO_LARGE_TO_OPEN past 25 MB for a note or document). */
   readNote: (relativePath: string) => Promise<string>;
-  writeNote: (relativePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
+  /**
+   * Write a file. With `base` (contentHash of the version the edit was based
+   * on), a file changed outside Neuron since is not written over: the answer
+   * is `conflict: true` and the caller shows ExternalChangeBar.
+   */
+  writeNote: (relativePath: string, content: string, base?: string) => Promise<{ success: boolean; error?: string; conflict?: boolean }>;
   deleteNote: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
   createSection: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
+  /** Rename or move a file or folder. Refuses to overwrite; moves a managed CSV's settings with it. */
+  renamePath: (from: string, to: string) => Promise<{ success: boolean; error?: string }>;
+  /** Write notes whose links were rewritten, each journalled on its own. */
+  writeLinks: (edits: { path: string; content: string }[]) => Promise<{ success: boolean; error?: string; written?: number }>;
   getNotesDirectory: () => Promise<string | null>;
   logError: (errorData: {
     phase: 'COMPILATION' | 'RUNTIME' | 'IPC';
@@ -97,12 +132,13 @@ export interface ElectronAPI {
     stack_trace: string;
     remediation_step: string;
   }) => Promise<{ success: boolean; error?: string }>;
+  /** A note or Neuron document changed on disk, or a text file (JSON, YAML, ...), which is not a note; or anything went away. */
   onNotesChanged: (callback: (event: 'add' | 'change' | 'unlink', path: string) => void) => () => void;
 
   // Repository
   repository: {
     getCurrent: () => Promise<RepositoryInfo | null>;
-    listRecent: () => Promise<RepositoryInfo[]>;
+    listRecent: () => Promise<RecentWorkspace[]>;
     create: () => Promise<RepositoryInfo | null>;
     open: () => Promise<RepositoryInfo | null>;
     switch: (dir: string) => Promise<{ success: boolean; error?: string; repository?: RepositoryInfo }>;
@@ -134,7 +170,8 @@ export interface ElectronAPI {
   // Settings
   settings: {
     get: <T = unknown>(key: string) => Promise<T | null>;
-    set: (key: string, value: unknown) => Promise<{ success: boolean }>;
+    /** `success: false` with a plain `error` when the value is refused or the settings file could not be written. */
+    set: (key: string, value: unknown) => Promise<{ success: boolean; error?: string }>;
     onChanged: (callback: (key: string) => void) => () => void;
     /** Store a secret in the main process. There is no getter, deliberately. */
     setSecret: (scope: string, field: string, value: string) => Promise<{ success: boolean; error?: string }>;
@@ -149,7 +186,6 @@ export interface ElectronAPI {
     request: (req: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<NetRequestResult>;
   };
   terminal: {
-    run: (cmd: string) => Promise<{ success: boolean; stdout: string; stderr: string; code: number }>;
     /**
      * Attach to the terminal named by `key`, starting a shell if it has none.
      * The same key returns the same shell; a new key is a new terminal.
@@ -164,21 +200,21 @@ export interface ElectronAPI {
     onData: (callback: (id: number, data: string) => void) => () => void;
     onExit: (callback: (id: number, exitCode: number) => void) => () => void;
   };
-  views: {
-    file: (relativePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
-  };
   htmxViews: {
     open: (relativePath: string, theme?: 'light' | 'dark') => Promise<HtmxViewOpenResult>;
-    approve: (relativePath: string, scope: 'always' | 'once') => Promise<{ success: boolean; error?: string }>;
+    /** Trust the version the prompt showed. `changed` when it changed in between. */
+    approve: (relativePath: string, contentHash: string) => Promise<{ success: boolean; error?: string; changed?: boolean }>;
     close: (sessionId: string) => Promise<{ success: boolean }>;
+    /** Stop trusting a view: forgets it and stops a running session. */
     resetApproval: (relativePath: string) => Promise<{ success: boolean }>;
+    listTrusted: () => Promise<{ success: boolean; views: TrustedHtmlView[] }>;
   };
   journal: {
     list: (relativePath?: string) => Promise<JournalEntry[]>;
     restore: (entryId: string) => Promise<{ success: boolean; error?: string }>;
   };
   cookies: {
-    importChrome: (domain?: string) => Promise<{ success: boolean; imported?: number; skipped?: number; error?: string }>;
+    importChrome: (domain: string) => Promise<{ success: boolean; imported?: number; skipped?: number; error?: string }>;
   };
 }
 

@@ -170,6 +170,24 @@ eq(q.formatNumber(null), '—');
   eq(appended, text + '"Zed, Jr",3,yes,Blue,2026-03-01\r\n');
 }
 
+// A form preserves raw header names and refuses files it cannot round-trip.
+{
+  const text = ',Name,Name\nfirst,Ada,Lin\n';
+  const { csv } = q.readCsvTable(text, null);
+  eq(q.appendCsvRow(csv, null, { 'Column 1': 'second', Name: 'Mo', 'Name (2)': 'Zed' }),
+    text + 'second,Mo,Zed\n', 'empty and duplicate headers keep their raw names');
+  for (const original of ['Name,Score\nAda\n', 'Name,Score\n"Ada",7\n']) {
+    const { csv: uneven } = q.readCsvTable(original, null);
+    const before = structuredClone(uneven);
+    let file = original;
+    assert.throws(() => { file = q.appendCsvRow(uneven, null, { Name: 'Lin', Score: '8' }); },
+      { message: "This table's file can't be added to safely; open it as a table first." });
+    checks++;
+    eq(file, original, 'a refused append leaves the file unchanged');
+    eq(uneven, before, 'a refused append leaves the parsed CSV unchanged');
+  }
+}
+
 // --- appending to a .db ------------------------------------------------------------
 {
   const db = { format: 2, tables: { tasks: table }, relations: [], extra: {}, hadRelations: false };
@@ -182,5 +200,79 @@ eq(q.formatNumber(null), '—');
   eq(q.pickDbTable(text, 'P.db', 'tasks').data.columns.map((c) => c.name), ['Task']);
   ok(q.pickDbTable('{nope', 'P.db').error.startsWith('P.db:'));
 }
+
+// M5: boundary and adversarial data, using the same shaping path as page blocks.
+eq(q.parseSource('data/PEOPLE.CSV'), { kind: 'csv', path: 'data/PEOPLE.CSV' });
+eq(q.parseWhere(`title = 'She said "hello" and left' and hours > 9`).conditions,
+  [{ column: 'title', op: '=', value: 'She said "hello" and left' }, { column: 'hours', op: '>', value: '9' }]);
+eq(ids('hours > 9').ids, ['3']);
+eq(ids('status = doing').ids, ids('status = "In progress"').ids);
+for (const word of ['yes', '1', 'x', 'checked', 'TRUE']) eq(ids(`done = ${word}`).ids, ['1']);
+for (const word of ['no', '0', 'unchecked', 'FALSE']) eq(ids(`done = ${word}`).ids, ['2', '3', '4']);
+for (const [clock, expected] of [[new Date(2026, 7, 24, 23, 59, 59), ['2']], [new Date(2026, 7, 25, 0, 0), []]]) {
+  eq(q.filterRows(data, q.parseWhere('due = today').conditions, q.localToday(clock)).rows.map(r => r.id), expected);
+}
+eq(q.localToday(new Date(2026, 11, 31, 23, 59, 59)), '2026-12-31');
+eq(q.localToday(new Date(2027, 0, 1, 0, 0)), '2027-01-01');
+const dirty = q.fromDbTable({ ...table, rows: ['', ' ', 'junk', 'NaN', Infinity, NaN, '1e999', '-1e999', 0, -4, '10'].map((hours, i) => ({ id: String(i), values: { hours } })) });
+eq(q.measureRows(dirty, dirty.rows, { kind: 'sum', column: 'hours' }), { value: 6 });
+eq(q.measureRows(dirty, dirty.rows, { kind: 'avg', column: 'hours' }), { value: 2 });
+for (const kind of ['count', 'sum', 'avg']) eq(q.measureRows(data, [], { kind, column: 'hours' }).value, kind === 'avg' ? null : 0);
+const long = 'A very long chart label '.repeat(30);
+const chart = q.fromDbTable({ ...table, rows: [
+  { id: 'a', values: { title: long, hours: -4, due: '2026-12-31' } },
+  { id: 'b', values: { title: 'Zero', hours: 0, due: '2027-01-01' } },
+  { id: 'c', values: { title: 'Next', hours: 0, due: '2027-01-04' } },
+] });
+eq(q.groupRows(chart, [], 'title', { kind: 'count' }).groups, []);
+eq(q.groupByDate(chart, [], 'due', 'week', { kind: 'count' }).groups, []);
+eq(q.groupRows(chart, chart.rows.slice(0, 1), 'title', { kind: 'sum', column: 'hours' }).groups,
+  [{ key: long.trim(), label: long.trim(), value: -4, count: 1 }]);
+eq(q.groupRows(chart, chart.rows.slice(1), 'title', { kind: 'sum', column: 'hours' }).groups.map(g => g.value), [0, 0]);
+eq(q.groupByDate(chart, chart.rows, 'due', 'week', { kind: 'count' }).groups.map(g => [g.key, g.value]), [['2026-12-28', 2], ['2027-01-04', 1]]);
+for (const [sample, yes, no] of [['TRUE', 'TRUE', 'FALSE'], ['No', 'Yes', 'No'], ['1', '1', '0'], ['x', 'x', '']]) {
+  const text = `Name,Active\nAda,${sample}\n`;
+  const { csv, meta } = q.readCsvTable(text, JSON.stringify({ columns: { Active: { type: 'checkbox' } } }));
+  eq(q.appendCsvRow(csv, meta, { Name: 'New', Active: true }), text + `New,${yes}\n`);
+  eq(q.appendCsvRow(csv, meta, { Name: 'New', Active: false }), text + `New,${no}\n`);
+}
+const hostileHeaders = q.readCsvTable('__proto__,constructor\nkept,also kept\n', null).data;
+eq(hostileHeaders.rows[0].values.__proto__, 'kept', 'special CSV headers are ordinary own values');
+eq(hostileHeaders.rows[0].values.constructor, 'also kept');
+ok(Object.hasOwn(hostileHeaders.rows[0].values, '__proto__'));
+assert.throws(() => q.appendDbRow({ tables: {} }, 'gone', {}, 'new'), /no table named "gone"/); checks++;
+
+// Form commits must read AFTER the preceding append has finished writing.
+for (const kind of ['csv', 'db']) {
+  const ref = { kind, path: kind === 'csv' ? 'people.CSV' : 'Tasks.db', ...(kind === 'db' ? { table: 'tasks' } : {}) };
+  const initial = kind === 'csv' ? 'Name\nFirst\n' : JSON.stringify({ version: 2, tables: { tasks: { schema: { order: ['Name'], properties: { Name: { name: 'Name', type: 'text' } } }, rows: [{ id: 'first', values: { Name: 'First' } }] } } });
+  let disk = initial;
+  const reads = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let began;
+  const writing = new Promise(resolve => { began = resolve; });
+  const read = async path => { if (path !== ref.path) return '{"columns":{"Name":{"type":"text"}}}'; reads.push(disk); return disk; };
+  const write = async text => { began(); await gate; disk = text; return true; };
+  const first = q.appendSourceRow(ref, { Name: 'Second' }, 'second', read, write);
+  await writing;
+  const second = q.appendSourceRow(ref, { Name: 'Third' }, 'third', read, async text => { disk = text; return true; });
+  await new Promise(resolve => setImmediate(resolve));
+  eq(reads.length, 1, 'a queued append must not compute from stale text');
+  release();
+  await Promise.all([first, second]);
+  eq(reads.length, 2);
+  const values = kind === 'csv' ? q.readCsvTable(disk, null).data.rows.map(r => r.values.Name) : q.pickDbTable(disk, ref.path, 'tasks').data.rows.map(r => r.values.Name);
+  eq(values, ['First', 'Second', 'Third']);
+  let writes = 0;
+  await assert.rejects(q.appendSourceRow(ref, { Name: ' ' }, 'empty', read, async () => { writes++; return true; }), /Name is required/); checks++;
+  eq(writes, 0);
+  await assert.rejects(q.appendSourceRow(ref, {}, 'omitted', read, async () => { writes++; return true; }), /Name is required/); checks++;
+  eq(writes, 0, 'omitting the title field does not bypass the requirement');
+  await assert.rejects(q.appendSourceRow(ref, { Name: 'Fails' }, 'failed', read, async () => false), /Couldn't save/); checks++;
+  await q.appendSourceRow(ref, { Name: 'After failure' }, 'after', read, async text => { disk = text; return true; });
+  ok(disk.includes('After failure'), 'a rejected append must not block later submissions');
+}
+await assert.rejects(q.appendSourceRow({ kind: 'db', path: 'Gone.db', table: 'gone' }, {}, 'id', async () => JSON.stringify({ version: 2, tables: { tasks: { schema: { order: [], properties: {} }, rows: [] } } }), async () => { throw new Error('must not write'); }), /no table named "gone"/); checks++;
 
 console.log(`data-query: ${checks} assertions passed`);

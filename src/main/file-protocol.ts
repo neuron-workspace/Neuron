@@ -1,4 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
+import * as fs from 'node:fs';
+import { Readable } from 'node:stream';
+import { openSafe } from './safe-fs';
 import { resolveInside, realpathInside } from './repoPath';
 import { extensionOf, fileKind, MEDIA_KINDS } from './file-kinds';
 
@@ -70,6 +73,45 @@ export function authorizeFileUrl(url: string, lookup: FileWindowLookup, resolve 
 function resolveInRepo(repo: string, relativePath: string): string | null {
   const fullPath = resolveInside(repo, relativePath);
   return fullPath && realpathInside(repo, fullPath) ? fullPath : null;
+}
+
+/**
+ * The answer to a neuron-file:// request: the file streamed from disk, never
+ * read whole, so an image or video of any size costs the main process a
+ * buffer, not the file. 403 for anything refused (wrong method, token, path or
+ * kind), 404 for a missing file, 416 for a range past the end, 206 for a range.
+ * HEAD answers the same headers with no body.
+ */
+export async function respondWithFile(request: Request, lookup: FileWindowLookup): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 403 });
+  let repo = '';
+  const decision = authorizeFileUrl(request.url, (id) => {
+    const entry = lookup(id);
+    repo = entry?.repo ?? '';
+    return entry;
+  });
+  if (!decision.ok) return new Response(null, { status: 403 });
+  let handle: fs.promises.FileHandle;
+  try { handle = await openSafe(repo, decision.fullPath); } catch (error) {
+    return new Response(null, { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 403 });
+  }
+  let streaming = false;
+  try {
+    const stat = await handle.stat();
+    const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
+    const range = parseRange(request.headers.get('range'), stat.size);
+    if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
+    const start = range ? range.start : 0;
+    const end = range ? range.end : stat.size - 1;
+    const length = Math.max(0, end - start + 1);
+    headers['Content-Length'] = String(length);
+    if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+    const body = request.method === 'HEAD' || length === 0
+      ? null
+      : Readable.toWeb(handle.createReadStream({ start, end, autoClose: true })) as unknown as ReadableStream<Uint8Array>;
+    streaming = body !== null;
+    return new Response(body, { status: range ? 206 : 200, headers });
+  } finally { if (!streaming) await handle.close(); }
 }
 
 /**

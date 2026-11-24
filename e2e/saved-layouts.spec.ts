@@ -31,6 +31,48 @@ test('a new profile starts with three layouts, and switching rearranges the work
   await expect(page.locator('[data-dock-group="right:0"]')).toBeVisible();
 });
 
+test('a saved layout shows a dot once changed, and Update and Delete name it in curly quotes (8A)', async ({ page }) => {
+  await trigger(page).click();
+  await page.getByLabel('Save current layout as').fill('Drafting');
+  await page.getByRole('button', { name: 'Save layout', exact: true }).click();
+  await expect(saved(page).getByRole('button', { name: 'Drafting', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  // Inside the trigger, whose own label hides it from the accessibility tree; found by its label.
+  const dot = trigger(page).locator('[aria-label="Changed since it was saved"]');
+  await expect(dot).toHaveCount(0);
+  // Not changed yet: nothing to update.
+  await expect(page.getByRole('button', { name: 'Update “Drafting”', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Delete “Drafting”', exact: true })).toBeVisible();
+
+  // A change to the arrangement: the dot appears, and Update is offered by name.
+  await page.getByRole('button', { name: 'Hide sidebar', exact: true }).click();
+  await expect(sidebar(page)).toHaveCount(0);
+  await expect(dot).toHaveCount(1);
+  // The press outside closed the menu; wait for that before opening it again.
+  await expect(saved(page)).toBeHidden();
+  await trigger(page).click();
+  const update = page.getByRole('button', { name: 'Update “Drafting”', exact: true });
+  await expect(update).toBeVisible();
+  await update.click();
+  await expect(dot).toHaveCount(0);
+  await expect(saved(page)).toBeHidden();
+  // Switching away and back brings the updated arrangement: no sidebar.
+  await switchTo(page, 'Writing');
+  await expect(sidebar(page)).toBeVisible();
+  await switchTo(page, 'Drafting');
+  await expect(sidebar(page)).toHaveCount(0);
+
+  // Delete asks once, by name, then removes it.
+  await trigger(page).click();
+  const remove = page.getByRole('button', { name: 'Delete “Drafting”', exact: true });
+  await remove.click();
+  const confirm = page.getByRole('button', { name: 'Delete “Drafting”? Click again', exact: true });
+  await expect(confirm).toBeVisible();
+  await confirm.click();
+  await expect(saved(page).getByRole('button', { name: 'Drafting', exact: true })).toHaveCount(0);
+  // Nowhere does a stray question mark stand in for a quote.
+  await expect(page.getByText(/\?Drafting\?/)).toHaveCount(0);
+});
+
 test('the current layout can be saved by name, survives reload, and can be deleted', async ({ page }) => {
   await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
   // The terminal takes focus as its shell starts, which would close a menu opened before it.

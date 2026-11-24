@@ -3,10 +3,11 @@
 // Native chrome on every platform, without launching Electron.
 // Evaluate the constructor options with host stubs so every platform is covered.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf-8');
@@ -70,7 +71,142 @@ function windowOptions(platform, testInBackground = false) {
   });
 }
 
+const strip = (code, module = ts.ModuleKind.None) =>
+  ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module } }).outputText;
+
+/** The real window:set-overlay-colors handler, run on one platform against a recording window. */
+function overlayHandler(platform) {
+  const start = main.indexOf("ipcMain.handle('window:set-overlay-colors'");
+  assert.notEqual(start, -1, 'main.ts registers window:set-overlay-colors');
+  const call = 'ipcMain.handle' + balanced(main, main.indexOf('(', start), '(', ')') + ';';
+  const recordStart = main.search(/const isRecord\b/);
+  assert.notEqual(recordStart, -1, 'main.ts declares isRecord');
+  const record = main.slice(recordStart, main.indexOf(';\n', recordStart) + 1);
+  const calls = [];
+  let handler;
+  // Copied out of the vm's realm, so deepEqual compares plain values.
+  const window = { setTitleBarOverlay: (colors) => calls.push(JSON.parse(JSON.stringify(colors))) };
+  runInNewContext(strip(record + '\n' + call), {
+    process: { platform }, Object, Array,
+    ipcMain: { handle: (_name, fn) => { handler = fn; } },
+    windowOf: (event) => event.window,
+  });
+  return { calls, set: (colors, from = window) => handler({ window: from }, colors) };
+}
+
+/** The real will-attach-webview listener, run against the webPreferences a page asked for. */
+function attachWebview(requested) {
+  const start = main.indexOf("contents.on('will-attach-webview'");
+  assert.notEqual(start, -1, "main.ts listens for 'will-attach-webview'");
+  const call = 'contents.on' + balanced(main, main.indexOf('(', start), '(', ')') + ';';
+  let listener;
+  runInNewContext(strip(call), { contents: { on: (name, fn) => { assert.equal(name, 'will-attach-webview'); listener = fn; } } });
+  const webPreferences = { ...requested };
+  listener({ preventDefault: () => {} }, webPreferences, { src: 'https://example.com/' });
+  return JSON.parse(JSON.stringify(webPreferences));
+}
+
+/** menu.ts with Electron stubbed: buildFromTemplate hands the template back. */
+function menuModule(platform) {
+  const installed = [];
+  const exports = {};
+  const electron = {
+    app: { name: 'Neuron', getPath: () => '' },
+    shell: { openPath: () => {}, openExternal: () => {} },
+    Menu: { buildFromTemplate: (template) => template, setApplicationMenu: (menu) => installed.push(menu) },
+  };
+  runInNewContext(strip(read('src', 'main', 'menu.ts'), ts.ModuleKind.CommonJS), {
+    exports, module: { exports }, process: { platform },
+    require: (name) => { assert.equal(name, 'electron'); return electron; },
+  });
+  return { ...exports, installed };
+}
+const menuItems = (items) => items.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? menuItems(item.submenu) : [])]);
+
+/** keybindings.ts as macOS sees it. */
+async function macBindings() {
+  const source = read('src', 'renderer', 'lib', 'keybindings.ts').replace(/import \{ isMac \} from '\.\/platform';/, 'const isMac = true;');
+  return import('data:text/javascript;base64,' + Buffer.from(strip(source, ts.ModuleKind.ESNext)).toString('base64'));
+}
+/** "Command+Shift+K" → "mod+shift+k", the renderer's chord form. */
+const acceleratorChord = (accelerator) => accelerator.split('+').map((part) => {
+  if (/^(Command|Cmd|CommandOrControl|CmdOrCtrl)$/.test(part)) return 'mod';
+  if (/^(Alt|Option)$/.test(part)) return 'alt';
+  return part.toLowerCase();
+}).join('+');
+
 const tests = [
+  ['window:set-overlay-colors recolours only on Windows and Linux', () => {
+    for (const platform of ['win32', 'linux']) {
+      const { calls, set } = overlayHandler(platform);
+      set({ color: '#1A2b3c', symbolColor: '#ffffff' });
+      assert.deepEqual(calls, [{ color: '#1A2b3c', symbolColor: '#ffffff' }], platform);
+    }
+    const { calls, set } = overlayHandler('darwin');
+    set({ color: '#1a2b3c', symbolColor: '#ffffff' });
+    assert.deepEqual(calls, [], 'macOS has no overlay to recolour');
+  }],
+  ['window:set-overlay-colors takes only #rrggbb from a known window', () => {
+    const { calls, set } = overlayHandler('win32');
+    for (const colors of [
+      null, undefined, 'x', [], { color: '#fff', symbolColor: '#000000' }, { color: '#ffffff', symbolColor: '#000' },
+      { color: 'red', symbolColor: '#000000' }, { color: '#ffffff' }, { symbolColor: '#000000' },
+      { color: '#ffffff00', symbolColor: '#000000' }, { color: 'ffffff', symbolColor: '#000000' },
+      { color: '#ffffff;', symbolColor: '#000000' }, { color: '#gggggg', symbolColor: '#000000' },
+      { color: ' #ffffff', symbolColor: '#000000' }, { color: '#ffffff\n', symbolColor: '#000000' },
+      { color: 0xffffff, symbolColor: '#000000' }, { color: ['#ffffff'], symbolColor: '#000000' },
+      { color: 'rgb(0,0,0)', symbolColor: '#000000' },
+    ]) set(colors);
+    set({ color: '#ffffff', symbolColor: '#000000' }, null);
+    assert.deepEqual(calls, [], 'nothing invalid reaches setTitleBarOverlay');
+  }],
+  ['macOS menu: renderer chords are shown, not registered', async () => {
+    const { buildMacApplicationMenu } = menuModule('darwin');
+    const sent = [];
+    const window = { isDestroyed: () => false, webContents: { send: (...args) => sent.push(args) } };
+    const items = menuItems(buildMacApplicationMenu(() => window));
+    const { DEFAULT_BINDINGS } = await macBindings();
+    // Every default the renderer dispatches, plus Find, which is CodeMirror's.
+    const rendererChords = new Set([...Object.values(DEFAULT_BINDINGS), 'mod+f']);
+    const withShortcut = items.filter((item) => item.accelerator);
+    assert.ok(withShortcut.length >= 3, 'the menu shows app shortcuts');
+    for (const item of withShortcut) {
+      const chord = acceleratorChord(item.accelerator);
+      if (rendererChords.has(chord)) {
+        assert.equal(item.registerAccelerator, false, `${item.label} (${item.accelerator}) is the renderer's; the menu must not take it`);
+      } else {
+        assert.notEqual(item.registerAccelerator, false, `${item.label}: nothing else handles ${item.accelerator}, so the menu does`);
+      }
+    }
+    const find = items.find((item) => item.label === 'Find…');
+    const search = items.find((item) => item.label === 'Search & Commands…');
+    assert.equal(acceleratorChord(find.accelerator), 'mod+f');
+    assert.equal(acceleratorChord(search.accelerator), DEFAULT_BINDINGS.palette, 'the label shows the real palette shortcut');
+    const settings = items.find((item) => item.label === 'Settings…');
+    assert.equal(acceleratorChord(settings.accelerator), 'mod+,');
+    // Clicking still works, through the command channel.
+    find.click(); search.click(); settings.click();
+    assert.deepEqual(sent, [['menu:command', 'find'], ['menu:command', 'palette'], ['menu:command', 'settings']]);
+  }],
+  ['macOS menu keeps the native roles', () => {
+    const { buildMacApplicationMenu } = menuModule('darwin');
+    const roles = new Set(menuItems(buildMacApplicationMenu(() => null)).map((item) => item.role).filter(Boolean));
+    for (const role of ['about', 'services', 'hide', 'hideOthers', 'unhide', 'quit', 'undo', 'redo', 'cut', 'copy', 'paste',
+      'pasteAndMatchStyle', 'delete', 'selectAll', 'reload', 'forceReload', 'toggleDevTools', 'resetZoom', 'zoomIn', 'zoomOut',
+      'togglefullscreen', 'minimize', 'zoom', 'close', 'front', 'help']) {
+      assert.ok(roles.has(role), `missing native role ${role}`);
+    }
+  }],
+  ['the application menu is macOS only', () => {
+    for (const platform of ['win32', 'linux']) {
+      const { installApplicationMenu, installed } = menuModule(platform);
+      installApplicationMenu(() => null);
+      assert.deepEqual(installed, [null], `${platform}: no menu bar, the title bar is the menu`);
+    }
+    const { installApplicationMenu, installed } = menuModule('darwin');
+    installApplicationMenu(() => null);
+    assert.ok(Array.isArray(installed[0]) && installed[0].length > 0, 'macOS installs the real menu');
+  }],
   ['e2e background mode is off-screen and unthrottled, and nothing else', () => {
     const normal = windowOptions('win32');
     assert.equal(normal.x, undefined, 'a normal launch is placed by the OS');
@@ -80,6 +216,47 @@ const tests = [
     assert.equal(background.show, false, 'shown later, without focus');
     assert.equal(background.webPreferences.backgroundThrottling, false, 'still renders while unseen');
     assert.match(main, /testInBackground = !app\.isPackaged &&/, 'never available to an installed build');
+  }],
+  ['every window is sandboxed and isolated, on every platform and in every mode', () => {
+    // Workspace and Settings windows both come from createWindow's one constructor.
+    const constructors = readdirSync(join(root, 'src', 'main'), { recursive: true })
+      .filter((name) => /\.ts$/.test(name))
+      .flatMap((name) => [...read('src', 'main', name).matchAll(/new BrowserWindow\b/g)].map(() => name));
+    assert.deepEqual(constructors, ['main.ts'], 'one BrowserWindow constructor, so these options are every window kind');
+    const create = main.slice(main.indexOf('function createWindow('), main.indexOf('new BrowserWindow'));
+    assert.match(create, /kind: WindowKind = 'workspace'/, 'createWindow builds every kind');
+    for (const platform of ['win32', 'linux', 'darwin']) {
+      for (const background of [false, true]) {
+        const { webPreferences } = windowOptions(platform, background);
+        const where = `${platform}${background ? ' (e2e background)' : ''}`;
+        assert.equal(webPreferences.sandbox, true, `${where}: sandbox stated explicitly`);
+        assert.equal(webPreferences.contextIsolation, true, `${where}: contextIsolation`);
+        assert.equal(webPreferences.nodeIntegration, false, `${where}: nodeIntegration`);
+        assert.notEqual(webPreferences.nodeIntegrationInSubFrames, true, `${where}: nodeIntegrationInSubFrames`);
+        assert.notEqual(webPreferences.webSecurity, false, `${where}: webSecurity`);
+        assert.notEqual(webPreferences.allowRunningInsecureContent, true, `${where}: allowRunningInsecureContent`);
+      }
+    }
+  }],
+  ['the sandboxed preload needs nothing but electron', () => {
+    const imports = [...preload.matchAll(/(?:from\s+|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    assert.deepEqual([...new Set(imports)], ['electron'], 'a sandboxed preload cannot load Node modules');
+    // Electron 45 removed these from sandboxed preloads.
+    assert.doesNotMatch(preload, /\b(Buffer|setImmediate|clearImmediate)\b/);
+  }],
+  ['will-attach-webview forces sandbox, isolation and no Node, and strips any preload', () => {
+    const hostile = {
+      preload: 'C:\\evil\\preload.js', nodeIntegration: true, nodeIntegrationInSubFrames: true,
+      contextIsolation: false, sandbox: false,
+    };
+    for (const requested of [hostile, {}, { preload: '/tmp/p.js' }]) {
+      const actual = attachWebview(requested);
+      assert.equal('preload' in actual, false, 'preload stripped');
+      assert.equal(actual.sandbox, true);
+      assert.equal(actual.contextIsolation, true);
+      assert.equal(actual.nodeIntegration, false);
+      assert.equal(actual.nodeIntegrationInSubFrames, false);
+    }
   }],
   ['Windows and Linux use native frame and Window Controls Overlay', () => {
     for (const platform of ['win32', 'linux']) {
@@ -127,7 +304,7 @@ const tests = [
 let failures = 0;
 for (const [name, test] of tests) {
   try {
-    test();
+    await test();
     console.log(`ok - ${name}`);
   } catch (error) {
     failures++;

@@ -7,7 +7,7 @@ const { outputText } = ts.transpileModule(source, { compilerOptions: { module: t
 const {
   EMPTY_TABS, openTab, keepTab, closeTab, removeMissing,
   EMPTY_GROUPS, MAX_GROUPS, mapGroup, focusGroup, openInGroup, keepEverywhere, closeGroup, closeInGroup, canSplit, splitBlocked,
-  splitGroup, moveTab, removeMissingAll, dropPreviews, serializeGroups, restoreGroups,
+  splitGroup, moveTab, removeMissingAll, dropPreviews, serializeGroups, restoreGroups, renameInGroups,
 } = await import('data:text/javascript;base64,' + Buffer.from(outputText).toString('base64'));
 
 let checks = 0;
@@ -120,6 +120,15 @@ eq(moveTab({ ...two, groups: [{ tabs: ['a.md', 'p.md'], preview: 'p.md', selecte
   [{ tabs: ['a.md'], preview: null, selected: 'a.md' }, kept(['c.md', 'p.md'])]);
 assert.equal(moveTab(two, 0, 1, 'b.md', 'b.md'), two); checks++;
 
+// A moved tab already previewed in the target is kept, so the next click cannot replace it.
+{
+  const targetPreview = openInGroup(two, 'b.md', false, 1);
+  const moved = moveTab(targetPreview, 0, 1, 'b.md');
+  eq(moved.groups[1], kept(['c.md', 'b.md']));
+  eq(openInGroup(moved, 'next.md', false).groups[1],
+    { tabs: ['c.md', 'b.md', 'next.md'], preview: 'next.md', selected: 'next.md' });
+}
+
 // Closing a group closes its tabs; the neighbour before it takes focus.
 eq(closeGroup(three, 2), { groups: three.groups.slice(0, 2), direction: 'row', focused: 1 });
 eq(closeGroup({ ...three, focused: 0 }, 0).focused, 0);
@@ -161,6 +170,147 @@ eq(restoreGroups({ ...stored, sizes: [50, 'x'] }, all).sizes, null);
 eq(restoreGroups({ groups: Array.from({ length: 6 }, (_, i) => ({ tabs: [`${i}.md`] })), direction: 'row', focused: 0 }, all).state.groups.length, 4);
 // The focused group, or the one before it if it went.
 eq(restoreGroups({ groups: [{ tabs: ['a.md'] }, { tabs: ['b.md'] }, { tabs: ['gone.md'] }], direction: 'row', focused: 2 }, (path) => path !== 'gone.md').state.focused, 1);
+
+// --- Damaged saved state --------------------------------------------------------
+// Wrong types anywhere: each part falls back on its own, the rest is kept.
+eq(restoreGroups({ groups: [null, 'x', { tabs: 'a.md' }, { tabs: ['b.md'], selected: 3 }], direction: 5, focused: '1', sizes: 'x' }, all),
+  { state: { groups: [kept(['b.md'])], direction: 'row', focused: 0 }, sizes: null });
+eq(restoreGroups({ groups: [{ tabs: ['a.md'] }, { tabs: ['b.md'] }], direction: 'column', focused: NaN }, all).state.focused, 0);
+eq(restoreGroups({ groups: [{ tabs: ['a.md'] }, { tabs: ['b.md'] }], direction: 'column', focused: -3 }, all).state.focused, 0);
+eq(restoreGroups({ groups: [{ tabs: ['a.md'] }, { tabs: ['b.md'] }], direction: 'column', focused: 1.5 }, all).state.focused, 1);
+// Unknown directions are a row.
+for (const direction of ['diagonal', 'Column', '', null, undefined, ['column'], { column: true }]) {
+  eq(restoreGroups({ groups: [{ tabs: ['a.md'] }, { tabs: ['b.md'] }], direction, focused: 0 }, all).state.direction, 'row');
+}
+// Sizes that do not add up to 100, have the wrong count, or are not positive finite numbers are dropped.
+const twoGroups = { groups: [{ tabs: ['a.md'] }, { tabs: ['b.md'] }], direction: 'row', focused: 0 };
+for (const sizes of [[30, 30], [60, 60], [100], [50, 30, 20], [50, -50], [0, 100], [Infinity, 1], [NaN, 100], [50, null], {}, null]) {
+  eq(restoreGroups({ ...twoGroups, sizes }, all).sizes, null);
+}
+eq(restoreGroups({ ...twoGroups, sizes: [33.4, 66.6] }, all).sizes, [33.4, 66.6]);
+eq(restoreGroups({ ...twoGroups, sizes: [50.4, 50] }, all).sizes, [50.4, 50], 'rounding within a percent is fine');
+// More than four groups: the first four come back, and their sizes cannot fit.
+{
+  const six = restoreGroups({ groups: Array.from({ length: 6 }, (_, i) => ({ tabs: [`${i}.md`] })), direction: 'column', focused: 5, sizes: [10, 10, 20, 20, 20, 20] }, all);
+  eq(six.state.groups.map((g) => g.tabs), [['0.md'], ['1.md'], ['2.md'], ['3.md']]);
+  eq(six.state.focused, 3, 'focus past the fourth lands on the last kept group');
+  eq(six.sizes, null);
+}
+// Duplicate paths in one group collapse to the first; the same path in two groups is allowed (one document, two views).
+eq(restoreGroups({ groups: [{ tabs: ['a.md', 'b.md', 'a.md', 'b.md'], selected: 'b.md' }], direction: 'row', focused: 0 }, all).state.groups,
+  [kept(['a.md', 'b.md'], 'b.md')]);
+eq(restoreGroups({ groups: [{ tabs: ['a.md'] }, { tabs: ['a.md'] }], direction: 'row', focused: 1 }, all).state,
+  { groups: [kept(['a.md']), kept(['a.md'])], direction: 'row', focused: 1 });
+// Empty or whitespace-free junk tab names never become tabs.
+eq(restoreGroups({ groups: [{ tabs: ['', 'a.md', 'http://x.test/'] }], direction: 'row', focused: 0 }, all).state.groups, [kept(['a.md'])]);
+
+// --- Direction lock and the four-group limit, across split, move and close --------
+{
+  const solo = { groups: [kept(['a.md', 'b.md', 'c.md', 'd.md', 'e.md'], 'a.md')], direction: 'row', focused: 0 };
+  // Stacked by the first split; from then on only down.
+  let s = splitGroup(solo, 0, 'b.md', 'column', true);
+  eq(s.direction, 'column');
+  assert.equal(splitGroup(s, 0, 'c.md', 'row', true), s, 'a stack does not gain a group beside it'); checks++;
+  s = splitGroup(splitGroup(s, 0, 'c.md', 'column', true), 0, 'd.md', 'column', true);
+  eq(s.groups.length, 4);
+  // At four, neither a split from the menu nor a drag to an edge adds one.
+  assert.equal(splitGroup(s, 0, 'e.md', 'column'), s); checks++;
+  assert.equal(splitGroup(s, 0, 'e.md', 'column', true), s); checks++;
+  // Moving tabs between groups never adds one, and keeps the direction.
+  const moved = moveTab(s, 0, 3, 'e.md');
+  eq(moved.groups.length, 4);
+  eq(moved.direction, 'column');
+  // Moving a group's only tab out closes it, which makes room again, in the same direction only.
+  const three = moveTab(moved, 1, 2, 'b.md');
+  eq(three.groups.map((g) => g.tabs), [['a.md'], ['c.md', 'b.md'], ['d.md', 'e.md']]);
+  eq(canSplit(three, 'column'), true);
+  eq(canSplit(three, 'row'), false);
+  // Closed back down to one group, either direction is open again.
+  const one = closeGroup(closeGroup(three, 2), 1);
+  eq(one.groups.length, 1);
+  eq(canSplit(one, 'row'), true);
+  eq(splitGroup(one, 0, 'a.md', 'row').direction, 'row');
+  // A closing tab that empties a group does the same.
+  const back = closeInGroup(closeInGroup(three, 1, 'c.md'), 1, 'b.md');
+  eq(back.groups.map((g) => g.tabs), [['a.md'], ['d.md', 'e.md']]);
+  eq(back.direction, 'column');
+}
+
+// --- Preview per group, through every operation -----------------------------------
+{
+  const pv = (tabs, preview, selected = preview) => ({ tabs, preview, selected });
+  const base = { groups: [pv(['a.md', 'p.md'], 'p.md'), pv(['c.md', 'q.md'], 'q.md')], direction: 'row', focused: 0 };
+  // Opening in one group leaves the other's preview alone.
+  eq(openInGroup(base, 'r.md', false, 0).groups, [pv(['a.md', 'r.md'], 'r.md'), base.groups[1]]);
+  eq(openInGroup(base, 'r.md', true, 1).groups, [base.groups[0], pv(['c.md', 'q.md', 'r.md'], 'q.md', 'r.md')]);
+  // Keeping in one group: only where that file is the preview.
+  eq(keepEverywhere(base, 'p.md').groups, [pv(['a.md', 'p.md'], null, 'p.md'), base.groups[1]]);
+  // A split copies the file as a kept tab; both groups keep their previews.
+  eq(splitGroup(base, 0, 'a.md', 'row').groups, [...base.groups, kept(['a.md'])]);
+  // A split by dragging the preview: it is kept in its new group, and its old group has none.
+  eq(splitGroup(base, 0, 'p.md', 'row', true).groups, [pv(['a.md'], null, 'a.md'), base.groups[1], kept(['p.md'])]);
+  // Moving a group's preview to another: kept there, the target's own preview stays.
+  eq(moveTab(base, 0, 1, 'p.md').groups, [pv(['a.md'], null, 'a.md'), pv(['c.md', 'q.md', 'p.md'], 'q.md', 'p.md')]);
+  // Moving a kept tab keeps both previews.
+  eq(moveTab(base, 0, 1, 'a.md', 'c.md').groups, [pv(['p.md'], 'p.md'), pv(['a.md', 'c.md', 'q.md'], 'q.md', 'a.md')]);
+  // Reordering within a group: a dragged preview arrives kept, as every moved tab does; another tab's drag leaves it.
+  eq(moveTab(base, 0, 0, 'p.md', 'a.md').groups, [pv(['p.md', 'a.md'], null, 'p.md'), base.groups[1]]);
+  eq(moveTab(base, 0, 0, 'a.md').groups[0], pv(['p.md', 'a.md'], 'p.md', 'a.md'));
+  // Closing a tab or a group touches only its own group's preview.
+  eq(closeInGroup(base, 1, 'q.md').groups, [base.groups[0], pv(['c.md'], null, 'c.md')]);
+  eq(closeInGroup(base, 1, 'c.md').groups, [base.groups[0], pv(['q.md'], 'q.md')]);
+  eq(closeGroup(base, 0).groups, [base.groups[1]]);
+  // A deleted preview leaves only the groups where it was.
+  eq(removeMissingAll(base, (path) => path !== 'q.md').groups, [base.groups[0], pv(['c.md'], null, null)]);
+  // A workspace switch drops every group's preview; groups it empties close.
+  eq(dropPreviews(base).groups, [kept(['a.md'], 'a.md'), kept(['c.md'], 'c.md')]);
+  eq(dropPreviews({ ...base, groups: [pv(['p.md'], 'p.md'), base.groups[1]] }).groups, [kept(['c.md'], 'c.md')]);
+  // Stored state holds no previews.
+  eq(serializeGroups(base).groups, [{ tabs: ['a.md'], selected: null }, { tabs: ['c.md'], selected: null }]);
+}
+
+// --- Focus after closing ---------------------------------------------------------
+{
+  const four = { groups: [kept(['a.md']), kept(['b.md']), kept(['c.md']), kept(['d.md'])], direction: 'row', focused: 2 };
+  // Closing the focused group: the one before it takes focus; for the first, the next (now first).
+  eq(closeGroup(four, 2).focused, 1);
+  eq(closeGroup({ ...four, focused: 0 }, 0).focused, 0);
+  eq(closeGroup({ ...four, focused: 3 }, 3).focused, 2);
+  // Closing a group before the focused one: focus stays on the same group, now one place earlier.
+  const before = closeGroup(four, 0);
+  eq(before.focused, 1);
+  eq(before.groups[before.focused].tabs, ['c.md']);
+  // Closing one after it leaves focus where it was.
+  eq(closeGroup(four, 3).focused, 2);
+  // The same through closing a group's last tab, and through moving it out.
+  eq(closeInGroup(four, 2, 'c.md').focused, 1);
+  const closedBefore = closeInGroup(four, 1, 'b.md');
+  eq(closedBefore.groups[closedBefore.focused].tabs, ['c.md']);
+  const movedOut = moveTab(four, 0, 3, 'a.md');
+  eq(movedOut.groups[movedOut.focused].tabs, ['d.md', 'a.md'], 'focus follows the moved tab');
+  // A deleted file closing groups before the focused one keeps focus on its group.
+  const pruned = removeMissingAll(four, (path) => path !== 'a.md' && path !== 'b.md');
+  eq(pruned.groups[pruned.focused].tabs, ['c.md']);
+}
+}
+
+// A rename or move: every group's tabs, preview and selection follow, in place (11E).
+{
+  const state = {
+    groups: [
+      { tabs: ['a.md', 'docs/b.md', 'c.md'], preview: 'docs/b.md', selected: 'docs/b.md' },
+      { tabs: ['docs/b.md', 'docs/sub/d.md'], preview: null, selected: 'docs/sub/d.md' },
+      { tabs: ['c.md'], preview: null, selected: 'c.md' },
+    ],
+    direction: 'row', focused: 1,
+  };
+  const move = (path) => (path === 'docs' || path.startsWith('docs/') ? 'archive/' + path : null);
+  const next = renameInGroups(state, move);
+  eq(next.groups[0], { tabs: ['a.md', 'archive/docs/b.md', 'c.md'], preview: 'archive/docs/b.md', selected: 'archive/docs/b.md' });
+  eq(next.groups[1], { tabs: ['archive/docs/b.md', 'archive/docs/sub/d.md'], preview: null, selected: 'archive/docs/sub/d.md' });
+  assert.equal(next.groups[2], state.groups[2], 'an untouched group is the same object');
+  assert.equal(next.focused, 1);
+  assert.equal(renameInGroups(state, () => null), state, 'nothing open moved: the same state');
 }
 
 console.log(`tabs: ${checks} checks passed`);

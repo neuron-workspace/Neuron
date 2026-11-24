@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Play, TerminalSquare, Ban } from 'lucide-react';
-import { runInTerminal, isRunnableCommand } from '../lib/terminal-bus';
+import { runInTerminal, isRunnableCommand, HIDDEN_CHARS_REFUSAL } from '../lib/terminal-bus';
 import { Button } from './ui/button';
 
 /**
@@ -17,18 +17,22 @@ import { Button } from './ui/button';
  *
  * Two more properties hold that up:
  *
- *  - One line only. A command containing a newline would run as several, with
- *    only the first visible. Those are refused, visibly, rather than trimmed
- *    into something that looks fine.
+ *  - One visible line only. A command containing a newline would run as
+ *    several, with only the first visible; bidi overrides, zero-width and C1
+ *    control characters make the pill read differently from what the shell
+ *    gets. Those are refused, visibly ("hidden characters"), rather than
+ *    trimmed into something that looks fine (isRunnableCommand).
  *  - It runs in the terminal panel, which is revealed by the click. Output,
  *    prompts and failures all land somewhere the user is already looking --
  *    nothing runs as a hidden child process.
  */
 export function Run({ cmd, label, tone }: { cmd?: string; label?: string; tone?: string }) {
   const [ran, setRan] = useState(false);
-  const command = (cmd ?? '').trim();
+  // Not trimmed before the check: trim() would quietly drop a leading U+FEFF or
+  // newline, and the rule is to refuse those visibly, not tidy them away.
+  const command = typeof cmd === 'string' ? cmd : '';
 
-  if (!command) {
+  if (!command.trim()) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--danger)] px-2 py-1 text-[11px] text-[var(--danger)]">
         <Ban className="h-3 w-3" /> {'<Run />'} needs a cmd, e.g. cmd="code ."
@@ -38,8 +42,8 @@ export function Run({ cmd, label, tone }: { cmd?: string; label?: string; tone?:
 
   if (!isRunnableCommand(command)) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--danger)] px-2 py-1 text-[11px] text-[var(--danger)]">
-        <Ban className="h-3 w-3" /> A command must be a single line.
+      <span data-run-refused="" className="inline-flex items-center gap-1.5 rounded-md border border-[var(--danger)] px-2 py-1 text-[11px] text-[var(--danger)]">
+        <Ban className="h-3 w-3" /> {label && <span className="font-medium">{label}:</span>} {HIDDEN_CHARS_REFUSAL}
       </span>
     );
   }
@@ -59,7 +63,7 @@ export function Run({ cmd, label, tone }: { cmd?: string; label?: string; tone?:
           half-shown command is worse than none, because it still reads as
           disclosure. */}
       <code className="min-w-0 break-all rounded bg-[var(--canvas)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--ink-secondary)]">
-        {command}
+        {command.trim()}
       </code>
     </Button>
   );

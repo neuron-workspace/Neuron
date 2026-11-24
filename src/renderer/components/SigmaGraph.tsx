@@ -3,6 +3,7 @@ import Sigma from 'sigma';
 import { LocateFixed, RotateCcw, Search, Settings2, Share2 } from 'lucide-react';
 import { type GraphNode, type GraphEdge, KnowledgeGraph, GRAPH_DEFAULTS, GRAPH_RANGES, graphPreferences, seedPositions, type GraphPreferences, type Positions } from '../lib/knowledge-graph';
 import { settleLayout } from '../lib/graph-layout';
+import { fitCamera } from '../lib/graph-fit';
 import type { GraphCanvasProps } from './GraphCanvas';
 
 const labels = { gravity: 'Centre / gravity', repel: 'Repel', attraction: 'Link attraction', distance: 'Link distance', nodeSize: 'Node size', linkThickness: 'Link thickness', labelThreshold: 'Label fade threshold', depth: 'Steps from this note' };
@@ -16,6 +17,16 @@ const readColors = () => {
   const style = getComputedStyle(document.documentElement);
   const get = (key: string) => style.getPropertyValue(key).trim();
   return { accent: get('--accent'), ink: get('--ink'), label: get('--ink-secondary'), muted: get('--ink-muted'), faint: get('--surface-hover'), edge: fade(get('--ink-muted'), 0.55) };
+};
+
+/** Whether this renderer can make a WebGL context at all, which Sigma needs. */
+const webglAvailable = () => {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(canvas.getContext('webgl2') ?? canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
 };
 
 export default function SigmaGraph(props: GraphCanvasProps) {
@@ -38,6 +49,8 @@ export default function SigmaGraph(props: GraphCanvasProps) {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
+  // Set when the renderer itself could not be made; the graph cannot be shown.
+  const [unavailable, setUnavailable] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const hovered = useRef<string | null>(null);
   const relatedNodes = useRef(new Set<string>());
@@ -133,7 +146,13 @@ export default function SigmaGraph(props: GraphCanvasProps) {
       },
     });
     } catch {
-      setError('Connections could not start. WebGL is unavailable.');
+      // Sigma draws only through WebGL. A computer without it (no GPU and no
+      // software fallback, which Chromium no longer turns on by itself) cannot
+      // show the graph at all, so say that plainly in its place instead of an
+      // empty canvas and a hint that links will appear. Everything else here
+      // already stands down while `renderer` is null.
+      host.current.replaceChildren();
+      setUnavailable(webglAvailable() ? 'The graph could not start.' : "The graph needs WebGL, which isn't available on this computer.");
       return;
     }
     renderer.current = sigma;
@@ -240,11 +259,10 @@ export default function SigmaGraph(props: GraphCanvasProps) {
     const sigma = renderer.current;
     if (!sigma) return;
     userNavigated.current = true; sigma.setCustomBBox(null); sigma.refresh();
-    const nodes = model.current.graph.nodes().map(id => sigma.getNodeDisplayData(id)).filter(n => n && !n.hidden);
-    if (!nodes.length) return;
-    const xs = nodes.map(n => n!.x), ys = nodes.map(n => n!.y);
-    const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
-    void sigma.getCamera().animate({ x: (xmin + xmax) / 2, y: (ymin + ymax) / 2, ratio: Math.max(0.1, xmax - xmin, ymax - ymin) }, { duration: duration() });
+    // Display data is in Sigma's framed-graph space, not graph coordinates; see lib/graph-fit.
+    const nodes = model.current.graph.nodes().map(id => sigma.getNodeDisplayData(id)).filter((n): n is NonNullable<typeof n> => !!n && !n.hidden);
+    const target = fitCamera(nodes, sigma.getDimensions(), (point, cameraState) => sigma.framedGraphToViewport(point, { cameraState }), { maxRatio: 8 });
+    if (target) void sigma.getCamera().animate(target, { duration: duration() });
   };
   const matches = model.current.graph.nodes().filter(id => model.current.graph.getNodeAttribute(id, 'kind') !== 'unresolved' && model.current.graph.getNodeAttribute(id, 'label').toLowerCase().includes(query.toLowerCase()));
 
@@ -276,8 +294,9 @@ export default function SigmaGraph(props: GraphCanvasProps) {
       {matches.slice(0, 30).map(id => <button key={id} className="block w-full truncate rounded p-1 text-left hover:bg-[var(--surface-hover)]" aria-label={`Open ${model.current.graph.getNodeAttribute(id, 'label')}`} onClick={() => { latest.current.onSelectNote(id); focus(id); setSearching(false); setQuery(''); }}>{model.current.graph.getNodeAttribute(id, 'label')}</button>)}
       {!matches.length && <p role="status">No matching notes.</p>}
     </div>}
-    {emptyAround && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">Open a note to see what it links to.</p>}
-    {!emptyAround && !model.current.graph.order && key && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">{props.emptyHint ?? 'Add notes and links to see connections.'}</p>}
+    {unavailable && <p role="alert" data-graph-unavailable className="pointer-events-none absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-xs text-[var(--ink-muted)]">{unavailable}</p>}
+    {!unavailable && emptyAround && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">Open a note to see what it links to.</p>}
+    {!unavailable && !emptyAround && !model.current.graph.order && key && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">{props.emptyHint ?? 'Add notes and links to see connections.'}</p>}
     {error && <p role="alert" className="absolute bottom-2 inset-x-2 bg-[var(--surface)] text-xs">{error}</p>}
     <dialog ref={dialog} aria-label="Connection settings" className="m-auto w-[320px] max-w-[90vw] max-h-[85vh] flex-col overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-0 text-xs text-[var(--ink)] backdrop:bg-black/40 open:flex">
       <div className="shrink-0 px-4 pb-1 pt-4"><strong className="flex items-center gap-2"><Share2 className="h-4 w-4 shrink-0 text-[var(--ink-muted)]" aria-hidden="true" />Connections</strong></div>

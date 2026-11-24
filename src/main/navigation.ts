@@ -24,11 +24,15 @@ export function isSameOrigin(url: string, origin: string | null | undefined): bo
 /**
  * True for the app's own bundled content: packaged `file://` pages, or the dev
  * server in development. Anything else navigates the app frame off-origin.
+ *
+ * `isDev` must be true only for an unpackaged build. A packaged app never
+ * loads the dev server, so whatever answers on that port there is not Neuron,
+ * and the frame carrying the preload bridge must not navigate to it.
  */
-export function isAppContent(url: string, appRoot?: string, caseInsensitive = false): boolean {
+export function isAppContent(url: string, appRoot?: string, caseInsensitive = false, isDev = false): boolean {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'file:') return parsed.origin === DEV_URL;
+    if (parsed.protocol !== 'file:') return isDev && parsed.origin === DEV_URL;
     if (!appRoot) return false;
     const root = new URL(appRoot);
     if (root.protocol !== 'file:' || parsed.host !== root.host) return false;

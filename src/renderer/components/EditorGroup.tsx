@@ -11,25 +11,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { cn } from '../lib/utils';
 import { isCsvPath } from '../lib/csv-table';
 import { splitBlocked, type GroupsState, type SplitDirection, type TabState } from '../lib/tabs';
+import { toggleTaskLine } from '../lib/task-line';
 import { SurfaceBoundary } from '../surfaces/SurfaceBoundary';
 import { EDIT_MODES, EDITOR_MODE_SLOT, type EditMode } from '../surfaces/panels';
-import type { NoteData, Surface } from '../surfaces';
+import type { NoteData, SaveResult, Surface } from '../surfaces';
 import { fileKind, MEDIA_KINDS } from '../../main/file-kinds';
+import { TOO_LARGE_TO_OPEN } from '../../main/file-limits';
+import { ExternalChangeBar, TooLargeMessage } from './FileNotices';
+import { WikiCompletionContext } from './wiki-completion';
+import type { WikiIndex } from '../lib/wikilinks';
+import { cursorToLine, useReveal } from '../lib/reveal';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 const SAVE_LABEL: Record<SaveState, string> = { idle: 'No note open', saving: 'Saving…', saved: 'Saved locally', error: 'Save failed' };
 const isUrl = (s: string) => /^https?:\/\//.test(s);
 
-/** Tick or untick the task on one source line. Null when the line holds no task. */
-export function toggleTaskLine(content: string, lineIndex: number, checked: boolean): string | null {
-  const lines = content.split('\n');
-  const line = lines[lineIndex];
-  if (line === undefined) return null;
-  const next = checked ? line.replace(/\[( | )\]/, '[x]') : line.replace(/\[[xX]\]/, '[ ]');
-  if (next === line) return null;
-  lines[lineIndex] = next;
-  return lines.join('\n');
-}
+// The task toggle lives in a module of its own so tools/ can test it; kept
+// exported from here, where it always was.
+export { toggleTaskLine };
 
 /**
  * What every editor group shares. Files have one copy and one writer here, not
@@ -39,6 +38,8 @@ export function toggleTaskLine(content: string, lineIndex: number, checked: bool
  */
 export interface GroupContext {
   notes: string[];
+  /** Every file and alias, for resolving links and `[[` autocomplete. */
+  wikiIndex: WikiIndex;
   tags: string[];
   notesData: NoteData[];
   colorScheme: 'dark' | 'light';
@@ -51,7 +52,12 @@ export interface GroupContext {
   onSurfaceSource: (path: string, source: boolean) => void;
   docs: Record<string, string>;
   saveStates: Record<string, SaveState>;
-  onChange: (path: string, value: string) => void;
+  /** The one save path. Resolves to how the save ended, or null when a newer save (or an outside change) speaks for it. */
+  onChange: (path: string, value: string) => Promise<SaveResult | null> | void;
+  /** Files changed outside Neuron while an edit here was not on disk; each shows ExternalChangeBar. */
+  conflicts: Record<string, true>;
+  onKeepMine: (path: string) => void;
+  onUseDisk: (path: string) => void;
   /** The surface a file opens in, and whether a by-kind surface applies (image, media, text), which has no source view. */
   surfaceFor: (path: string) => { Surface?: Surface; byKind: boolean };
   fileSize: (path: string) => number | undefined;
@@ -92,7 +98,7 @@ export function EditorGroupHeader({ ctx, state, index, showsHome, inLayout = fal
   const path = showsHome ? null : group.selected;
   const blocked = useCallback((direction: SplitDirection) => splitBlocked(state, direction), [state]);
   let controls: ReactNode = null;
-  if (path && !isUrl(path)) {
+  if (path && !isUrl(path) && ctx.docs[path] !== TOO_LARGE_TO_OPEN) {
     const { Surface, byKind } = ctx.surfaceFor(path);
     const content = ctx.docs[path] ?? '';
     if (Surface && !byKind) {
@@ -140,9 +146,10 @@ export function EditorGroupHeader({ ctx, state, index, showsHome, inLayout = fal
           <span className="text-[var(--ink-secondary)]">{path.split('/').pop()}</span>
         </div>
         {/* Media streams from disk and is never written, so it has no save state. */}
-        {!isUrl(path) && !MEDIA_KINDS.includes(fileKind(path)) && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{SAVE_LABEL[saveState]}</span>}
+        {!isUrl(path) && !MEDIA_KINDS.includes(fileKind(path)) && ctx.docs[path] !== TOO_LARGE_TO_OPEN && <span role="status" className={cn('shrink-0 text-xs text-[var(--ink-muted)]', saveState === 'error' && 'text-[var(--danger)]')}>{SAVE_LABEL[saveState]}</span>}
         {controls}
       </div>}
+      {path && ctx.conflicts[path] && <ExternalChangeBar path={path} onKeepMine={() => ctx.onKeepMine(path)} onUseDisk={() => ctx.onUseDisk(path)} />}
     </header>
   );
 }
@@ -150,11 +157,15 @@ export function EditorGroupHeader({ ctx, state, index, showsHome, inLayout = fal
 /** A group's file, rendered exactly as the single editor always has. */
 function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
   const editorRef = useRef<any>(null);
+  // A search hit opening this file at a line, when the source editor is what shows it.
+  useReveal(path, (line) => cursorToLine(editorRef.current?.view, line));
   if (isUrl(path)) return <BrowserView key={path} url={path} />;
   const content = ctx.docs[path];
   // Not read yet: render nothing rather than another file's content or an
   // empty document a surface might take for the real one.
   if (content === undefined) return null;
+  // Over 25 MB: main did not read it, so there is nothing to show or edit.
+  if (content === TOO_LARGE_TO_OPEN) return <TooLargeMessage />;
   const change = (value: string) => ctx.onChange(path, value);
   const toggleTask = (line: number, checked: boolean) => {
     const next = toggleTaskLine(content, line, checked);
@@ -171,7 +182,7 @@ function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
     if (!byKind && ctx.surfaceSource[path]) return <Editor ref={editorRef} value={content} onChange={change} readOnly={isCsvPath(path)} colorScheme={colorScheme} />;
     return (
       <SurfaceBoundary resetKey={`${path}:${content.length}`}>
-        <Surface path={path} content={content} notesData={ctx.notesData} onSelectNote={(note) => ctx.onOpen(note)} selectedNote={path} onChangeNote={change} colorScheme={colorScheme} fileSize={ctx.fileSize(path)} />
+        <Surface path={path} content={content} notesData={ctx.notesData} onSelectNote={(note) => ctx.onOpen(note)} selectedNote={path} onChangeNote={change} saveState={ctx.saveStates[path]} colorScheme={colorScheme} fileSize={ctx.fileSize(path)} />
       </SurfaceBoundary>
     );
   }
@@ -192,16 +203,20 @@ function GroupBody({ ctx, path }: { ctx: GroupContext; path: string }) {
       }
     }, 50);
   };
-  const source = <Editor ref={editorRef} value={content} onChange={change} colorScheme={colorScheme} />;
-  const preview = <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} notes={notes} onWikiLinkClick={open} />;
+  const source = (
+    <WikiCompletionContext.Provider value={{ index: ctx.wikiIndex, from: path }}>
+      <Editor ref={editorRef} value={content} onChange={change} colorScheme={colorScheme} />
+    </WikiCompletionContext.Provider>
+  );
+  const preview = <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} revealLines={false} />;
 
   if (mode === 'live') {
-    return <MDXPreview key={path} editable mdxContent={content} onChangeSource={change} onToggleTask={toggleTask} colorScheme={colorScheme} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} onWikiLinkClick={open} onRequestRawMode={() => setMode('split')} removeEmptyFrontmatter={properties.removeEmpty} defaultPropertiesCollapsed={properties.collapsedByDefault} />;
+    return <MDXPreview key={path} editable mdxContent={content} onChangeSource={change} onToggleTask={toggleTask} colorScheme={colorScheme} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} onRequestRawMode={() => setMode('split')} removeEmptyFrontmatter={properties.removeEmpty} defaultPropertiesCollapsed={properties.collapsedByDefault} />;
   }
   if (mode === 'reading') {
     return (
       <div className="h-full" onDoubleClick={() => setMode('live')}>
-        <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} onWikiLinkClick={open} showProperties={properties.showInReading} defaultPropertiesCollapsed={properties.collapsedByDefault} />
+        <MDXPreview onToggleTask={toggleTask} mdxContent={content} colorScheme={colorScheme} onLineClick={lineClick} tagSuggestions={tags} onTagClick={ctx.onTagClick} notes={notes} wikiIndex={ctx.wikiIndex} notePath={path} onWikiLinkClick={open} showProperties={properties.showInReading} defaultPropertiesCollapsed={properties.collapsedByDefault} />
       </div>
     );
   }
@@ -258,10 +273,62 @@ function SplitZone({ direction, beside, onDrop }: { direction: SplitDirection; b
   );
 }
 
+/**
+ * Whether an editor tab is being dragged, anywhere in the window. Heard on the
+ * window, so a tab strip outside the editor area (the layout shell's editor
+ * panel) counts too; after the tab's own handler, which is what marks the drag
+ * as a tab.
+ */
+export function useTabDragging(): boolean {
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    // A frame later: changing what is under the pointer as a drag starts can cancel it.
+    const start = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes(TAB_MIME)) requestAnimationFrame(() => setDragging(true));
+    };
+    window.addEventListener('dragstart', start);
+    return () => window.removeEventListener('dragstart', start);
+  }, []);
+  useEffect(() => {
+    if (!dragging) return;
+    // After the drop has been handled: hiding the zones during it would
+    // unmount the zone being dropped on before its handler runs. Listened for
+    // on the way down, because a drop handler stops the event on the way up,
+    // and a moved tab's own dragend fires on an element no longer there.
+    const stop = () => { setTimeout(() => setDragging(false), 0); };
+    window.addEventListener('dragend', stop, true);
+    window.addEventListener('drop', stop, true);
+    return () => { window.removeEventListener('dragend', stop, true); window.removeEventListener('drop', stop, true); };
+  }, [dragging]);
+  return dragging;
+}
+
+/** The split zones over a group's content while a tab is dragged: right and below, where a split is possible. */
+function SplitZones({ ctx, state, dragging }: { ctx: GroupContext; state: GroupsState; dragging: boolean }) {
+  const zones = dragging ? (['row', 'column'] as const).filter((direction) => !splitBlocked(state, direction)) : [];
+  return (
+    <>
+      {zones.map((direction) => (
+        <SplitZone key={direction} direction={direction} beside={zones.length === 2}
+          onDrop={(from, dropped) => ctx.onSplit(from, dropped, direction, true)} />
+      ))}
+    </>
+  );
+}
+
+/**
+ * The split zones for the layout shell's editor panel, which shows the one
+ * editor group outside EditorGroups: the same zones and the same drop, so the
+ * first split works by dragging there too.
+ */
+export function ShellSplitZones({ ctx, state }: { ctx: GroupContext; state: GroupsState }) {
+  const dragging = useTabDragging();
+  return <SplitZones ctx={ctx} state={state} dragging={dragging} />;
+}
+
 function EditorGroup({ ctx, state, index, showsHome, card, dragging }: GroupProps & { card: boolean; dragging: boolean }) {
   const group = state.groups[index] as TabState;
   const path = showsHome ? null : group.selected;
-  const zones = dragging ? (['row', 'column'] as const).filter((direction) => !splitBlocked(state, direction)) : [];
   return (
     <section aria-label={`Editor group ${index + 1}`} data-editor-group={index} data-focused={state.focused === index ? 'true' : undefined}
       className={cn('relative flex h-full w-full min-w-0 flex-col', card && 'shell-card')}
@@ -271,10 +338,7 @@ function EditorGroup({ ctx, state, index, showsHome, card, dragging }: GroupProp
       <EditorGroupHeader ctx={ctx} state={state} index={index} showsHome={showsHome} />
       <div className="relative min-h-0 flex-1">
         {path ? <GroupBody ctx={ctx} path={path} /> : ctx.home}
-        {zones.map((direction) => (
-          <SplitZone key={direction} direction={direction} beside={zones.length === 2}
-            onDrop={(from, dropped) => ctx.onSplit(from, dropped, direction, true)} />
-        ))}
+        <SplitZones ctx={ctx} state={state} dragging={dragging} />
       </div>
     </section>
   );
@@ -294,32 +358,17 @@ export default function EditorGroups({ ctx, state, homeGroup, zen, sizes, onSize
   onSizes: (sizes: number[]) => void;
 }) {
   // A tab being dragged shows the split zones on every group's content.
-  const [dragging, setDragging] = useState(false);
-  useEffect(() => {
-    if (!dragging) return;
-    // After the drop has been handled: hiding the zones during it would
-    // unmount the zone being dropped on before its handler runs. Listened for
-    // on the way down, because a drop handler stops the event on the way up,
-    // and a moved tab's own dragend fires on an element no longer there.
-    const stop = () => { setTimeout(() => setDragging(false), 0); };
-    window.addEventListener('dragend', stop, true);
-    window.addEventListener('drop', stop, true);
-    return () => { window.removeEventListener('dragend', stop, true); window.removeEventListener('drop', stop, true); };
-  }, [dragging]);
-  const onDragStart = (event: React.DragEvent) => {
-    // A frame later: changing what is under the pointer as a drag starts can cancel it.
-    if (event.dataTransfer.types.includes(TAB_MIME)) requestAnimationFrame(() => setDragging(true));
-  };
+  const dragging = useTabDragging();
 
   const count = state.groups.length;
   const view = (index: number, card: boolean) => (
     <EditorGroup ctx={ctx} state={state} index={index} showsHome={homeGroup === index} card={card} dragging={dragging} />
   );
-  if (zen || count === 1) return <div className="h-full w-full" onDragStart={onDragStart}>{view(zen ? state.focused : 0, false)}</div>;
+  if (zen || count === 1) return <div className="h-full w-full">{view(zen ? state.focused : 0, false)}</div>;
   const fits = sizes && sizes.length === count ? sizes : null;
   const row = state.direction === 'row';
   return (
-    <div className="h-full w-full" onDragStart={onDragStart}>
+    <div className="h-full w-full">
       <PanelGroup key={state.direction} direction={row ? 'horizontal' : 'vertical'} onLayout={onSizes} className="flex h-full min-h-0 min-w-0">
         {state.groups.map((_, index) => (
           <Fragment key={index}>

@@ -12,6 +12,7 @@ import {
 } from '../canvas/model';
 import { CanvasHistory } from '../canvas/history';
 import { renderMarkdown } from '../canvas/markdown';
+import { useExplorer } from '../lib/explorer-state';
 import { registerSurface, type SurfaceProps } from './index';
 
 // ===========================================================================
@@ -63,7 +64,7 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
   const [styleOpen, setStyleOpen] = useState(false);
   const [addNoteOpen, setAddNoteOpen] = useState(false);
   const [addLinkOpen, setAddLinkOpen] = useState(false);
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
   const [, forceRender] = useState(0); // history canUndo/canRedo indicators
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -194,15 +195,16 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
     });
   }, [path, applyParsed]);
 
-  // Load workspace images referenced by file nodes.
-  useEffect(() => {
-    for (const n of doc.nodes) {
-      if (n.type !== 'file' || !n.file || !IMAGE_EXT.has(fileExt(n.file)) || imageUrls[n.file]) continue;
-      void window.electronAPI.views.file(n.file).then((r) => {
-        if (r.success && r.dataUrl) setImageUrls((p) => ({ ...p, [n.file as string]: r.dataUrl! }));
-      });
-    }
-  }, [doc]);
+  // Workspace images in file cards stream from disk through neuron-file://,
+  // like every other image: any size, never read whole into main's memory.
+  // A card whose image will not load says why: missing, or not readable.
+  const explorer = useExplorer();
+  const imageFailed = (file: string) => {
+    const listed = explorer && !explorer.truncated ? Object.hasOwn(explorer.fileInfo, file) : true;
+    setImageErrors((p) => ({ ...p, [file]: listed ? 'Could not load image.' : `File not found: ${file}` }));
+  };
+  // Files come and go: a new listing tries the failed images again.
+  useEffect(() => { setImageErrors((p) => (Object.keys(p).length ? {} : p)); }, [explorer?.fileInfo]);
 
   const worldFromClient = (cx: number, cy: number) => {
     const rect = containerRef.current!.getBoundingClientRect();
@@ -772,7 +774,8 @@ export function CanvasSurface({ path, content, notesData, onSelectNote }: Surfac
                     </button>
                   </div>
                   {n.file && IMAGE_EXT.has(fileExt(n.file)) ? (
-                    imageUrls[n.file] ? <img src={imageUrls[n.file]} alt={n.file} className="min-h-0 flex-1 object-contain p-1" /> : <div className="flex-1" />
+                    !imageErrors[n.file] ? <img key={n.file} src={window.electronAPI.fileUrl(n.file)} alt={n.file} draggable={false} className="min-h-0 flex-1 object-contain p-1" onError={() => imageFailed(n.file as string)} />
+                      : <div className="flex-1 overflow-auto p-2.5 text-xs text-[var(--ink-secondary)]">{imageErrors[n.file]}</div>
                   ) : (
                     <div className="min-h-0 flex-1 overflow-hidden whitespace-pre-wrap p-2.5 text-xs leading-5 text-[var(--ink-secondary)]">
                       {notesData.find((x) => x.path === n.file)?.content.slice(0, 600)

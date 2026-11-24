@@ -1,7 +1,10 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement } from 'react';
 import { AlertCircle, ArrowUpRight, Link2, FileWarning } from 'lucide-react';
 import { Badge, Callout, numericColumns, parseBadgeType, parseSemanticType } from './mdx-components';
-import { buildWikiIndex, resolveWikiLink } from '../lib/wikilinks';
+import { buildWikiIndex, parseWikiLink, resolveMarkdownLink, resolveWikiLink, type WikiIndex } from '../lib/wikilinks';
+import { LiveWikiCompletion, WikiCompletionContext, type LiveWikiCompletionHandle } from './wiki-completion';
+
+const NO_NOTES: string[] = [];
 import { Run } from './RunButton';
 import DbView from './DbView';
 import { Row, Col, Grid, Cell, Card, Stat, Divider, Flashcard, Columns } from './mdx-layout';
@@ -15,6 +18,7 @@ import { safeUrl } from '../lib/view-security';
 import MermaidDiagram from './MermaidDiagram';
 import { LiveAttr, LiveBlock, LiveCell, LiveText, type BlockDraft, type LiveEditing, type SourceRange } from './LiveEditing';
 import { replaceLines, splitLinePrefix } from '../lib/live-edit';
+import { revealInPreview, useReveal } from '../lib/reveal';
 
 // Links read as one object rather than as underlined text: an icon says where
 // it goes before you read the label, and the pill gives it an edge to click.
@@ -43,6 +47,10 @@ interface MDXPreviewProps {
   tagSuggestions?: string[];
   onTagClick?: (tag: string) => void;
   notes?: string[];
+  /** The workspace's link index, aliases included. Built from `notes` when not given. */
+  wikiIndex?: WikiIndex;
+  /** The note shown, which links resolve from: a file in its own folder wins. */
+  notePath?: string | null;
   onWikiLinkClick?: (note: string) => void;
   defaultPropertiesCollapsed?: boolean;
   /**
@@ -51,6 +59,11 @@ interface MDXPreviewProps {
    * cannot click is a picture of a checkbox.
    */
   onToggleTask?: (lineIndex: number, checked: boolean) => void;
+  /**
+   * Take "open at line" requests for `notePath` (a search hit). Off for a
+   * preview beside the source editor, which takes them instead.
+   */
+  revealLines?: boolean;
 }
 
 interface MDXParseError extends Error {
@@ -103,7 +116,7 @@ function parseTableDivider(row: string): TableAlignment[] | null {
 // 2. MDX RENDERER ENGINE WITH ERROR LEDGER
 // ==========================================
 
-export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = [], onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false, editable = false, onChangeSource, onRequestRawMode, removeEmptyFrontmatter = true }: MDXPreviewProps) {
+export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineClick, showProperties = true, tagSuggestions = [], onTagClick, notes = NO_NOTES, wikiIndex, notePath, onWikiLinkClick, onToggleTask, defaultPropertiesCollapsed = false, editable = false, onChangeSource, onRequestRawMode, removeEmptyFrontmatter = true, revealLines = true }: MDXPreviewProps) {
   const [blankLine, setBlankLine] = useState<number | null>(null);
   const [active, setActive] = useState<BlockDraft | null>(null);
   const [inserting, setInserting] = useState<{ range: SourceRange; anchor: DOMRect } | null>(null);
@@ -111,11 +124,15 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   const sourceRef = useRef(mdxContent);
   sourceRef.current = mdxContent;
   const article = useRef<HTMLElement>(null);
+  useReveal(notePath, (line) => revealInPreview(article.current, line), revealLines);
+  const liveWiki = useRef<LiveWikiCompletionHandle>(null);
   const pendingFocus = useRef<{ line: number; end: boolean } | null>(null);
   const fm = useMemo(() => parseFrontmatter(mdxContent), [mdxContent]);
   const fmLineOffset = fm.hasFrontmatter ? (mdxContent.slice(0, fm.bodyStart).match(/\n/g)?.length ?? 0) : 0;
   const lineClick = (index: number) => onLineClick?.(index + fmLineOffset);
-  const wikiNotes = useMemo(() => buildWikiIndex(notes), [notes]);
+  const ownIndex = useMemo(() => (wikiIndex ? null : buildWikiIndex(notes)), [wikiIndex, notes]);
+  const wikiNotes = wikiIndex ?? ownIndex!;
+  const completion = useMemo(() => ({ index: wikiNotes, from: notePath ?? null }), [wikiNotes, notePath]);
   const updateActive = (next: BlockDraft | null) => { activeRef.current = next; setActive(next); };
   const changeSource = (next: string) => {
     if (next === sourceRef.current) return;
@@ -249,7 +266,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         nodes.push(block(lang.toLowerCase() === 'mermaid' ? (
           <div
             key={`mermaid-${i}`}
-            onClick={() => lineClick(startLine)}
+            onClick={() => lineClick(startLine)} data-source-line={startLine + fmLineOffset}
             className="work-surface my-5 min-h-32 overflow-auto rounded-md border cursor-pointer hover:border-[var(--ink-muted)] transition-colors duration-150"
           >
             <MermaidDiagram source={codeText} colorScheme={colorScheme} />
@@ -257,7 +274,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         ) : (
           <pre
             key={`code-${i}`}
-            onClick={() => lineClick(startLine)}
+            onClick={() => lineClick(startLine)} data-source-line={startLine + fmLineOffset}
             className="work-surface my-5 cursor-pointer overflow-x-auto rounded-md border p-4 font-mono text-sm text-[var(--md-text)] transition-colors duration-150 hover:border-[var(--ink-muted)]"
           >
             {lang && <div className="mb-2 text-[10px] font-medium text-muted">{lang}</div>}
@@ -285,7 +302,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         nodes.push(block(
           <div
             key={`table-${i}`}
-            onClick={() => lineClick(startLine)}
+            onClick={() => lineClick(startLine)} data-source-line={startLine + fmLineOffset}
             // Hovering a block to jump to its source is not selection, focus or
             // a primary action, so it does not get the accent. It lights the
             // frame one step, the way every other row in the app does.
@@ -342,6 +359,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         if (selfClose) {
           const component = <div
             key={`jsx-${i}`}
+            data-source-line={startLine + fmLineOffset}
             onClick={(e) => { if (!(e.target as HTMLElement).closest('button')) lineClick(startLine); }}
             className="cursor-pointer hover:bg-[rgba(255,255,255,0.01)] rounded transition-colors duration-150"
           >
@@ -392,6 +410,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         nodes.push(block(
           <div
             key={`jsx-${startLine}`}
+            data-source-line={startLine + fmLineOffset}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest('button')) return;
               lineClick(startLine);
@@ -605,7 +624,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         <h1
           data-live-text={canEdit || undefined}
           key={index}
-          onClick={() => lineClick(index)}
+          onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
           // No rule under the heading. Size and weight already separate an h1
           // from the paragraph below it; the border added a second, louder
           // signal saying the same thing, and every document opened with a line
@@ -621,7 +640,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         <h2
           data-live-text={canEdit || undefined}
           key={index}
-          onClick={() => lineClick(index)}
+          onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
           className="mt-6 mb-2 font-sans text-xl font-semibold text-[var(--md-heading)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
         >
           {text.slice(3)}
@@ -633,7 +652,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         <h3
           data-live-text={canEdit || undefined}
           key={index}
-          onClick={() => lineClick(index)}
+          onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
           className="mt-5 mb-2 font-sans text-base font-semibold text-[var(--md-heading)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
         >
           {text.slice(4)}
@@ -650,7 +669,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         return (
           <ul
             key={index}
-            onClick={() => lineClick(index)}
+            onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
             className="my-2 list-none font-sans text-sm leading-6 text-[var(--md-text)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
           >
             <li className="flex items-start gap-2">
@@ -671,7 +690,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       return (
         <ul
           key={index}
-          onClick={() => lineClick(index)}
+          onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
           className="my-2 list-disc space-y-1 pl-6 font-sans text-sm leading-6 text-[var(--md-text)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
         >
           <li data-live-text={canEdit || undefined}>{parseInlineFormatting(item)}</li>
@@ -685,7 +704,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
         <blockquote
           data-live-text={canEdit || undefined}
           key={index}
-          onClick={() => lineClick(index)}
+          onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
             className="my-4 font-sans text-[var(--md-quote)] cursor-pointer"
         >
           {parseInlineFormatting(text.slice(2))}
@@ -699,7 +718,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       return (
         <div
           key={index}
-          onClick={() => lineClick(index)}
+          onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
           className="my-2 flex items-start gap-2 font-sans text-sm leading-6 text-[var(--md-text)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
         >
           <input
@@ -723,7 +742,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       <p
         data-live-text={(canEdit && !literalPrefix) || undefined}
         key={index}
-        onClick={() => lineClick(index)}
+        onClick={() => lineClick(index)} data-source-line={index + fmLineOffset}
         className="my-2 font-sans text-sm leading-7 text-[var(--md-text)] cursor-pointer hover:bg-[rgba(255,255,255,0.015)] rounded px-1 -mx-1 transition-colors duration-150"
       >
         {literalPrefix ? <>{literalPrefix}<span data-live-text>{parseInlineFormatting(text.slice(literalPrefix.length))}</span></> : parseInlineFormatting(text)}
@@ -754,8 +773,10 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
       } else if (item.startsWith('`') && item.endsWith('`')) {
         parts.push(<code {...atomic} key={key++} className="rounded border border-[var(--divider)] bg-[var(--md-code-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--md-code)]">{item.slice(1, -1)}</code>);
       } else if (item.startsWith('[[') && item.endsWith(']]')) {
-        const linkTarget = item.slice(2, -2);
-        const resolved = resolveWikiLink(wikiNotes, linkTarget);
+        const wiki = parseWikiLink(item.slice(2, -2));
+        // `|label` is what the reader sees; without one, the target and heading as written.
+        const linkTarget = wiki.label?.trim() || wiki.target + wiki.heading;
+        const resolved = resolveWikiLink(wikiNotes, wiki.target, notePath);
         parts.push(
           resolved ? (
             <button
@@ -778,7 +799,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             <span
               {...atomic}
               key={key++}
-              title={`No note found for "${linkTarget}"`}
+              title={`No note found for "${wiki.target}"`}
               className={BROKEN_PILL}
             >
               <FileWarning className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
@@ -816,7 +837,7 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
             </a> : <span {...atomic} key={key++} title={href}>{label}</span>,
           );
         } else {
-          const resolved = resolveWikiLink(wikiNotes, href.replace(/\.(md|mdx)$/i, ''));
+          const resolved = resolveMarkdownLink(wikiNotes, href.split('#')[0], notePath ?? null);
           parts.push(
             resolved ? (
               <button
@@ -866,7 +887,9 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
   return (
     // The flag goes on the scroll container rather than on each block inside
     // it, so the properties panel and the article widen together and a future
-    // block cannot forget to opt in.
+    // block cannot forget to opt in. The provider gives a block's source editor
+    // its `[[` autocomplete.
+    <WikiCompletionContext.Provider value={completion}>
     <div
       className="canvas-surface h-full w-full overflow-y-auto p-7 font-sans select-text"
       data-live-preview={editable || undefined}
@@ -903,12 +926,21 @@ export default function MDXPreview({ mdxContent, colorScheme = 'dark', onLineCli
           </div>
         </div>
       ) : (
-        <article ref={article} className="preview-prose mx-auto space-y-3 text-[var(--md-text)]">
+        <article ref={article} className="preview-prose mx-auto space-y-3 text-[var(--md-text)]"
+          // `[[` typed in place offers notes, as the source editors do. Capture,
+          // so an Enter that picks a note is not also the line's own Enter.
+          {...(editable ? {
+            onInput: () => liveWiki.current?.update(),
+            onKeyDownCapture: (event: React.KeyboardEvent) => { if (!event.nativeEvent.isComposing) liveWiki.current?.keyDown(event); },
+            onBlur: () => liveWiki.current?.close(),
+          } : {})}>
           {renderedContent.length > 0 ? renderedContent : (
             <div className="py-16 text-center font-mono text-sm text-muted">Nothing to preview yet.</div>
           )}
         </article>
       )}
+      {editable && <LiveWikiCompletion ref={liveWiki} value={completion} />}
     </div>
+    </WikiCompletionContext.Provider>
   );
 }

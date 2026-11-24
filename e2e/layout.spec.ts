@@ -12,10 +12,16 @@ async function openTerminal(app: ElectronApplication, page: Page) {
 async function dragToRight(page: Page, source: Locator) {
   const box = await source.boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  const cx = box!.x + box!.width / 2;
+  const cy = box!.y + box!.height / 2;
+  // Start the drag towards the middle of the window: a tab in the bottom dock
+  // sits near the window's edge, and on Linux (X11) a pointer that leaves the
+  // window stops sending moves, so the drag never starts.
+  const [vw, vh] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+  await page.mouse.move(cx, cy);
   await page.mouse.down();
   try {
-    await page.mouse.move(box!.x + box!.width / 2 + 15, box!.y + box!.height / 2 + 15, { steps: 5 });
+    await page.mouse.move(cx + (cx < vw / 2 ? 15 : -15), cy + (cy < vh / 2 ? 15 : -15), { steps: 5 });
     const zone = page.locator('[data-dock-zone="right"]');
     await expect(zone).toHaveAttribute('data-visible', 'true');
     // The right-hand band of the workbench is the right dock's target. The slot
@@ -66,6 +72,153 @@ test('Panel options moves Terminal using the keyboard', async ({ app, page }) =>
   await expect(page.getByRole('menuitem', { name: 'Move to right dock', exact: true })).toBeFocused();
   await page.keyboard.press('Enter');
   await expectTerminalOnRight(page);
+});
+
+/**
+ * Press on a panel tab and move until the workbench reports a panel drag.
+ *
+ * Playwright drives an HTML drag by watching each mouse move for a dragstart
+ * and taking the drag over from the browser. On the Linux runner that start
+ * was missed now and then: the third drag of the test below never showed its
+ * dock slots, in three runs out of four, while the same code passed in the
+ * fourth and every drag from the same bottom dock passed in the Terminal test.
+ * A press that started nothing is released and made again, from a fresh
+ * measurement; each miss is logged with what was under the pointer and which
+ * drag events the page saw, so a run that still fails says why.
+ */
+async function startPanelDrag(page: Page, source: Locator, zone: Locator) {
+  for (let attempt = 1; ; attempt++) {
+    await expect(source).toBeVisible();
+    // Let the panel settle where the last move put it (it animates, and takes focus).
+    await page.waitForTimeout(400);
+    const box = await source.boundingBox();
+    expect(box).not.toBeNull();
+    const cx = box!.x + box!.width / 2;
+    const cy = box!.y + box!.height / 2;
+    // Move towards the middle of the window, away from its edges.
+    const [vw, vh] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { __dragSeen: string[] }).__dragSeen = seen;
+      for (const type of ['pointerdown', 'dragstart', 'dragend', 'drop', 'blur']) {
+        window.addEventListener(type, (event) => { if (event.target === window || type !== 'blur') seen.push(type); }, { capture: true });
+      }
+    });
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    try {
+      await page.mouse.move(cx + (cx < vw / 2 ? 15 : -15), cy + (cy < vh / 2 ? 15 : -15), { steps: 5 });
+      await expect(zone).toHaveAttribute('data-visible', 'true', { timeout: attempt < 3 ? 3_000 : 10_000 });
+      return;
+    } catch (error) {
+      const seen = await page.evaluate(([x, y]) => ({
+        under: document.elementsFromPoint(x, y).slice(0, 3).map((e) => [
+          e.tagName.toLowerCase(),
+          e.getAttribute('aria-label') && `[${e.getAttribute('aria-label')}]`,
+          e.getAttribute('data-panel-key') && `{${e.getAttribute('data-panel-key')}}`,
+          e.getAttribute('class') && `.${e.getAttribute('class')!.split(/\s+/).slice(0, 3).join('.')}`,
+        ].filter(Boolean).join('')),
+        events: (window as unknown as { __dragSeen: string[] }).__dragSeen,
+      }), [cx, cy]);
+      console.warn(`[layout] panel drag ${attempt} did not start at (${Math.round(cx)}, ${Math.round(cy)}): ${JSON.stringify(seen)}`);
+      await page.mouse.up();
+      if (attempt === 3) throw error;
+    }
+  }
+}
+
+/** Drag a panel tab to the band of `dock` at the workbench's edge, and drop it there. */
+async function dragToDock(page: Page, source: Locator, dock: 'left' | 'right' | 'bottom') {
+  const zone = page.locator(`[data-dock-zone="${dock}"]`);
+  await startPanelDrag(page, source, zone);
+  try {
+    const area = await page.locator('[data-dragging]').boundingBox();
+    expect(area).not.toBeNull();
+    const x = area!.x + area!.width * (dock === 'left' ? 0.1 : dock === 'right' ? 0.9 : 0.5);
+    const y = area!.y + area!.height * (dock === 'bottom' ? 0.92 : 0.4);
+    await page.mouse.move(x, y, { steps: 10 });
+    await page.mouse.move(x + 6, y + (dock === 'bottom' ? 2 : 24), { steps: 4 });
+    await expect(zone).toHaveAttribute('data-hover', 'true');
+    await page.waitForTimeout(350);
+    await page.mouse.move(x + 10, y + (dock === 'bottom' ? 4 : 30), { steps: 3 });
+  } finally {
+    await page.mouse.up();
+  }
+}
+
+/** Where the app has stored a panel, by its tab's key. */
+function storedDock(page: Page, key: string) {
+  return page.evaluate(async (panel) => {
+    const api = (window as unknown as { electronAPI: any }).electronAPI;
+    const layout = await api.settings.get('layout');
+    return layout?.panels?.[panel] ? { dock: layout.panels[panel].dock, group: layout.panels[panel].group } : null;
+  }, key);
+}
+
+test('a panel dragged to each dock edge lands in that dock, and dropped on another group\'s tabs joins it', async ({ page }) => {
+  await page.getByRole('button', { name: 'Show panel', exact: true }).click();
+  const history = (dock: string) => page.locator(`[data-dock-group^="${dock}:"]`).getByRole('button', { name: 'Version history', exact: true });
+  await expect(history('right')).toBeVisible();
+  const key = (await history('right').getAttribute('data-panel-key'))!;
+
+  for (const [from, to] of [['right', 'left'], ['left', 'bottom'], ['bottom', 'right']] as const) {
+    await dragToDock(page, history(from), to);
+    await expect(history(to)).toBeVisible();
+    await expect(history(from)).toHaveCount(0);
+    await expect.poll(() => storedDock(page, key)).toEqual({ dock: to, group: 0 });
+  }
+
+  // Split into a group of its own, then drag it back onto the first group's tab strip.
+  await history('right').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Split into its own group', exact: true }).click();
+  await expect(page.locator('[data-dock-group^="right:"]')).toHaveCount(2);
+  await expect(page.locator('[data-dock-group="right:1"]').getByRole('button', { name: 'Version history', exact: true })).toBeVisible();
+  const source = page.locator('[data-dock-group="right:1"]').getByRole('button', { name: 'Version history', exact: true });
+  const strip = page.locator('[data-dock-group="right:0"]').getByLabel('Panel tabs');
+  const from = (await source.boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(from.x + from.width / 2 + 15, from.y + from.height / 2 + 15, { steps: 5 });
+    const to = (await strip.boundingBox())!;
+    const x = to.x + to.width - 30;
+    const y = to.y + to.height / 2;
+    await page.mouse.move(x, y, { steps: 10 });
+    await page.mouse.move(x + 4, y, { steps: 3 });
+  } finally {
+    await page.mouse.up();
+  }
+  await expect(page.locator('[data-dock-group^="right:"]')).toHaveCount(1);
+  await expect(page.locator('[data-dock-group="right:0"]').getByRole('button', { name: 'Graph', exact: true })).toBeVisible();
+  await expect(page.locator('[data-dock-group="right:0"]').getByRole('button', { name: 'Version history', exact: true })).toBeVisible();
+  await expect.poll(() => storedDock(page, key)).toEqual({ dock: 'right', group: 0 });
+});
+
+test('the floating graph docks when its grip is dragged to the edge of the workbench', async ({ page }) => {
+  await page.getByRole('button', { name: 'Show graph', exact: true }).click();
+  const floating = page.getByRole('complementary', { name: 'Workspace graph' });
+  await expect(floating).toBeVisible();
+  const grip = floating.getByRole('button', { name: 'Move graph', exact: true });
+  const box = (await grip.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(box.x - 40, box.y + 20, { steps: 5 });
+    // The graph reports its pointer to the workbench, which shows the dock slot under it.
+    const area = (await page.locator('[data-dragging="float"]').boundingBox())!;
+    const zone = page.locator('[data-dock-zone="bottom"]');
+    await page.mouse.move(area.x + area.width / 2, area.y + area.height - 10, { steps: 10 });
+    await expect(zone).toHaveAttribute('data-hover', 'true');
+  } finally {
+    await page.mouse.up();
+  }
+  await expect(floating).toHaveCount(0);
+  const docked = page.locator('[data-dock-group^="bottom:"]').getByRole('button', { name: 'Graph', exact: true });
+  await expect(docked).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(async () => {
+    const layout = await (window as unknown as { electronAPI: any }).electronAPI.settings.get('layout');
+    return { dock: layout?.panels?.['graph:graph.panel']?.dock, open: layout?.bottomPanel, overlay: layout?.graphOverlay };
+  })).toEqual({ dock: 'bottom', open: true, overlay: false });
 });
 
 test('dragging the sidebar to the right puts it after the editor', async ({ page }) => {

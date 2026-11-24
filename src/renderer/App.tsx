@@ -10,13 +10,18 @@ import RepositoryOnboarding from './components/RepositoryOnboarding';
 import { nextUntitled } from './lib/untitled';
 import { NEW_FILE_KINDS, startingCompanions, startingContent } from './lib/new-file';
 import { isCsvPath, tableMetaPath } from './lib/csv-table';
+import { requestReveal } from './lib/reveal';
 import {
   canSplit, closeGroup, closeInGroup, dropPreviews, EMPTY_GROUPS, focusGroup, keepEverywhere, keepTab, mapGroup, moveTab, openInGroup,
-  removeMissingAll, restoreGroups, serializeGroups, splitGroup, type GroupsState, type SplitDirection,
+  removeMissingAll, renameInGroups, restoreGroups, serializeGroups, splitGroup, type GroupsState, type SplitDirection,
 } from './lib/tabs';
+import { aliasesOf, buildWikiIndex, linkName } from './lib/wikilinks';
+import { linkNotice, movedPath, planLinkRewrites, type LinkRewritePlan } from './lib/link-rewrite';
+import FileActionDialog, { type FileAction } from './components/FileActionDialog';
 import { noteTags } from './lib/note-tags';
 import CommandPalette from './components/CommandPalette';
-import EditorGroups, { EditorGroupHeader, type GroupContext, type SaveState } from './components/EditorGroup';
+import ChromeImportDialog from './components/ChromeImportDialog';
+import EditorGroups, { EditorGroupHeader, ShellSplitZones, type GroupContext, type SaveState } from './components/EditorGroup';
 import SettingsWindow from './views/SettingsWindow';
 import WorkspaceSettingsDialog, { type WorkspaceSettingsSection } from './views/WorkspaceSettingsDialog';
 import type { SettingsSection } from '../main/workspace-windows';
@@ -24,12 +29,14 @@ import ComponentGallery from './views/ComponentGallery';
 import { TooltipProvider } from './components/ui/tooltip';
 import { PluginProvider, usePlugins } from './plugins/host';
 import { builtinPlugins } from './plugins/builtin';
-import { getKindSurface, getSurface } from './surfaces';
+import { getKindSurface, getSurface, type SaveResult } from './surfaces';
 import LayoutSurface from './surfaces/LayoutSurface';
 import './surfaces/ImageSurface'; // registers the image surface
 import './surfaces/MediaSurface'; // registers the video and audio surface
 import './surfaces/TextSurface'; // registers the plain text surface
-import { fileKind, MEDIA_KINDS, OPENS_AS_FILE, type FileKind } from '../main/file-kinds';
+import { fileKind, isListedFile, MEDIA_KINDS, OPENS_AS_FILE, type FileKind } from '../main/file-kinds';
+import { TOO_LARGE_TO_OPEN, tooLargeToOpen } from '../main/file-limits';
+import { decideExternalChange, sendSave } from './lib/external-change';
 import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
@@ -38,7 +45,7 @@ import './surfaces/CsvSurface'; // registers the .csv table surface
 import { type EditMode } from './surfaces/panels';
 import { DEFAULT_BINDINGS, eventToChord, resolveBindings, type Bindings } from './lib/keybindings';
 import { DEFAULT_LAYOUT, resolveLayout, resolveSavedLayouts, sameLayout, SEED_LAYOUTS, workspacePanelsPatch, type SavedLayout, type WorkbenchLayout } from './lib/layout';
-import { hasLayoutTree, parseWorkspacePanels, sameJson } from './surfaces/layout';
+import { hasLayoutTree, parseWorkspacePanels, readableLayout, sameJson } from './surfaces/layout';
 import LayoutSwitcher from './components/LayoutSwitcher';
 import WorkspaceExplorer from './views/WorkspaceExplorer';
 import { ExplorerProvider } from './lib/explorer-state';
@@ -50,9 +57,10 @@ import { useTerminalToggle } from './lib/useTerminalToggle';
 import { type SidebarMode } from './components/ActivityRail';
 
 /** Hands the terminal toggle to the global shortcut handler. Renders nothing. */
-function TerminalShortcut({ toggleRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
-  const { toggle } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
+function TerminalShortcut({ toggleRef, showRef, layout, onLayoutChange, onOpenPlugins }: { toggleRef: { current: (() => void) | null }; showRef: { current: (() => boolean) | null }; layout: WorkbenchLayout; onLayoutChange: (patch: Partial<WorkbenchLayout>) => void; onOpenPlugins: () => void }) {
+  const { toggle, show } = useTerminalToggle(layout, onLayoutChange, onOpenPlugins);
   toggleRef.current = toggle;
+  showRef.current = show;
   return null;
 }
 
@@ -91,7 +99,7 @@ const kindIn = (path: string, text: ReadonlySet<string>): FileKind => {
 /** A file outside the note listing that opens in a surface of its own (image, video, audio, text). */
 const opensAsFile = (path: string, text: ReadonlySet<string>) => OPENS_AS_FILE.includes(kindIn(path, text));
 const isMediaPath = (path: string) => MEDIA_KINDS.includes(fileKind(path));
-import type { RepositoryInfo, WorkspaceEntries } from './electron.d';
+import type { RecentWorkspace, RepositoryInfo, WorkspaceEntries } from './electron.d';
 import { applyTheme, DEFAULT_APPEARANCE, normalizeAppearance, PRESETS, type Appearance } from './lib/theme';
 
 interface NoteData { path: string; content: string }
@@ -149,7 +157,7 @@ const NEURON_CONFIG_TEMPLATE = `{
 
 export default function App() {
   const [repository, setRepository] = useState<RepositoryInfo | null>(null);
-  const [recents, setRecents] = useState<RepositoryInfo[]>([]);
+  const [recents, setRecents] = useState<RecentWorkspace[]>([]);
   const [repoReady, setRepoReady] = useState(false);
 
   const [notes, setNotes] = useState<string[]>([]);
@@ -162,11 +170,24 @@ export default function App() {
   // The content of every file a group shows, keyed by path: one copy however
   // many groups show it, and one save state.
   const [docs, setDocs] = useState<Record<string, string>>({});
+  const docsRef = useRef(docs);
+  docsRef.current = docs;
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
   // The groups' sizes as last laid out. Not state: resizing reports every frame.
   const groupSizes = useRef<number[] | null>(null);
   const noteContent = selectedNote ? docs[selectedNote] ?? '' : '';
   const [notesData, setNotesData] = useState<NoteData[]>([]);
+  // Read by the rename and create paths, which plan link rewrites from the
+  // workspace as it is at that moment.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const notesDataRef = useRef(notesData);
+  notesDataRef.current = notesData;
+  // Paths this window just renamed away, and when: the watcher's report that
+  // they went away is our own rename, not a file deleted outside.
+  const movedAway = useRef(new Map<string, number>());
+  // Every file and every alias, for resolving links and `[[` autocomplete.
+  const wikiIndex = useMemo(() => buildWikiIndex(notes, aliasesOf(notesData)), [notes, notesData]);
   const [entries, setEntries] = useState<WorkspaceEntries | null>(null);
   const [view, setView] = useState<View>('notes');
   const [editorModes, setEditorModes] = useState<Record<string, EditorMode>>({});
@@ -174,6 +195,10 @@ export default function App() {
   const [tags, setTags] = useState<string[]>([]);
   const saveState: SaveState = selectedNote && !isUrl(selectedNote) ? saveStates[selectedNote] ?? 'idle' : 'idle';
   const [notice, setNotice] = useState<string | null>(null);
+  // A notice that reports what Neuron did rather than what went wrong.
+  const [info, setInfo] = useState<string | null>(null);
+  const [fileAction, setFileAction] = useState<FileAction | null>(null);
+  const [chromeImportOpen, setChromeImportOpen] = useState(false);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [appearanceReady, setAppearanceReady] = useState(false);
 
@@ -208,7 +233,11 @@ export default function App() {
   const commitLayout = useCallback((next: WorkbenchLayout) => {
     layoutRef.current = next;
     setLayout(next);
-    void window.electronAPI?.settings.set('layout', next);
+    // Zen is never stored, nor the chrome it hid: what is stored during zen is
+    // what leaving it restores, so a relaunch starts as zen found the window.
+    void window.electronAPI?.settings.set('layout', next.zen && zenPrevRef.current ? { ...zenPrevRef.current, zen: false } : next).then((result) => {
+      if (!result.success) setNotice(`The layout could not be saved, so the next launch will not restore it. ${result.error ?? ''}`.trim());
+    });
   }, []);
 
   const patchLayout = useCallback((patch: Partial<WorkbenchLayout>) => {
@@ -278,10 +307,20 @@ export default function App() {
       setActiveLayoutId(typeof active === 'string' && list.some((l) => l.id === active) ? active : null);
     });
   }, []);
+  const layoutsVersion = useRef(0);
   const storeLayouts = (list: SavedLayout[], active: string | null) => {
+    const before = { list: savedLayouts, active: activeLayoutId };
+    const version = ++layoutsVersion.current;
     setSavedLayouts(list); setActiveLayoutId(active);
-    void window.electronAPI?.settings.set('savedLayouts', list);
-    void window.electronAPI?.settings.set('activeLayoutId', active);
+    const api = window.electronAPI;
+    if (!api) return;
+    void Promise.all([api.settings.set('savedLayouts', list), api.settings.set('activeLayoutId', active)]).then((results) => {
+      const failed = results.find((result) => !result.success);
+      if (!failed) return;
+      // Not saved: the switcher goes back to what is, rather than list a layout that is not.
+      if (version === layoutsVersion.current) { setSavedLayouts(before.list); setActiveLayoutId(before.active); }
+      setNotice(`The layout could not be saved. ${failed.error ?? ''}`.trim());
+    });
   };
   const snapshotLayout = (): WorkbenchLayout => ({ ...layoutRef.current, zen: false });
   const applySavedLayout = (id: string) => {
@@ -317,7 +356,12 @@ export default function App() {
   // A <Run /> button in a note reveals the terminal it is about to write to.
   // Running a command into a panel the user cannot see would hide the one part
   // of this that makes it reviewable.
+  // Its tab is selected too: opening the dock alone left another tab (such as
+  // Automations) on screen, the terminal unmounted, and the command queued.
+  // Filled by <TerminalShortcut />, which can see the plugin panels.
+  const showTerminalRef = useRef<(() => boolean) | null>(null);
   useEffect(() => registerTerminalOpener(() => {
+    if (showTerminalRef.current?.()) return;
     const dock = layoutRef.current.panels['terminal:terminal.panel']?.dock ?? 'bottom';
     patchLayout({ [`${dock}Panel`]: true });
   }), [patchLayout]);
@@ -355,6 +399,42 @@ export default function App() {
   // not answer by putting the disk copy back over the user's typing.
   const saveVersions = useRef(new Map<string, number>());
   const savingDocs = useRef(new Set<string>());
+  // Per file, what the watcher may report back without anyone else having
+  // touched the file: the text of each save still in flight, and the last
+  // version known to be on disk (read, adopted or saved). And the files whose
+  // last save failed, so their edit is not on disk either.
+  const inFlight = useRef(new Map<string, string[]>());
+  const onDisk = useRef(new Map<string, string>());
+  const failedSaves = useRef(new Set<string>());
+  // Files that changed outside Neuron while an edit made here was not on disk.
+  // Nothing is written for them until the user picks a version.
+  const [conflicts, setConflicts] = useState<Record<string, true>>({});
+  const conflictsRef = useRef(conflicts);
+  const setConflict = useCallback((path: string, open: boolean) => {
+    const next = { ...conflictsRef.current };
+    if (open) next[path] = true; else delete next[path];
+    conflictsRef.current = next;
+    setConflicts(next);
+  }, []);
+  /**
+   * An open file follows its file on disk, in every group showing it -- notes
+   * and text files alike. It used to keep showing what it was opened with, so
+   * an edit from a sync client, git or another editor stayed invisible, and the
+   * next keystroke here wrote over it. With an edit here not yet on disk, our
+   * own saves echoing back are ignored and anything else asks the user (see
+   * decideExternalChange).
+   */
+  const followDisk = useCallback((path: string, content: string) => {
+    if (!(path in docsRef.current)) return;
+    const pending = savingDocs.current.has(path) || failedSaves.current.has(path) || !!conflictsRef.current[path];
+    const ours = [docsRef.current[path], onDisk.current.get(path), ...(inFlight.current.get(path) ?? [])];
+    const decision = decideExternalChange({ disk: content, pending, ours });
+    if (decision === 'ask') { if (!conflictsRef.current[path]) setConflict(path, true); return; }
+    onDisk.current.set(path, content);
+    if (decision === 'ignore') return;
+    // Checked again as it applies: a keystroke may have started a save since.
+    setDocs(current => !(path in current) || current[path] === content || savingDocs.current.has(path) || conflictsRef.current[path] ? current : { ...current, [path]: content });
+  }, [setConflict]);
   const browserCounter = useRef(0);
 
   // --- Appearance -----------------------------------------------------------
@@ -382,7 +462,8 @@ export default function App() {
     // would echo back and could overwrite a newer choice made over there.
     if (remoteAppearance.current === JSON.stringify(appearance)) return;
     void window.electronAPI.settings.set('appearance', appearance).then((result) => {
-      if (!result.success) setNotice('Appearance settings could not be saved.');
+      // Shown in this window, not saved: say so rather than let it look kept.
+      if (!result.success) setNotice(`Appearance settings could not be saved, so other windows and the next launch will not use them. ${result.error ?? ''}`.trim());
     });
   }, [appearance, appearanceReady]);
 
@@ -414,10 +495,25 @@ export default function App() {
   const openRepository = useCallback(async () => {
     if (await window.electronAPI?.repository.open()) void reloadRepoState();
   }, [reloadRepoState]);
+  // Every way of opening a workspace by path ends here: the welcome page, the
+  // switcher, the palette and Settings › Workspaces. A folder that is gone says
+  // so, and the list is asked again so it shows the folder as missing.
   const switchRepository = useCallback(async (dir: string) => {
-    const result = await window.electronAPI?.repository.switch(dir);
-    if (result?.success) void reloadRepoState();
+    if (!window.electronAPI) return;
+    let result: { success: boolean; error?: string };
+    try { result = await window.electronAPI.repository.switch(dir); }
+    catch { result = { success: false }; }
+    if (!result.success) setNotice(result.error || 'Could not open that workspace.');
+    void reloadRepoState();
   }, [reloadRepoState]);
+  // A folder can come back (a drive plugged in) or go away while the window is
+  // in the background; coming back to it asks for the list again.
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const refresh = () => { void window.electronAPI.repository.listRecent().then(setRecents).catch(() => {}); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
 
   // --- Notes ----------------------------------------------------------------
   // Every file and folder, for the tree and the explorer. A failed listing
@@ -441,12 +537,15 @@ export default function App() {
       // it so it can be opened; `notesData` -- what the graph, tags, search and
       // link index are all built from -- does not. Nor does a CSV: it is data,
       // not a note, and can be far larger than anything worth holding here.
+      // Nor a note over 25 MB: it is listed, but main will not read it, so it
+      // has no links, tags or search. The listing's size spares asking; when
+      // the listing has none, main's answer says so.
       const data = await Promise.all(
         fileList
-          .filter((path) => !path.startsWith('.neuron/') && !isCsvPath(path))
+          .filter((path) => !path.startsWith('.neuron/') && !isCsvPath(path) && !tooLargeToOpen(listing?.info[path]?.size))
           .map(async (path) => ({ path, content: await window.electronAPI.readNote(path) })),
       );
-      setNotesData(data);
+      setNotesData(data.filter((note) => note.content !== TOO_LARGE_TO_OPEN));
 
     } catch {
       setNotice('Could not load the workspace.');
@@ -477,6 +576,12 @@ export default function App() {
     window.addEventListener('focus', refresh);
     return () => { cancelled = true; clearTimeout(timer); unsubscribe(); window.removeEventListener('focus', refresh); };
   }, [repository, loadEntries]);
+
+  // Main sends this once per workspace in this window, when the watcher stops
+  // for want of folder watches (Linux) or file handles.
+  useEffect(() => window.electronAPI?.onWatchLimit?.(() => setNotice(
+    'Neuron can\'t watch every folder in this workspace, so changes made outside Neuron may not appear until you reopen the file. On Linux, raise fs.inotify.max_user_watches.',
+  )), []);
 
   // A preview belongs to the workspace it was opened in. Keyed on the path,
   // because the same workspace re-reported is a new object.
@@ -565,24 +670,34 @@ export default function App() {
         setNotes(current => current.filter(n => !removed(n)));
         setCreatedFolders(current => current.filter(path => !removed(path)));
         setNotesData(current => current.filter(n => !removed(n.path)));
-        setEditor(current => removeMissingAll(current, n => !removed(n)));
+        // Our own rename: its tabs have already followed it, and one still on
+        // the old path is mid-move, not deleted.
+        const ours = [...movedAway.current].some(([from, at]) => Date.now() - at < 10_000 && (path === from || path.startsWith(from + '/')));
+        if (!ours) setEditor(current => removeMissingAll(current, n => !removed(n)));
       } else {
+        // A text file (JSON, YAML, ...) is not a note: it never joins the notes
+        // or what the graph and search read, and it is read only when open.
+        const listed = isListedFile(path);
+        if (!listed && !(path in docsRef.current)) return;
         void window.electronAPI.readNote(path).then(content => {
-          if (cancelled || versions.get(path) !== version || content.startsWith('Error:')) return;
-          setNotes(current => current.includes(path) ? current : [...current, path].sort());
-          if (!path.startsWith('.neuron/') && !isCsvPath(path)) setNotesData(current => {
-            const existing = current.find(n => n.path === path);
-            if (existing?.content === content) return current;
-            return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
-          });
-          // An open file follows its file, in every group showing it. It used to
-          // keep showing what it was opened with, so an edit from a sync client,
-          // git or another editor stayed invisible -- and the next keystroke here
-          // wrote over it. Our own saves come back through the watcher too, so
-          // wait while one is in flight: adopting the disk copy then could undo
-          // the user's last few characters. When that write lands, the disk is
-          // what they typed.
-          setDocs(current => !(path in current) || current[path] === content || savingDocs.current.has(path) ? current : { ...current, [path]: content });
+          if (cancelled || versions.get(path) !== version) return;
+          if (content === TOO_LARGE_TO_OPEN) {
+            // Past 25 MB: listed, never read.
+            if (listed) setNotes(current => current.includes(path) ? current : [...current, path].sort());
+            setNotesData(current => current.some(n => n.path === path) ? current.filter(n => n.path !== path) : current);
+            setDocs(current => path in current && current[path] !== content ? { ...current, [path]: content } : current);
+            return;
+          }
+          if (content.startsWith('Error:')) return;
+          if (listed) {
+            setNotes(current => current.includes(path) ? current : [...current, path].sort());
+            if (!path.startsWith('.neuron/') && !isCsvPath(path)) setNotesData(current => {
+              const existing = current.find(n => n.path === path);
+              if (existing?.content === content) return current;
+              return existing ? current.map(n => n.path === path ? { path, content } : n) : [...current, { path, content }];
+            });
+          }
+          followDisk(path, content);
         }).catch(() => { if (!cancelled) setNotice('Could not update the changed note.'); });
       }
       if (path !== SHELL_CONFIG) return;
@@ -604,14 +719,12 @@ export default function App() {
       }, 250);
     });
     return () => { cancelled = true; clearTimeout(shellConfigTimer); unsubscribe(); };
-  }, [repository, adoptShellConfig, offerShellConfig]);
+  }, [repository, adoptShellConfig, offerShellConfig, followDisk]);
 
   // Read each file a group shows, once however many show it, and forget the
   // ones no group shows any more. Keyed on the list, not the groups, so moving
   // tabs about reads nothing.
   const shownKey = [...new Set(editor.groups.map((group) => group.selected).filter((path): path is string => !!path && !isUrl(path)))].sort().join('\n');
-  const docsRef = useRef(docs);
-  docsRef.current = docs;
   useEffect(() => {
     const shown = shownKey ? shownKey.split('\n') : [];
     const keep = <T,>(current: Record<string, T>) => {
@@ -620,10 +733,15 @@ export default function App() {
     };
     setDocs(keep);
     setSaveStates(keep);
+    // A file no group shows has no edit pending here any more.
+    for (const path of Object.keys(conflictsRef.current)) if (!shown.includes(path)) setConflict(path, false);
+    for (const path of failedSaves.current) if (!shown.includes(path)) failedSaves.current.delete(path);
+    for (const path of onDisk.current.keys()) if (!shown.includes(path)) onDisk.current.delete(path);
     let cancelled = false;
     for (const path of shown) {
       if (path in docsRef.current) continue;
       const adopt = (content: string) => {
+        if (!onDisk.current.has(path)) onDisk.current.set(path, content);
         setDocs((current) => (path in current ? current : { ...current, [path]: content }));
         setSaveStates((current) => ({ ...current, [path]: 'saved' }));
       };
@@ -738,11 +856,45 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * Write the notes whose links a change rewrote, in one call that journals
+   * each on its own, and say how many. Open copies take the new text first, so
+   * the next keystroke in one does not save the old link back.
+   */
+  const applyLinkPlan = useCallback(async (plan: LinkRewritePlan, target: string) => {
+    if (!plan.edits.length || !window.electronAPI) return;
+    const changed = new Map(plan.edits.map((edit) => [edit.path, edit.content]));
+    for (const [path, content] of changed) {
+      onDisk.current.set(path, content);
+      if (path in docsRef.current) docsRef.current = { ...docsRef.current, [path]: content };
+    }
+    setDocs((current) => {
+      let next = current;
+      for (const [path, content] of changed) if (path in next && next[path] !== content) next = { ...next, [path]: content };
+      return next;
+    });
+    setNotesData((current) => current.map((note) => (changed.has(note.path) ? { ...note, content: changed.get(note.path)! } : note)));
+    let result: { success: boolean; error?: string; written?: number };
+    try { result = await window.electronAPI.writeLinks(plan.edits); } catch (error) { result = { success: false, error: String(error) }; }
+    if (!result.success) setNotice(`Some links could not be updated. ${result.error ?? ''}`.trim());
+    if (result.success || result.written) setInfo(linkNotice(plan.count, target));
+  }, []);
+
+  /** Links a new file would take from a note of the same name, rewritten so they stay (11D). */
+  const planForNewFile = useCallback((path: string): LinkRewritePlan | null => {
+    const files = notesRef.current;
+    const name = linkName(path).toLowerCase();
+    if (files.includes(path) || !files.some((file) => linkName(file).toLowerCase() === name)) return null;
+    const aliases = aliasesOf(notesDataRef.current);
+    return planLinkRewrites({ notes: notesDataRef.current, before: buildWikiIndex(files, aliases), after: buildWikiIndex([...files, path], aliases) });
+  }, []);
+
   const createNote = useCallback(async (relativePath: string, content?: string, companions: { path: string; content: string }[] = []): Promise<boolean> => {
     if (!window.electronAPI) return false;
     try {
       const title = relativePath.split('/').pop()!.replace(/\.(md|mdx)$/, '');
       const body = content ?? '# ' + title + '\n\n';
+      const plan = planForNewFile(relativePath);
       // First, so the file is what its companions describe from the moment it opens.
       for (const companion of companions) {
         const written = await window.electronAPI.writeNote(companion.path, companion.content);
@@ -750,6 +902,7 @@ export default function App() {
       }
       const result = await window.electronAPI.writeNote(relativePath, body);
       if (!result.success) { setNotice('Could not create “' + relativePath + '”. ' + (result.error ?? '')); return false; }
+      if (plan) await applyLinkPlan(plan, plan.targets[0] ?? relativePath);
       await loadNotes();
       handleSelectNote(relativePath, { keep: true });
       setEditorModes(current => ({ ...current, [relativePath]: 'live' }));
@@ -758,7 +911,7 @@ export default function App() {
       setNotice('Could not create “' + relativePath + '”.');
       return false;
     }
-  }, [loadNotes, handleSelectNote]);
+  }, [loadNotes, handleSelectNote, planForNewFile, applyLinkPlan]);
 
   const createSectionFolder = useCallback(async (path: string): Promise<boolean> => {
     if (!window.electronAPI) return false;
@@ -788,25 +941,126 @@ export default function App() {
   }, [loadNotes]);
 
   // The one save path for every file a group shows, however many show it: the
-  // new text reaches every group at once, and only the latest write reports.
-  const writeDoc = useCallback(async (path: string, value: string) => {
+  // new text reaches every group at once, and only the latest write reports:
+  // the others, and one held back by an outside change, resolve to null.
+  const writeDoc = useCallback(async (path: string, value: string): Promise<SaveResult | null> => {
     // Kept in the same update as the change itself, so a preview never holds
     // an unsaved edit and the next single click cannot replace a tab mid-save.
     setEditor((current) => keepEverywhere(current, path));
     setDocs((current) => (current[path] === value ? current : { ...current, [path]: value }));
-    if (!window.electronAPI) return;
+    docsRef.current = { ...docsRef.current, [path]: value };
+    if (!window.electronAPI) return null;
+    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
+    // Changed outside Neuron while this edit was pending: nothing is written
+    // until the user picks a version.
+    if (conflictsRef.current[path]) return null;
     const version = (saveVersions.current.get(path) ?? 0) + 1;
     saveVersions.current.set(path, version);
     setSaveStates((current) => ({ ...current, [path]: 'saving' }));
     savingDocs.current.add(path);
-    setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content: value } : note)));
-    const result = await window.electronAPI.writeNote(path, value);
-    if (version !== saveVersions.current.get(path)) return;
+    inFlight.current.set(path, [...(inFlight.current.get(path) ?? []), value]);
+    let result: { success: boolean; error?: string; conflict?: boolean };
+    // Based on the version last known to be on disk: main refuses the save if
+    // the file has since changed outside Neuron.
+    const base = onDisk.current.get(path);
+    try { result = await sendSave(path, base, (hash) => window.electronAPI.writeNote(path, value, hash)); } catch (error) { result = { success: false, error: String(error) }; }
+    if (version !== saveVersions.current.get(path)) return null;
     savingDocs.current.delete(path);
+    // Saves of one file land in order (main queues them), so after the latest
+    // only its text is on disk -- or, if it failed, what was there before.
+    inFlight.current.delete(path);
+    if (result.conflict) {
+      // Not written: the user picks a version (ExternalChangeBar).
+      setConflict(path, true);
+      setSaveStates((current) => (path in current ? { ...current, [path]: 'error' } : current));
+      return null;
+    }
+    if (result.success) { onDisk.current.set(path, value); failedSaves.current.delete(path); } else failedSaves.current.add(path);
     setSaveStates((current) => (path in current ? { ...current, [path]: result.success ? 'saved' : 'error' } : current));
     if (result.success && path === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${path}” could not be saved.`);
-  }, [offerShellConfig]);
+    return result;
+  }, [offerShellConfig, setConflict]);
+
+  // The two ways out of a conflict (ExternalChangeBar). Keeping mine is based
+  // on the file as it is now, so main writes it over the outside version.
+  const keepMyVersion = useCallback(async (path: string) => {
+    const disk = await window.electronAPI.readNote(path);
+    if (!disk.startsWith('Error:')) onDisk.current.set(path, disk);
+    setConflict(path, false);
+    const mine = docsRef.current[path];
+    if (mine !== undefined) void writeDoc(path, mine);
+  }, [setConflict, writeDoc]);
+  const takeDiskVersion = useCallback(async (path: string) => {
+    const content = await window.electronAPI.readNote(path);
+    if (content.startsWith('Error:') && content !== TOO_LARGE_TO_OPEN) { setNotice(`Could not read “${path}”.`); return; }
+    setConflict(path, false);
+    failedSaves.current.delete(path);
+    inFlight.current.delete(path);
+    onDisk.current.set(path, content);
+    // A save still in flight from before can no longer report over this.
+    saveVersions.current.set(path, (saveVersions.current.get(path) ?? 0) + 1);
+    savingDocs.current.delete(path);
+    docsRef.current = { ...docsRef.current, [path]: content };
+    setDocs((current) => (path in current ? { ...current, [path]: content } : current));
+    setSaveStates((current) => (path in current ? { ...current, [path]: 'saved' } : current));
+    if (content !== TOO_LARGE_TO_OPEN) setNotesData((previous) => previous.map((note) => (note.path === path ? { ...note, content } : note)));
+  }, [setConflict]);
+  /**
+   * Rename or move a file or folder (11E): F2, the menus, Move to… and a drop
+   * on a folder all end here, and main's workspace:rename does the move. Open
+   * tabs in every group follow it with their unsaved text, and links that
+   * reached it (or that a new duplicate name would take) are rewritten.
+   * Resolves to an error to show, or null.
+   */
+  const movePath = useCallback(async (from: string, to: string): Promise<string | null> => {
+    if (!window.electronAPI || from === to) return null;
+    const map = (path: string) => movedPath(path, from, to);
+    const files = notesRef.current;
+    const aliases = aliasesOf(notesDataRef.current);
+    // Planned from the workspace as it is now, before anything moves.
+    const plan = planLinkRewrites({
+      notes: notesDataRef.current,
+      before: buildWikiIndex(files, aliases),
+      after: buildWikiIndex(files.map((path) => map(path) ?? path), aliases.map(([path, list]) => [map(path) ?? path, list] as [string, string[]])),
+      move: map,
+    });
+    movedAway.current.set(from, Date.now());
+    let result: { success: boolean; error?: string };
+    try { result = await window.electronAPI.renamePath(from, to); } catch (error) { result = { success: false, error: String(error) }; }
+    if (!result.success) { movedAway.current.delete(from); return result.error ?? `Could not rename “${from}”.`; }
+    const remap = <T,>(record: Record<string, T>): Record<string, T> => {
+      if (!Object.keys(record).some((path) => map(path))) return record;
+      return Object.fromEntries(Object.entries(record).map(([path, value]) => [map(path) ?? path, value]));
+    };
+    const remapKeys = <T,>(store: Map<string, T>) => {
+      for (const [path, value] of [...store]) { const next = map(path); if (next) { store.delete(path); store.set(next, value); } }
+    };
+    // Unsaved text goes with the tab: the copy here is the user's latest.
+    const unsaved = Object.keys(docsRef.current).filter((path) => map(path) && docsRef.current[path] !== onDisk.current.get(path));
+    docsRef.current = remap(docsRef.current);
+    remapKeys(onDisk.current);
+    setDocs(remap);
+    setSaveStates(remap);
+    setEditorModes(remap);
+    setSurfaceSourceMode(remap);
+    setEditor((current) => renameInGroups(current, map));
+    setCreatedFolders((current) => current.map((path) => map(path) ?? path));
+    setExplorerFolder((current) => (current ? map(current) ?? current : current));
+    setExplorerRecents((current) => current.map((entry) => ({ ...entry, path: map(entry.path) ?? entry.path })));
+    for (const path of unsaved) { const next = map(path)!; void writeDoc(next, docsRef.current[next]); }
+    if (plan.edits.length) await applyLinkPlan(plan, plan.targets.length === 1 ? plan.targets[0] : to);
+    await loadNotes();
+    return null;
+  }, [writeDoc, applyLinkPlan, loadNotes]);
+  // A drop on a folder: the same move, keeping the name.
+  const moveInto = useCallback((path: string, folder: string) => {
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    const to = (folder ? folder + '/' : '') + name;
+    if (to === path) return;
+    void movePath(path, to).then((error) => { if (error) setNotice(error); });
+  }, [movePath]);
+
   const handleContentChange = useCallback((value: string) => { if (selectedNote) void writeDoc(selectedNote, value); }, [selectedNote, writeDoc]);
 
   const requestCreate = useCallback(async () => {
@@ -862,16 +1116,6 @@ export default function App() {
     if (missing) await window.electronAPI.writeNote(SHELL_CONFIG, NEURON_CONFIG_TEMPLATE);
     setView('notes');
   }, [layoutShell, adoptShellConfig]);
-
-  // Pull Chrome's cookies into the in-app browser session (stay logged in).
-  const importChromeLogins = useCallback(async () => {
-    if (!window.electronAPI) return;
-    setNotice('Importing Chrome logins…');
-    const r = await window.electronAPI.cookies.importChrome();
-    setNotice(r.success
-      ? `Imported ${r.imported ?? 0} Chrome cookies${r.skipped ? ` (${r.skipped} skipped)` : ''}. Open a website tab to use them.`
-      : `Chrome import failed: ${r.error ?? 'unknown error'}`);
-  }, []);
 
   // Open a website as a browser tab. The hash keeps each new tab a distinct key;
   // the in-view URL bar lets the user navigate anywhere from there.
@@ -981,8 +1225,9 @@ export default function App() {
     folders: explorerFolders, notesData, folder: explorerFolder, navigate: navigateExplorer,
     openFile: handleSelectNote, openToSide, createNote, createFolder: createSectionFolder, reveal: revealFile,
     editorModes, recents: explorerRecents, clearRecents: clearExplorerRecents,
+    fileAction: setFileAction, moveInto,
   }), [atHome, repository, explorerFiles, explorerOther, entries, explorerFolders, notesData, explorerFolder, navigateExplorer,
-    handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents]);
+    handleSelectNote, openToSide, createNote, createSectionFolder, revealFile, editorModes, explorerRecents, clearExplorerRecents, moveInto]);
 
   // --- Derived --------------------------------------------------------------
   const filteredNotes = useMemo(
@@ -997,6 +1242,18 @@ export default function App() {
     () => [...notesData, ...notes.filter(isCsvPath).map((path) => ({ path, content: '' }))],
     [notesData, notes],
   );
+  // Text files (JSON, YAML, logs, code, unknown names that start as text): the
+  // search reads these itself when it runs, so they never join notesData.
+  // Configuration under .neuron/ is not something you wrote, as for notes.
+  const searchTextFiles = useMemo(
+    () => openFiles.filter((path) => !path.startsWith('.neuron/') && (fileKind(path) === 'text' || textFiles.has(path))),
+    [openFiles, textFiles],
+  );
+  const fileSizeOf = useCallback((path: string) => entries?.info[path]?.size, [entries]);
+  const openAt = useCallback((path: string, line: number) => {
+    requestReveal(path, line);
+    handleSelectNote(path);
+  }, [handleSelectNote]);
 
   const bridge = useMemo(() => ({
     activeNote: selectedNote,
@@ -1025,7 +1282,12 @@ export default function App() {
 
   const updateBindings = useCallback((next: Bindings) => {
     setBindings(next);
-    void window.electronAPI?.settings.set('keybindings', next);
+    void window.electronAPI?.settings.set('keybindings', next).then((result) => {
+      if (result.success) return;
+      setNotice(`Keyboard shortcuts could not be saved. ${result.error ?? ''}`.trim());
+      // Back to what is saved, so the shortcuts list does not show a change that is not.
+      void window.electronAPI.settings.get<Bindings>('keybindings').then((stored) => setBindings(resolveBindings(stored)));
+    });
   }, []);
 
   // Global shortcut dispatcher, driven by the (configurable) binding map.
@@ -1079,10 +1341,11 @@ export default function App() {
   // What every editor group shares: the files' one copy and one save path, and
   // the actions each group's tabs and drops call with its index.
   const groupContext = useMemo<GroupContext>(() => ({
-    notes, tags, notesData, colorScheme, wide, properties: propsSettings,
+    notes, wikiIndex, tags, notesData, colorScheme, wide, properties: propsSettings,
     editorModes, onEditorMode: (path, mode) => setEditorModes((prev) => ({ ...prev, [path]: mode })),
     surfaceSource: surfaceSourceMode, onSurfaceSource: (path, source) => setSurfaceSourceMode((prev) => ({ ...prev, [path]: source })),
-    docs, saveStates, onChange: (path, value) => { void writeDoc(path, value); },
+    docs, saveStates, onChange: writeDoc,
+    conflicts, onKeepMine: keepMyVersion, onUseDisk: (path) => { void takeDiskVersion(path); },
     surfaceFor, fileSize: (path) => entries?.info[path]?.size, onTagClick: setSelectedTag,
     home: (
       // What used to be a blank "Choose a note to begin" panel. Nothing selected
@@ -1105,6 +1368,8 @@ export default function App() {
         onCreateNote={explorerState.createNote}
         onCreateFolder={explorerState.createFolder}
         onOpenToSide={explorerState.openToSide}
+        onFileAction={explorerState.fileAction}
+        onMoveInto={explorerState.moveInto}
       />
     ),
     onOpen: (path, group) => handleSelectNote(path, { group }),
@@ -1115,8 +1380,8 @@ export default function App() {
     onFocus: focusEditorGroup,
     onSplit: (group, path, direction, move) => splitEditor(direction, group, path, move),
     onMoveTab: moveEditorTab,
-  }), [notes, tags, notesData, colorScheme, wide, propsSettings, editorModes, surfaceSourceMode, docs, saveStates, writeDoc, surfaceFor, entries,
-    explorerState, handleSelectNote, closeTab, goHome, focusEditorGroup, openWebsite, splitEditor, moveEditorTab]);
+  }), [notes, wikiIndex, tags, notesData, colorScheme, wide, propsSettings, editorModes, surfaceSourceMode, docs, saveStates, writeDoc, surfaceFor, entries,
+    conflicts, keepMyVersion, takeDiskVersion, explorerState, handleSelectNote, closeTab, goHome, focusEditorGroup, openWebsite, splitEditor, moveEditorTab]);
 
   // Home wins over a group's file, which is what lets the New tab action show
   // the explorer without closing tabs -- they stay in the strip, and clicking
@@ -1142,6 +1407,9 @@ export default function App() {
         <div className="min-h-0 flex-1">
           <LayoutSurface
             editorGroups={shellGroups ? notesView : undefined}
+            // One group: the shell's editor panel is that group, so dragging
+            // a tab to its right or bottom edge makes the first split.
+            editorZones={shellGroups ? undefined : <ShellSplitZones ctx={groupContext} state={editor} />}
             editorHeader={<EditorGroupHeader ctx={groupContext} state={editor} index={editor.focused} showsHome={atHome} inLayout />}
             path={SHELL_CONFIG}
             content={layoutShell}
@@ -1163,6 +1431,16 @@ export default function App() {
     mainContent = notesView;
   }
 
+  // The app's one notice, over whatever this window shows: notes, the welcome
+  // page, or Settings.
+  const noticeCallout = notice && (
+    <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+      <CalloutIcon kind="error" />
+      <span>{notice}</span>
+      <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
+    </div>
+  );
+
   if (utilityWindow) {
     // The plugin host runs here too, for the Connectors section. It has no
     // workspace, so no plugin is on here.
@@ -1176,6 +1454,7 @@ export default function App() {
             recents={recents}
             onSwitchRepo={switchRepository}
             onReloadRepos={reloadRepoState}
+            notice={noticeCallout}
           />
         </TooltipProvider>
       </PluginProvider>
@@ -1186,7 +1465,8 @@ export default function App() {
     <PluginProvider catalog={builtinPlugins} bridge={bridge} workspace={repository?.path ?? null}>
       <ExplorerProvider value={explorerState}>
       <TooltipProvider delayDuration={300}>
-        <div className={`workspace-grid app-shell font-sans${layout.statusBar ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
+        {/* Zen removes the chrome, the status bar with it; its own setting is untouched. */}
+        <div className={`workspace-grid app-shell font-sans${layout.statusBar && !layout.zen ? '' : ' no-status'}${layout.zen ? ' zen' : ''}`}>
           <TitleBar
             layoutSwitcher={layoutSwitcher}
             repository={repository}
@@ -1205,6 +1485,7 @@ export default function App() {
             onOpenCommandPalette={() => setPaletteOpen(true)}
             onOpenSettings={() => openSettings('appearance')}
             onSwitchRepo={switchRepository}
+            onReloadRecents={reloadRepoState}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}
             layout={layout}
@@ -1215,7 +1496,8 @@ export default function App() {
           {!repoReady ? (
             <div className="grid place-items-center text-sm text-[var(--ink-muted)]">Loading…</div>
           ) : !repository ? (
-            <RepositoryOnboarding onCreate={createRepository} onOpen={openRepository} />
+            <RepositoryOnboarding recents={recents} onSwitch={switchRepository} onCreate={createRepository} onOpen={openRepository}
+              onReload={reloadRepoState} notice={noticeCallout} />
           ) : (
             <div className="shell-workspace flex min-h-0 min-w-0 overflow-hidden">
             <Workbench layout={layout} onLayoutChange={patchLayout} onOpenMarketplace={openPlugins}
@@ -1245,24 +1527,38 @@ export default function App() {
                   folders={selectedTag ? createdFolders : treeFolders}
                   otherFiles={selectedTag ? NO_FILES : otherFiles}
                   openFiles={selectedTag ? NO_FILES : openFiles}
+                  textFiles={selectedTag ? NO_FILES : searchTextFiles}
+                  fileSize={fileSizeOf}
+                  onOpenAt={openAt}
                   onReveal={revealFile}
                   revealedFolder={revealedFolder}
                   tags={tags}
                   onSelectTag={setSelectedTag}
                   selectedTag={selectedTag}
+                  onFileAction={setFileAction}
+                  onMoveInto={moveInto}
                 />
               }>
               {/* One card, or one per group when the editor is split, like the docks. */}
               <main className={cn('relative flex h-full w-full min-w-0 flex-col overflow-hidden',
                 !inShell && !(view === 'notes' && editor.groups.length > 1 && !layout.zen) && 'shell-card')}>
-                {notice && (
-                  <div role="alert" data-callout-kind="error" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
-                    <CalloutIcon kind="error" />
-                    <span>{notice}</span>
-                    <button className="interactive min-h-[28px] text-[var(--danger)] hover:text-[var(--ink)]" onClick={() => setNotice(null)}>Dismiss</button>
+                {noticeCallout}
+                {info && !notice && (
+                  <div role="status" data-callout-kind="info" data-link-notice className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+                    <CalloutIcon kind="info" />
+                    <span>{info}</span>
+                    <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setInfo(null)}>Dismiss</button>
                   </div>
                 )}
-                {pendingShellConfig && (
+                {pendingShellConfig && !readableLayout(pendingShellConfig) && (
+                  // A broken file is never offered: the layout on screen stays.
+                  <div role="status" data-callout-kind="warning" data-layout-unreadable className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
+                    <CalloutIcon kind="warning" />
+                    <span>Neuron can’t read the workspace layout (.neuron/layout.json): it isn’t a valid layout. The current layout stays until the file is fixed.</span>
+                    <button className="interactive min-h-[28px] rounded px-2 text-[var(--ink-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]" onClick={() => setPendingShellConfig(null)}>Dismiss</button>
+                  </div>
+                )}
+                {pendingShellConfig && readableLayout(pendingShellConfig) && (
                   <div role="status" data-callout-kind="info" className="callout absolute left-1/2 top-3 z-50 flex max-w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-2.5 px-3 py-2 text-xs text-[var(--ink)]">
                     <CalloutIcon kind="info" />
                     <span>The workspace layout (.neuron/layout.json) changed. Update to the latest view?</span>
@@ -1295,11 +1591,13 @@ export default function App() {
             </div>
           )}
 
-          {layout.statusBar && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
-          <TerminalShortcut toggleRef={toggleTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
+          {layout.statusBar && !layout.zen && <StatusBar activeNote={view === 'notes' ? selectedNote : null} saveState={saveState} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} terminalChord={bindings['toggle-terminal']} />}
+          <TerminalShortcut toggleRef={toggleTerminalRef} showRef={showTerminalRef} layout={layout} onLayoutChange={patchLayout} onOpenPlugins={openPlugins} />
           <WorkspacePanelsApplier content={workspacePanels} layoutReady={layoutReady} layout={layout} onLayoutChange={patchLayout} onDone={clearWorkspacePanels} />
         </div>
 
+        <ChromeImportDialog open={chromeImportOpen} onOpenChange={setChromeImportOpen} onImported={setNotice} />
+        <FileActionDialog action={fileAction} folders={treeFolders} onClose={() => setFileAction(null)} onMove={movePath} />
         <CommandPalette
           recents={recents}
           onOpenRepo={openRepository}
@@ -1320,7 +1618,7 @@ export default function App() {
           shellActive={!!layoutShell}
           onToggleGraph={showOrToggleGraph}
           graphActive={graphOverlayOpen}
-          onImportChromeLogins={importChromeLogins}
+          onImportChromeLogins={() => setChromeImportOpen(true)}
           layout={layout}
           onLayoutChange={patchLayout}
           onResetLayout={() => { zenPrevRef.current = null; commitLayout({ ...DEFAULT_LAYOUT, panels: {} }); }}

@@ -26,10 +26,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('workspace:changed', listener);
     return () => ipcRenderer.removeListener('workspace:changed', listener);
   },
+  // The watcher stopped because the system ran out of watches or file handles.
+  onWatchLimit: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('workspace:watch-limit', listener);
+    return () => ipcRenderer.removeListener('workspace:watch-limit', listener);
+  },
   readNote: (relativePath: string) => ipcRenderer.invoke('notes:read', relativePath),
-  writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
+  // base: contentHash of the version the edit was based on (see notes:write).
+  writeNote: (relativePath: string, content: string, base?: string) => ipcRenderer.invoke('notes:write', relativePath, content, base),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
   createSection: (relativePath: string) => ipcRenderer.invoke('notes:create-section', relativePath),
+  renamePath: (from: string, to: string) => ipcRenderer.invoke('workspace:rename', from, to),
+  writeLinks: (edits: { path: string; content: string }[]) => ipcRenderer.invoke('notes:write-links', edits),
   journal: {
     list: (relativePath?: string) => ipcRenderer.invoke('journal:list', relativePath),
     restore: (entryId: string) => ipcRenderer.invoke('journal:restore', entryId),
@@ -123,7 +132,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('plugin:net-request', req),
   },
   terminal: {
-    run: (cmd: string) => ipcRenderer.invoke('terminal:run', cmd),
     // `key` names the terminal, not the shell: reattaching with the same key
     // returns the same shell and its scrollback, and a new key is a new
     // terminal with its own.
@@ -144,16 +152,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('terminal:exit', listener);
     },
   },
-  views: {
-    file: (relativePath: string) => ipcRenderer.invoke('views:file', relativePath),
-  },
   htmxViews: {
     open: (relativePath: string, theme?: 'light' | 'dark') => ipcRenderer.invoke('htmx-views:open', relativePath, theme),
-    approve: (relativePath: string, scope: 'always' | 'once') => ipcRenderer.invoke('htmx-views:approve', relativePath, scope),
+    approve: (relativePath: string, contentHash: string) => ipcRenderer.invoke('htmx-views:approve', relativePath, contentHash),
     close: (sessionId: string) => ipcRenderer.invoke('htmx-views:close', sessionId),
     resetApproval: (relativePath: string) => ipcRenderer.invoke('htmx-views:reset-approval', relativePath),
+    listTrusted: () => ipcRenderer.invoke('htmx-views:list-trusted'),
   },
   cookies: {
-    importChrome: (domain?: string) => ipcRenderer.invoke('cookies:import-chrome', domain),
+    importChrome: (domain: string) => ipcRenderer.invoke('cookies:import-chrome', domain),
   },
 });

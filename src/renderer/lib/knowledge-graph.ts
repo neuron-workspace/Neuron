@@ -1,5 +1,6 @@
 import { MultiDirectedGraph } from 'graphology';
-import { buildWikiIndex, resolveWikiLink } from './wikilinks';
+import { aliasesOf, buildWikiIndex, parseWikiLink, relativeLinkPath, resolveMarkdownLink, resolveWikiLink } from './wikilinks';
+import { findLinks } from './link-rewrite';
 
 export interface NoteData { path: string; content: string }
 export type NodeKind = 'note' | 'canvas' | 'attachment' | 'unresolved';
@@ -8,24 +9,6 @@ export interface GraphNode { [key: string]: unknown; path: string; label: string
 export interface GraphEdge { [key: string]: unknown; kind: EdgeKind; weight: number }
 export type Positions = Record<string, { x: number; y: number }>;
 type Reference = { target: string; kind: EdgeKind; wiki: boolean };
-
-function stripFencedCode(content: string): string {
-  const prose: string[] = [];
-  let fence = '';
-  for (const line of content.split(/\r\n|\n|\r/)) {
-    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence) {
-      if (match && match[1][0] === fence[0] && match[1].length >= fence.length && /^\s*$/.test(match[2])) fence = '';
-      continue;
-    }
-    if (match && (match[1][0] === '~' || !match[2].includes('`'))) {
-      fence = match[1];
-      continue;
-    }
-    prose.push(line);
-  }
-  return prose.join('\n');
-}
 
 function references(note: NoteData): Reference[] {
   if (note.path.endsWith('.canvas')) {
@@ -37,39 +20,32 @@ function references(note: NoteData): Reference[] {
   }
   if (!/\.mdx?$/i.test(note.path)) return [];
   const result: Reference[] = [];
-  // Code examples are not relationships. This only reads content; it never renders it.
-  const prose = stripFencedCode(note.content).replace(/`[^`\n]*`/g, '');
-  for (const match of prose.matchAll(/(!?)\[\[([^\]\n]+)\]\]|(!?)\[[^\]\n]*\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+[^)]*)?\)/g)) {
-    const wiki = match[2] !== undefined;
-    const target = (wiki ? match[2].split('|')[0] : match[4].replace(/^<|>$/g, '')).split('#')[0].trim();
+  // Code examples are not relationships (findLinks skips code). This only
+  // reads content; it never renders it.
+  for (const link of findLinks(note.content)) {
+    const wiki = link.kind === 'wiki';
+    const target = (wiki ? parseWikiLink(link.text).target : link.text.split('#')[0]).trim();
     if (!target || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(target)) continue;
-    result.push({ target, wiki, kind: (wiki ? match[1] : match[3]) ? 'embed' : wiki ? 'wikilink' : 'markdown-link' });
+    result.push({ target, wiki, kind: link.embed ? 'embed' : wiki ? 'wikilink' : 'markdown-link' });
   }
   return result;
 }
 
-function relativePath(source: string, target: string): string | null {
-  let decoded: string;
-  try { decoded = decodeURIComponent(target).replace(/\\/g, '/'); } catch { return null; }
-  const parts = decoded.startsWith('/') ? [] : source.split('/').slice(0, -1);
-  for (const part of decoded.split('/')) {
-    if (part === '..') { if (!parts.length) return null; parts.pop(); }
-    else if (part && part !== '.') parts.push(part);
-  }
-  return parts.join('/');
-}
-
-/** Content is parsed once per change. Path changes re-resolve cached references,
- * because adding a duplicate basename can make an existing wiki-link ambiguous. */
+/** Content is parsed once per change. Path and alias changes re-resolve cached
+ * references, because a new file or alias can take an existing wiki-link. */
 export class KnowledgeGraph {
   graph = new MultiDirectedGraph<GraphNode, GraphEdge>();
   private notes = new Map<string, NoteData>();
   private refs = new Map<string, Reference[]>();
+  private aliasKey = '';
   parsed = 0;
 
   sync(notes: readonly NoteData[]): boolean {
     const next = new Map(notes.filter(n => !n.path.startsWith('.neuron/')).map(n => [n.path, n]));
-    const pathChanged = next.size !== this.notes.size || [...next.keys()].some(id => !this.notes.has(id));
+    const aliases = aliasesOf([...next.values()]);
+    const aliasKey = JSON.stringify(aliases);
+    const pathChanged = next.size !== this.notes.size || [...next.keys()].some(id => !this.notes.has(id)) || aliasKey !== this.aliasKey;
+    this.aliasKey = aliasKey;
     const changed = [...next.values()].filter(n => this.notes.get(n.path)?.content !== n.content);
     if (!pathChanged && !changed.length) return false;
     for (const id of this.notes.keys()) if (!next.has(id)) {
@@ -82,16 +58,15 @@ export class KnowledgeGraph {
     }
     this.notes = next;
     for (const note of next.values()) if (!this.graph.hasNode(note.path)) this.addNode(note.path, /\.mdx?$/i.test(note.path) ? 'note' : note.path.endsWith('.canvas') ? 'canvas' : 'attachment');
-    const wiki = buildWikiIndex([...next.keys()]);
-    const paths = new Map([...next.keys()].map(path => [path.toLowerCase(), path]));
+    const wiki = buildWikiIndex([...next.keys()], aliases);
     const sources = pathChanged ? [...next.keys()] : changed.map(n => n.path);
     for (const source of sources) {
       for (const edge of this.graph.outEdges(source)) this.graph.dropEdge(edge);
       for (const ref of this.refs.get(source) ?? []) {
-        const relative = relativePath(source, ref.target);
+        const relative = relativeLinkPath(source, ref.target);
         const target = ref.wiki
-          ? paths.get(ref.target.toLowerCase()) ?? resolveWikiLink(wiki, ref.target)
-          : (relative && next.has(relative) ? relative : next.has(ref.target) ? ref.target : null);
+          ? resolveWikiLink(wiki, ref.target, source)
+          : resolveMarkdownLink(wiki, ref.target, source);
         const id = target ?? `unresolved:${ref.wiki ? ref.target.toLowerCase() : relative ?? ref.target}`;
         if (id === source) continue;
         if (!this.graph.hasNode(id)) this.addNode(id, 'unresolved', ref.target);

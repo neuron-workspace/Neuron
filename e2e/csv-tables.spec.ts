@@ -19,6 +19,7 @@ test.use({ prepareWorkspace: async ({}, use) => use((dir: string) => {
   mkdirSync(join(dir, 'data'));
   writeFileSync(join(dir, 'data', 'semi.csv'), SEMI);
   writeFileSync(join(dir, 'live.csv'), Buffer.from('item,count\nApples,3\n', 'utf8'));
+  writeFileSync(join(dir, 'CAPITAL.CSV'), 'Name\nAda\n');
 }) });
 
 const table = (page: Page) => page.locator('[data-csv-table]');
@@ -148,4 +149,23 @@ test('a CSV changed on disk while open shows the new content', async ({ page, wo
   writeFileSync(join(workspace, 'live.csv'), 'item,count\nApples,7\nPears,2\n');
   await expect(page.getByRole('textbox', { name: 'count', exact: true }).first()).toHaveValue('7', { timeout: 15_000 });
   await expect(page.getByRole('textbox', { name: 'item', exact: true }).nth(1)).toHaveValue('Pears');
+});
+
+test('uppercase CSV is a table in the sidebar, tab and page sources', async ({ page, workspace }) => {
+  mkdirSync(join(workspace, '.neuron', 'tables'), { recursive: true });
+  writeFileSync(join(workspace, '.neuron', 'tables', 'CAPITAL.CSV.json'), '{"columns":{"Name":{"type":"text"}}}');
+  writeFileSync(join(workspace, 'capital-page.mdx'), '<Stat label="Count" source="CAPITAL.CSV" count />\n<Form source="CAPITAL.CSV" />\n');
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  const sidebarRow = page.getByRole('complementary', { name: 'Workspace sidebar' }).locator('.note-row', { hasText: 'CAPITAL.CSV' });
+  await expect(sidebarRow.locator('svg.lucide-table2')).toHaveCount(1);
+  await openNote(page, 'CAPITAL.CSV');
+  await expect(table(page)).toHaveAttribute('data-csv-table', 'managed');
+  await expect(page.locator('[data-tab="CAPITAL.CSV"] svg.lucide-table2')).toHaveCount(1);
+  await openNote(page, 'capital-page.mdx');
+  await expect(page.locator('[data-stat-value]')).toHaveText('1');
+  const form = page.locator('[data-form]');
+  await form.getByLabel('Name').fill('Lin');
+  await form.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.locator('[data-stat-value]')).toHaveText('2');
+  expect(readFileSync(join(workspace, 'CAPITAL.CSV'), 'utf8')).toBe('Name\nAda\nLin\n');
 });

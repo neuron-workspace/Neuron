@@ -1,9 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ExternalLink, Plus, Settings2, Trash2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Chip } from '@/components/db/DbCards';
 import type { DbOption } from '@/lib/db';
 import { rowWindow } from '@/lib/row-window';
+import { decideExternalChange, sendSave } from '@/lib/external-change';
+import type { SaveResult } from '@/surfaces';
 
 // The pieces of a table surface that the database (.db) and CSV tables share:
 // toolbar styles, the echo-guarded file write, row virtualisation, and the
@@ -22,12 +24,80 @@ export const TOOL_FIELD = `${TOOL_FIELD_BASE} !w-auto px-2`;
  * from disk must never replace what is being saved with older content. So a
  * write in flight, or one that failed, holds off reloads, and text equal to
  * what was last written or is being written is never adopted as a change.
+ *
+ * With `askOnConflict` (a surface that shows ExternalChangeBar), a different
+ * outside version arriving while an edit is in flight or unsaved is not
+ * dropped: `conflict` turns on, nothing is written until `keepMine` or
+ * `takeDisk` is called, and the latter adopts the file on disk.
+ *
+ * With `save` (a surface showing a file an editor group shows), the file is the
+ * app's shared document: `save` is its one save path, the app follows the disk
+ * and asks about outside changes, and the surface learns of every change --
+ * another group's edits included -- through its `content`. The writer then
+ * neither watches the file nor asks; `ignores` only recognises the surface's
+ * own text coming back as `content`.
+ *
+ * Saves with `askOnConflict` carry the version they were based on, and main
+ * refuses one that would write over a change made outside Neuron while it was
+ * on its way; that too turns `conflict` on.
+ *
+ * With `perFile` (tables embedded in a page), every user of the hook for one
+ * file in this window shares one writer: one state, one conflict and one save
+ * error, and an edit in one embed reaches the others at once through their
+ * `onExternalChange` -- so two embeds of a file never take each other's saves
+ * for an outside change.
  */
-export function useFileWriter(path: string, onExternalChange?: (text: string) => void) {
-  const state = useRef({ path, lastWritten: null as string | null, pending: null as string | null, sequence: 0, unsaved: false });
-  const [saveError, setSaveError] = useState<string | null>(null);
+export function useFileWriter(path: string, onExternalChange?: (text: string) => void, options: {
+  askOnConflict?: boolean;
+  save?: (text: string) => Promise<SaveResult | null> | void;
+  /** The shared document's save state: a save the app made (Keep my version) clears this writer's error. */
+  saveState?: string;
+  perFile?: boolean;
+} = {}) {
+  const local = useRef<WriterState | null>(null);
+  if (!local.current) local.current = freshWriter(path);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
   const external = useRef(onExternalChange);
   external.current = onExternalChange;
+  const shared = !!options.save;
+  const hub = options.perFile && !shared && path ? hubOf(path) : null;
+  const state = useRef(local.current);
+  state.current = hub ? hub.state : local.current;
+  const { saveError, conflict } = state.current;
+  const save = useRef(options.save);
+  save.current = options.save;
+  const askOnConflict = options.askOnConflict === true && !shared;
+  /** Every user of this writer sees its conflict and save error. */
+  const notify = () => { if (hub) for (const user of hub.users) user.rerender(); else rerender(); };
+  const setConflict = (open: boolean) => {
+    if (state.current.conflict === open) return;
+    state.current.conflict = open;
+    notify();
+  };
+  const setSaveError = (error: string | null) => {
+    if (state.current.saveError === error) return;
+    state.current.saveError = error;
+    notify();
+  };
+  /** Text this writer now shows reaches every other embed of the file. */
+  const share = (text: string, self: boolean) => {
+    if (!hub) { if (self) external.current?.(text); return; }
+    for (const user of hub.users) if (self || user.adopt !== external) user.adopt.current?.(text);
+  };
+  useEffect(() => {
+    if (!hub) return;
+    // Back in the map if its last user left and came back (StrictMode).
+    if (!hubs.has(path)) hubs.set(path, hub);
+    const user = { rerender, adopt: external };
+    hub.users.add(user);
+    return () => {
+      hub.users.delete(user);
+      if (!hub.users.size && hubs.get(path) === hub) hubs.delete(path);
+    };
+  }, [hub, path]);
+  useEffect(() => {
+    if (shared && options.saveState === 'saved') setSaveError(null);
+  }, [shared, options.saveState]);
 
   /** Call before adopting content: a new path forgets the old file's writes. Returns true when it did. */
   const follow = (next: string): boolean => {
@@ -36,47 +106,84 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
     s.path = next;
     s.lastWritten = null;
     s.pending = null;
+    s.latest = null;
+    s.inFlight = [];
+    s.onDisk = null;
     s.sequence++;
     s.unsaved = false;
+    setConflict(false);
     setSaveError(null);
     return true;
   };
 
-  /** Text that must not be adopted as a change on disk. */
+  /** Text that must not be adopted as a change on disk. Raises the conflict when it is someone else's change to an edit not on disk. */
   const ignores = (text: string) => {
     const s = state.current;
-    return s.unsaved || text === s.pending || text === s.lastWritten;
+    if (text === s.pending || text === s.lastWritten) return true;
+    if (shared) {
+      if (s.inFlight.includes(text)) return true;
+      // Someone else's text (another group, or the disk as the app adopted it):
+      // what this surface wrote before is history, and may legitimately return.
+      s.lastWritten = null;
+      s.latest = null;
+      s.onDisk = text;
+      return false;
+    }
+    if (!askOnConflict) return s.unsaved;
+    const decision = decideExternalChange({ disk: text, pending: s.unsaved || s.conflict, ours: [s.latest, s.onDisk, ...s.inFlight] });
+    if (decision === 'ask') { if (!s.conflict) setConflict(true); return true; }
+    s.onDisk = text;
+    return decision === 'ignore';
   };
 
   const write = async (text: string): Promise<boolean> => {
     const s = state.current;
+    s.latest = text;
+    // Changed outside Neuron while an edit was pending: nothing is written
+    // until the user picks a version.
+    if (s.conflict) return false;
     const sequence = ++s.sequence;
     s.unsaved = true;
     // Watcher IPC can beat the write reply; keep its echo separate from confirmed saves.
     s.pending = text;
+    s.inFlight.push(text);
+    share(text, false);
     try {
-      const result = await window.electronAPI.writeNote(path, text);
+      // Based on the version last known to be on disk, where an outside change can be asked about.
+      const result = save.current ? await save.current(text)
+        : await sendSave(path, askOnConflict ? s.onDisk : null, (base) => window.electronAPI.writeNote(path, text, base));
       if (sequence !== s.sequence) return false;
       s.pending = null;
+      s.inFlight = [];
+      // The shared document reports nothing for a save a newer one overtook,
+      // or one held back by an outside change; that newer save, or the app's
+      // notice, speaks for it.
+      if (!result) { s.unsaved = false; return false; }
       if (result.success) {
         s.lastWritten = text;
+        s.onDisk = text;
         // Only a write in flight or a failed one holds off reloads from disk.
         s.unsaved = false;
         setSaveError(null);
         return true;
       }
+      // Changed outside Neuron while this save was on its way: not written.
+      if (askOnConflict && result.conflict) { setConflict(true); return false; }
       setSaveError(result.error ?? 'Unknown error');
     } catch (error) {
       if (sequence !== s.sequence) return false;
       s.pending = null;
+      s.inFlight = [];
       setSaveError(error instanceof Error ? error.message : String(error));
     }
     return false;
   };
 
   // The open file follows its file on disk: external edits (git pull, sync,
-  // another editor) land without a reload.
+  // another editor) land without a reload. A shared document hears of them
+  // from the app, as its `content`.
   useEffect(() => {
+    if (shared) return;
     return window.electronAPI.onNotesChanged((event, changed) => {
       if (changed !== path || event === 'unlink') return;
       const s = state.current;
@@ -86,9 +193,71 @@ export function useFileWriter(path: string, onExternalChange?: (text: string) =>
         external.current?.(text);
       });
     });
-  }, [path]);
+  }, [path, shared]);
 
-  return { saveError, follow, ignores, write };
+  /** The file as read when it opened: what the first edit is based on. */
+  const loaded = (text: string) => {
+    const s = state.current;
+    if (!s.unsaved && !s.conflict) s.onDisk = text;
+  };
+
+  /** Write the local version over the outside one: based on the file as it is now, so main writes it. */
+  const keepMine = async () => {
+    const s = state.current;
+    const disk = await window.electronAPI.readNote(path);
+    if (s.path !== path) return;
+    if (!disk.startsWith('Error:')) s.onDisk = disk;
+    setConflict(false);
+    if (s.latest !== null) void write(s.latest);
+  };
+  /** Drop the local version and adopt the file on disk. */
+  const takeDisk = async () => {
+    const s = state.current;
+    const text = await window.electronAPI.readNote(path);
+    if (s.path !== path || text.startsWith('Error:')) return;
+    s.sequence++; // a write still in flight can no longer report over this
+    s.pending = null;
+    s.latest = null;
+    s.inFlight = [];
+    s.onDisk = text;
+    s.unsaved = false;
+    setConflict(false);
+    setSaveError(null);
+    share(text, true);
+  };
+
+  return { saveError, follow, ignores, loaded, write, conflict, keepMine, takeDisk };
+}
+
+// inFlight: every write not yet answered (several when edits come quickly);
+// onDisk: the last version known to be on disk (adopted or saved); latest:
+// the last text asked to be written, kept while a conflict holds writes.
+interface WriterState {
+  path: string;
+  lastWritten: string | null;
+  pending: string | null;
+  latest: string | null;
+  inFlight: string[];
+  onDisk: string | null;
+  sequence: number;
+  unsaved: boolean;
+  conflict: boolean;
+  saveError: string | null;
+}
+const freshWriter = (path: string): WriterState => ({
+  path, lastWritten: null, pending: null, latest: null, inFlight: [], onDisk: null, sequence: 0, unsaved: false, conflict: false, saveError: null,
+});
+
+/** One writer per file for `perFile` users: its state, and who shows it. */
+interface FileHub {
+  state: WriterState;
+  users: Set<{ rerender: () => void; adopt: { current?: (text: string) => void } }>;
+}
+const hubs = new Map<string, FileHub>();
+function hubOf(path: string): FileHub {
+  let hub = hubs.get(path);
+  if (!hub) { hub = { state: freshWriter(path), users: new Set() }; hubs.set(path, hub); }
+  return hub;
 }
 
 export function SaveNotice({ error, path, onRetry }: { error: string | null; path: string; onRetry: () => void }) {

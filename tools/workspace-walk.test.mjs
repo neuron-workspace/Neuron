@@ -35,6 +35,8 @@ try {
   write(ws, 'pics/photo.png');
   write(ws, 'docs/deep/report.pdf');
   write(ws, 'note.md');
+  write(ws, 'note.md.123.456.abcdef.tmp');
+  write(ws, '.neuron/config.json.123.456.abcdef.tmp');
   write(ws, '.git/config');
   write(ws, '.neuron/layout.json');
   write(ws, 'docs/.hidden/secret.txt');
@@ -60,6 +62,23 @@ try {
     assert.ok(!folders.includes('.git'));
     assert.ok(!folders.includes('docs/.neuron'));
     assert.ok(!files.some((file) => file.includes('secret')));
+  });
+
+  check('Neuron\'s save temp files are skipped at any depth, other .tmp names too', () => {
+    write(ws, 'docs/deep/draft.md.4242.1700000000000.0a1b2c.tmp');
+    write(ws, 'pics/x.tmp');
+    const { files } = walkWorkspace(ws);
+    assert.ok(!files.some((file) => file.endsWith('.tmp')), files.join(', '));
+    assert.ok(files.includes('docs/deep/report.pdf'));
+  });
+
+  check('dot-folders other than the root .neuron are skipped with everything in them', () => {
+    write(ws, '.obsidian/workspace.json');
+    write(ws, 'docs/.git/HEAD');
+    const { files, folders } = walkWorkspace(ws);
+    assert.ok(!folders.some((folder) => folder.split('/').some((part) => part.startsWith('.') && part !== '.neuron')), folders.join(', '));
+    assert.ok(!files.some((file) => file.includes('.obsidian') || file.includes('.git/')));
+    assert.ok(folders.includes('.neuron'));
   });
 
   check('reports size and modified time per file', () => {
@@ -123,6 +142,16 @@ try {
       assert.deepEqual(result.files, ['inside.txt']);
       assert.deepEqual(result.folders, []);
       assert.equal(result.skipped, 0);
+    });
+    check('a loop deep inside the workspace ends the walk, outside paths never listed', () => {
+      const deep = path.join(temp, 'deep-loop');
+      write(deep, 'a/b/c.md');
+      fs.symlinkSync(deep, path.join(deep, 'a', 'b', 'up'), process.platform === 'win32' ? 'junction' : 'dir');
+      fs.symlinkSync(outside, path.join(deep, 'a', 'away'), process.platform === 'win32' ? 'junction' : 'dir');
+      const result = walkWorkspace(deep);
+      assert.deepEqual(result.files, ['a/b/c.md']);
+      assert.deepEqual(result.folders, ['a', 'a/b']);
+      assert.equal(result.truncated, false);
     });
   }
   let fileLink = true;

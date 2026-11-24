@@ -59,7 +59,10 @@ companion GitHub Pages site always links to the newest one.
 | macOS | DMG and ZIP for Intel and Apple silicon |
 | Linux | AppImage and Debian package |
 
-Linux has no package-manager entry yet; use the AppImage or the `.deb`.
+Linux has no package-manager entry yet; use the AppImage or the `.deb`. On
+Ubuntu 24.04+ and Debian 13, prefer the `.deb`: it installs the AppArmor profile
+Electron needs, while the AppImage can stop at "Failed to move to new namespace"
+([workaround](docs/troubleshooting.md#linux-appimage-failed-to-move-to-new-namespace)).
 
 > **On the warnings.** The Microsoft Store build is signed by Microsoft after
 > certification and prompts for nothing. Direct downloads are a different story:

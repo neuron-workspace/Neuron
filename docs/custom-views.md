@@ -111,9 +111,9 @@ Enforced by `src/renderer/lib/view-security.ts` (checked by
   2 MB instead of freezing the renderer.
 
 Privileged operations are capability-shaped IPC handlers in the main process:
-`views:file` reads workspace images for `.canvas` file nodes (path resolved
-inside the active workspace only); `notes:write` performs workspace-confined
-atomic writes. Surfaces cannot name arbitrary IPC channels, shell commands, or
+images in `.canvas` file nodes stream through `neuron-file://` (a per-window
+token, the path resolved inside that window's workspace only, media kinds
+only); `notes:write` performs workspace-confined atomic writes. Surfaces cannot name arbitrary IPC channels, shell commands, or
 filesystem paths outside the workspace.
 
 ## Known limitations

@@ -112,6 +112,47 @@ test('gallery cards show a title, a preview and chips, and card properties persi
   await expect.poll(() => tasksOf(workspace).view?.mode).toBe('gallery');
 });
 
+test('gallery caps the display at 300 cards and explains how to see the rest', async ({ page, workspace }) => {
+  const file = join(workspace, 'Planner.db');
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  data.tables.tasks.rows = Array.from({ length: 301 }, (_, i) => ({ id: `cap-${i}`, values: { title: `Task ${i}`, status: 'todo' } }));
+  data.tables.tasks.view = { mode: 'gallery' };
+  writeFileSync(file, JSON.stringify(data));
+  await openTasks(page);
+  await expect(page.locator('main [data-card-id]')).toHaveCount(300);
+  await expect(page.getByText('Showing 300 of 301. Filter or use the table to see the rest.', { exact: true })).toBeVisible();
+  // Capping the display must never cap the file.
+  expect(tasksOf(workspace).rows).toHaveLength(301);
+});
+
+test('schema overview draws the relation between two tables and tolerates deleted endpoints', async ({ page, workspace }) => {
+  const file = join(workspace, 'related.db');
+  const data = {
+    version: 2,
+    tables: {
+      tasks: { name: 'Tasks', schema: { order: ['project'], properties: { project: { name: 'Project', type: 'text' } } }, rows: [] },
+      projects: { name: 'Projects', schema: { order: ['title'], properties: { title: { name: 'Title', type: 'text' } } }, rows: [] },
+    },
+    relations: [{ from: { table: 'tasks', property: 'project' }, to: { table: 'projects' } }],
+  };
+  writeFileSync(file, JSON.stringify(data));
+  await page.getByRole('button', { name: 'Refresh explorer' }).click();
+  await openNote(page, 'related.db');
+  const schema = page.getByRole('group', { name: 'Database schema' });
+  await expect(schema.getByRole('button', { name: 'Open Tasks table' })).toBeVisible();
+  await expect(schema.getByRole('button', { name: 'Open Projects table' })).toBeVisible();
+  await expect(schema.locator('svg line[marker-end]')).toHaveCount(1);
+  await expect(schema.locator('svg text')).toHaveText('Project');
+  data.relations[0].from.property = 'deleted';
+  writeFileSync(file, JSON.stringify(data));
+  await expect(schema.locator('svg text')).toHaveText('deleted');
+  data.relations[0].to.table = 'deleted';
+  writeFileSync(file, JSON.stringify(data));
+  await expect(schema.locator('svg line[marker-end]')).toHaveCount(0);
+  await schema.getByRole('button', { name: 'Open Tasks table' }).click();
+  await expect(page.getByRole('group', { name: 'View mode' }).getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('a card opens in the row editor, and an edited title reaches the card and the file', async ({ page, workspace }) => {
   await openTasks(page);
   await page.getByRole('button', { name: 'Gallery', exact: true }).click();

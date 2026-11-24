@@ -3,7 +3,7 @@
 // integration pass against the loopback view server. No test framework —
 // bundle with vite's esbuild, then assert. Run: node tools/htmx-views.test.mjs
 import { build } from 'esbuild';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +23,10 @@ await build({
       export * from './src/main/htmx/html';
       export * from './src/main/htmx/server';
       export * from './src/main/htmx/neuronJs';
+      export * from './src/main/htmx/trust';
+      export { configureWriteJournal, listJournalEntries } from './src/main/journal';
+      export { initHtmxViews } from './src/main/htmx/index';
+      export { ipcHandlers } from 'electron';
     `,
     resolveDir: root,
     loader: 'ts',
@@ -31,6 +35,13 @@ await build({
   platform: 'node',
   format: 'esm',
   outfile,
+  plugins: [{ name: 'mock-electron', setup(build) {
+    build.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'mock' }));
+    build.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: `
+      export const ipcHandlers = new Map();
+      export const ipcMain = { handle: (name, fn) => ipcHandlers.set(name, fn) };
+    ` }));
+  } }],
 });
 
 const m = await import(pathToFileURL(outfile));
@@ -46,6 +57,13 @@ assert.ok(m.compileGlob('**/*.md').test('a.md'));
 assert.ok(m.compileGlob('data/?.csv').test('data/a.csv'));
 assert.ok(!m.compileGlob('data/?.csv').test('data/ab.csv'));
 assert.ok(!m.compileGlob('a+b/*').test('axb/x')); // regex specials escaped
+{
+  const started = performance.now();
+  assert.ok(m.compileGlob('?*'.repeat(250)).test('a'.repeat(4096)));
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 100, `500-character glob took ${elapsed.toFixed(1)} ms (limit 100 ms)`);
+  console.log(`htmx glob: 500-character pattern / 4096-character path in ${elapsed.toFixed(1)} ms`);
+}
 
 // --- relative path normalization ----------------------------------------------
 assert.equal(m.normalizeRel('notes/a.md'), 'notes/a.md');
@@ -53,18 +71,26 @@ assert.equal(m.normalizeRel('.\\notes\\a.md'), 'notes/a.md');
 for (const bad of ['..', '../x', 'a/../../x', '/etc/passwd', 'C:/Windows', 'C:\\x', '\\\\server\\share', '~/secrets', 'a\0b', 'a%00b', '', 42, null]) {
   assert.equal(m.normalizeRel(bad), null, `normalizeRel should reject: ${String(bad)}`);
 }
+// Device names, streams and trailing dots/spaces are Windows rules; legal elsewhere.
+for (const name of ['CON', 'NUL', 'COM1', 'aux.txt', 'file.md:stream', 'note.md.', 'dir /note.md', 'dir./note.md', 'Meeting 10:30.md']) {
+  if (process.platform === 'win32') assert.equal(m.normalizeRel(name), null, `normalizeRel should reject on Windows: ${name}`);
+  else assert.equal(m.normalizeRel(name), name.replace(/\\/g, '/'), `normalizeRel should allow: ${name}`);
+}
 assert.equal(m.normalizeRelDir(''), '');
 assert.equal(m.normalizeRelDir('..'), null);
 
 // --- workspace resolution + symlink escapes ------------------------------------
 const ws = mkdtempSync(join(tmpdir(), 'neuron-htmx-ws-'));
 const outside = mkdtempSync(join(tmpdir(), 'neuron-htmx-out-'));
+m.configureWriteJournal(outside);
 mkdirSync(join(ws, 'notes'), { recursive: true });
 writeFileSync(join(ws, 'notes', 'hello.md'), '# Hello world\n\nA note with #alpha and #beta tags. Searchable needle here.\n');
 writeFileSync(join(ws, 'notes', 'other.md'), '# Other\n\n#alpha only.\n');
 writeFileSync(join(outside, 'secret.txt'), 'top secret');
 
 assert.ok(m.resolveInWorkspace(ws, 'notes/hello.md'));
+assert.ok(m.resolveInWorkspace(ws, '..hidden/note.md'), 'ordinary dot-prefixed names are not traversal');
+assert.equal(m.resolveInWorkspace(join(ws, 'missing-root'), 'note.md'), null, 'missing roots fail closed');
 assert.equal(m.resolveInWorkspace(ws, '../secret.txt'), null);
 assert.equal(m.resolveInWorkspace(ws, 'C:/Windows/system32'), null);
 let symlinksWork = true;
@@ -75,6 +101,22 @@ try {
 }
 if (symlinksWork) {
   assert.equal(m.resolveInWorkspace(ws, 'escape/secret.txt'), null, 'symlink escape must be rejected');
+}
+// A view never reaches a repository's internals, however the path is spelled.
+mkdirSync(join(ws, '.git', 'hooks'), { recursive: true });
+for (const bad of ['.git/config', '.git/hooks/pre-commit', 'a/../.git/x', '.GIT\\config', 'sub/.git/x', '.git']) {
+  assert.equal(m.resolveInWorkspace(ws, bad), null, `resolveInWorkspace must refuse ${bad}`);
+  assert.equal(m.normalizeRel(bad), null, `normalizeRel must refuse ${bad}`);
+}
+assert.equal(m.resolveInWorkspace(ws, '.git', { allowRootDir: true }), null, 'not even as a directory to list');
+assert.ok(m.resolveInWorkspace(ws, '.gitignore'), '.gitignore is an ordinary file');
+if (symlinksWork) {
+  symlinkSync(join(ws, '.git'), join(ws, 'gitlink'), 'junction');
+  assert.equal(m.resolveInWorkspace(ws, 'gitlink/config'), null, 'a link into .git is refused by its real path');
+  mkdirSync(join(outside, 'gone'));
+  symlinkSync(join(outside, 'gone'), join(ws, 'broken'), process.platform === 'win32' ? 'junction' : 'dir');
+  rmSync(join(outside, 'gone'), { recursive: true });
+  assert.equal(m.resolveInWorkspace(ws, 'broken/new.md'), null, 'broken links fail closed');
 }
 
 // --- manifest validation --------------------------------------------------------
@@ -89,10 +131,54 @@ assert.ok(grants.needsApproval, 'write permissions require approval');
 const readOnlyManifest = m.validateManifest({ permissions: ['workspace.files.read'], allowedReadPaths: ['notes/**'] });
 assert.ok(readOnlyManifest.ok, readOnlyManifest.errors.join('; '));
 assert.ok(m.effectiveGrants(readOnlyManifest.value).needsApproval, 'every requested capability requires approval');
+for (const allowedReadPaths of [undefined, [], ['notes/**']]) {
+  const manifest = m.validateManifest({ permissions: ['workspace.files.read'], allowedReadPaths }).value;
+  const effective = m.effectiveGrants(manifest);
+  assert.deepEqual(effective.readPatterns, allowedReadPaths?.length ? allowedReadPaths : ['**']);
+  assert.ok(effective.caps.has('workspace.files.read'));
+  assert.ok(effective.needsApproval, 'full-workspace reads must be approved too');
+}
 const noManifestGrants = m.effectiveGrants(null);
 assert.deepEqual([...noManifestGrants.caps], [], 'an unmanifested view gets no capabilities');
 assert.deepEqual(noManifestGrants.readPatterns, [], 'an unmanifested view gets no readable paths');
 assert.ok(!noManifestGrants.needsApproval, 'an unmanifested view renders without an empty prompt');
+
+// The IPC prompt carries the very same effective scope used to create sessions.
+writeFileSync(join(ws, 'approval.html'), '<p>Approval</p>');
+mkdirSync(join(ws, '.neuron', 'manifests'), { recursive: true });
+m.initHtmxViews({ getRepoRoot: (event) => event.trusted ? ws : null, getSetting: () => ({}), setSetting: () => {} });
+for (const allowedReadPaths of [undefined, [], ['notes/**']]) {
+  writeFileSync(join(ws, '.neuron', 'manifests', 'approval.json'), JSON.stringify({ permissions: ['workspace.files.read'], allowedReadPaths }));
+  const result = await m.ipcHandlers.get('htmx-views:open')({ trusted: true }, 'approval.html');
+  assert.equal(result.status, 'needs-approval');
+  assert.deepEqual(result.readPaths, allowedReadPaths?.length ? allowedReadPaths : ['**']);
+}
+// A view with no manifest asks too (7B): HTML alone can be malicious.
+{
+  rmSync(join(ws, '.neuron', 'manifests', 'approval.json'));
+  const result = await m.ipcHandlers.get('htmx-views:open')({ trusted: true }, 'approval.html');
+  assert.equal(result.status, 'needs-approval', 'a view with no capabilities still asks before it runs');
+  assert.deepEqual(result.permissions, []);
+  assert.equal(result.changed, false);
+  assert.match(result.contentHash, /^[0-9a-f]{64}$/);
+}
+assert.equal(m.ipcHandlers.get('htmx-views:close')({ trusted: false }, 'some-session').success, false);
+// Opening a view must not scaffold through a .neuron junction outside the workspace.
+if (symlinksWork) {
+  const linkedWs = join(ws, 'linked-workspace');
+  const scaffoldTarget = join(outside, 'scaffold-target');
+  mkdirSync(linkedWs); mkdirSync(scaffoldTarget);
+  writeFileSync(join(linkedWs, 'view.html'), '<p>View</p>');
+  symlinkSync(scaffoldTarget, join(linkedWs, '.neuron'), process.platform === 'win32' ? 'junction' : 'dir');
+  m.initHtmxViews({ getRepoRoot: () => linkedWs, getSetting: () => ({}), setSetting: () => {} });
+  // Stop before server startup, after the actual scaffold runs, with an invalid legacy manifest.
+  writeFileSync(join(linkedWs, 'view.neuron.json'), '{bad json');
+  const result = await m.ipcHandlers.get('htmx-views:open')({}, 'view.html');
+  assert.equal(result.status, 'error');
+  const { readdirSync } = await import('node:fs');
+  assert.deepEqual(readdirSync(scaffoldTarget), [], 'scaffolding never writes outside the workspace');
+}
+rmSync(join(ws, 'approval.html'));
 
 // --- view + manifest paths -----------------------------------------------------
 assert.ok(m.isViewPath('report.html'), 'plain .html opens as a view');
@@ -219,11 +305,12 @@ assert.equal(m.interpolate('{{ nope.x }}', { params: {} }), '');
 
 // --- sessions -----------------------------------------------------------------
 const sessions = new m.SessionManager();
-const mkSession = (caps, readPatterns, writePatterns = []) => sessions.create({
-  viewPath: 'dash.html', root: ws, name: 'Dash', theme: 'dark',
+const mkSession = (caps, readPatterns, writePatterns = [], viewPath = 'dash.html') => sessions.create({
+  viewPath, root: ws, name: 'Dash', theme: 'dark',
   caps: new Set(caps),
   readPolicy: readPatterns.map(m.compileGlob),
   writePolicy: writePatterns.map(m.compileGlob),
+  trusted: m.computeTrust(ws, viewPath).files,
 });
 {
   const s = mkSession(['notes.read'], ['**']);
@@ -261,6 +348,15 @@ const writer = mkSession([...READ_CAPS, 'workspace.files.write', 'workspace.file
 const cookie = (s) => ({ cookie: `nv=${s.id}:${s.cookieToken}` });
 const api = (s, route, init = {}) => fetch(`${srv.origin}${route}`, { ...init, headers: { ...cookie(s), ...(init.headers ?? {}) } });
 
+// Opaque/cross-origin requests are refused even with a valid session cookie.
+for (const origin of ['null', 'https://outside.example', '']) {
+  const result = await api(writer, '/api/v1/context', { method: 'POST', headers: { Origin: origin } });
+  assert.equal(result.status, 403);
+  assert.equal((await result.json()).error.code, 'bad_origin');
+}
+assert.equal((await api(reader, '/api/v1/context', { headers: { Origin: srv.origin } })).status, 200);
+assert.equal((await api(reader, '/api/v1/context')).status, 200, 'normal same-origin GET may omit Origin');
+
 // Unauthenticated and spoofed requests
 assert.equal((await fetch(`${srv.origin}/api/v1/context`)).status, 401, 'no cookie -> 401');
 assert.equal((await fetch(`${srv.origin}/api/v1/context`, { headers: { cookie: `nv=${reader.id}:forged` } })).status, 401, 'forged token -> 401');
@@ -275,6 +371,7 @@ assert.equal((await fetch(`${srv.origin}/api/v1/context`, { headers: { cookie: `
 }
 
 // Document bootstrap: one-time boot token, CSP, cookie issuance
+assert.equal((await fetch(`${srv.origin}/views/${reader.id}/document?boot=${reader.bootToken}`, { headers: { Origin: 'null' } })).status, 403, 'opaque origin cannot consume a boot token');
 const docRes = await fetch(`${srv.origin}/views/${reader.id}/document?boot=${reader.bootToken}`);
 assert.equal(docRes.status, 200);
 const viewCsp = docRes.headers.get('content-security-policy') ?? '';
@@ -291,12 +388,30 @@ assert.ok(docHtml.includes(`/views/${reader.id}/neuron.css`), 'neuron.css is alw
 assert.ok(docHtml.includes('window.__ok'), 'authored inline scripts are served verbatim');
 assert.equal((await fetch(`${srv.origin}/views/${reader.id}/document?boot=x`)).status, 403, 'boot token replay/forgery -> 403');
 
+// Reload the original URL using only the cookie issued to this view's partition.
+{
+  const s = mkSession(READ_CAPS, ['notes/**']);
+  const url = `${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`;
+  const initial = await fetch(url);
+  assert.equal(initial.status, 200);
+  const headers = { cookie: initial.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await fetch(url, { headers })).status, 200, 'self-reload with consumed boot token -> 200');
+  assert.equal((await fetch(url)).status, 403, 'reload without cookie -> 403');
+  assert.equal((await fetch(url, { headers: cookie(writer) })).status, 403, 'another view cookie cannot reload this document');
+  s.expiresAt = Date.now() - 1;
+  assert.equal((await fetch(url, { headers })).status, 403, 'expired session cannot reload');
+  s.expiresAt = Date.now() + m.SESSION_TTL_MS;
+  sessions.revoke(s.id);
+  assert.equal((await fetch(url, { headers })).status, 403, 'revoked session cannot reload');
+}
+
 // An unmanifested HTML file renders, but its session can read nothing.
 const unmanifested = sessions.create({
   viewPath: 'report.html', root: ws, name: 'Report', theme: 'dark',
   caps: noManifestGrants.caps,
   readPolicy: noManifestGrants.readPatterns.map(m.compileGlob),
   writePolicy: [],
+  trusted: m.computeTrust(ws, 'report.html').files,
 });
 const unmanifestedRes = await fetch(`${srv.origin}/views/${unmanifested.id}/document?boot=${unmanifested.bootToken}`);
 assert.equal(unmanifestedRes.status, 200, 'an unmanifested .html file still renders');
@@ -310,6 +425,7 @@ assert.ok((await unmanifestedRes.text()).includes('Unmanifested report'));
   const s = sessions.create({
     viewPath: 'full.html', root: ws, name: 'Full', theme: 'light',
     caps: new Set(['variables.read']), readPolicy: [], writePolicy: [],
+    trusted: m.computeTrust(ws, 'full.html').files,
   });
   const res = await fetch(`${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`);
   assert.equal(res.status, 200);
@@ -358,6 +474,11 @@ assert.equal((await api(unmanifested, '/api/v1/variables')).status, 403, 'unmani
 assert.equal((await api(unmanifested, '/api/v1/fragments/workspace-summary')).status, 403, 'unmanifested view cannot read the built-in workspace summary');
 
 // Search: JSON + HTML fragment shapes, results are escaped
+assert.equal((await api(reader, `/api/v1/files?glob=${encodeURIComponent('?'.repeat(512))}`)).status, 200, '512-character glob is accepted');
+assert.equal((await api(reader, `/api/v1/files?glob=${encodeURIComponent('?'.repeat(513))}`)).status, 400, 'glob longer than 512 characters is refused');
+writeFileSync(join(ws, 'notes', 'hello.md.123.456.abcdef.tmp'), 'partial save');
+const visibleFiles = await (await api(mkSession(READ_CAPS, ['**']), '/api/v1/files')).json();
+assert.ok(!visibleFiles.files.some((file) => file.path.endsWith('.tmp')), 'view file lists hide save temp files');
 const searchJson = await (await api(reader, '/api/v1/search?query=needle')).json();
 assert.equal(searchJson.results.length, 1);
 assert.equal(searchJson.results[0].path, 'notes/hello.md');
@@ -459,7 +580,11 @@ const dashTitle = await (await api(reader, '/api/v1/variables/dashboardTitle')).
 assert.equal(dashTitle.value, 'Ops <Dash>');
 assert.equal((await api(reader, '/api/v1/variables/projectStatus', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'x' }) })).status, 403, 'variables.write required');
 assert.equal((await api(writer, '/api/v1/variables/dashboardTitle', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'x' }) })).status, 403, 'non-writable variable protected');
+const variablesBefore = readFileSync(join(ws, '.neuron', 'variables.json'), 'utf8');
 assert.equal((await api(writer, '/api/v1/variables/projectStatus', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: 'paused' }) })).status, 200);
+const variablesPreImage = m.listJournalEntries(ws).find((entry) => entry.relativePath === '.neuron/variables.json');
+assert.equal(variablesPreImage?.operation, 'overwrite');
+assert.equal(variablesPreImage?.sha256, m.sha256(variablesBefore), 'journal preserves variables before the view changed them');
 assert.equal((await (await api(writer, '/api/v1/variables/projectStatus')).json()).value, 'paused');
 // htmx callers get an HTML confirmation to swap in (feedback), not silent JSON.
 {
@@ -473,6 +598,7 @@ assert.equal((await (await api(writer, '/api/v1/variables/projectStatus')).json(
 assert.equal((await api(writer, '/api/v1/files', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'notes/new.md', content: 'x' }) })).status, 403, 'outside write policy -> 403');
 const created = await api(writer, '/api/v1/files', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'hello' }) });
 assert.equal(created.status, 201);
+assert.ok(!m.listJournalEntries(ws).some((entry) => entry.relativePath === 'data/made.txt'), 'a newly created file has no pre-image');
 const { hash } = await created.json();
 assert.equal((await api(writer, '/api/v1/files/content', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'v2', baseHash: 'stale' }) })).status, 409, 'stale baseHash -> 409');
 assert.equal((await api(writer, '/api/v1/files/content', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'data/made.txt', content: 'v2', baseHash: hash }) })).status, 200);
@@ -572,7 +698,180 @@ assert.equal((await api(writer, '/api/v1/files/content?path=data/made.txt')).sta
 sessions.revoke(reader.id);
 assert.equal((await api(reader, '/api/v1/context')).status, 401, 'revoked session -> 401');
 
+// --- 7B: trust is bound to content --------------------------------------------
+{
+  const view = 'trusty.html';
+  writeFileSync(join(ws, view), '<h1>Trusty</h1>');
+  mkdirSync(join(ws, '.neuron', 'styles'), { recursive: true });
+  writeFileSync(join(ws, '.neuron', 'styles', 'trusty.css'), 'h1 { color: red; }');
+  const hash = () => m.computeTrust(ws, view).contentHash;
+  const base = hash();
+  assert.match(base, /^[0-9a-f]{64}$/);
+  assert.equal(hash(), base, 'the hash is stable');
+
+  // Exactly the set the server serves to this view, sorted, each path included.
+  const set = m.computeTrust(ws, view).paths;
+  assert.deepEqual(set, [...set].sort(), 'stable order');
+  assert.ok(set.includes(view), 'the HTML');
+  assert.ok(set.includes('.neuron/styles/trusty.css'), 'stylesheets');
+  assert.ok(set.includes('.neuron/fragments/greet.html'), 'fragments');
+  assert.ok(!set.includes('.neuron/variables.json'), 'variables are data, not code');
+  assert.ok(!set.some((p) => p.startsWith('notes/')), 'notes are data the view may read, not code it runs');
+
+  const changes = (label, file, change, restore) => {
+    const before = hash();
+    change();
+    assert.notEqual(hash(), before, `${label} changes the hash`);
+    restore();
+    assert.equal(hash(), before, `${label}: restoring the bytes restores the hash`);
+  };
+  const edit = (rel, text) => { const full = join(ws, ...rel.split('/')); const old = readFileSync(full); return [() => writeFileSync(full, text), () => writeFileSync(full, old)]; };
+  changes('the HTML', view, ...edit(view, '<h1>Trusty v2</h1><script>steal()</script>'));
+  changes('a stylesheet', 'style', ...edit('.neuron/styles/trusty.css', 'h1 { color: blue; }'));
+  changes('a fragment', 'fragment', ...edit('.neuron/fragments/greet.html', '<script>steal()</script>'));
+  mkdirSync(join(ws, '.neuron', 'manifests'), { recursive: true });
+  changes('adding a manifest', 'manifest',
+    () => writeFileSync(join(ws, '.neuron', 'manifests', 'trusty.json'), JSON.stringify({ permissions: [] })),
+    () => rmSync(join(ws, '.neuron', 'manifests', 'trusty.json')));
+  writeFileSync(join(ws, '.neuron', 'manifests', 'trusty.json'), JSON.stringify({ permissions: [] }));
+  changes('editing the manifest', 'manifest', ...edit('.neuron/manifests/trusty.json', JSON.stringify({ permissions: ['workspace.files.read'] })));
+  rmSync(join(ws, '.neuron', 'manifests', 'trusty.json'));
+  changes('a new fragment', 'fragment',
+    () => writeFileSync(join(ws, '.neuron', 'fragments', 'late.html'), '<p>late</p>'),
+    () => rmSync(join(ws, '.neuron', 'fragments', 'late.html')));
+  // Unrelated files do not touch it: notes, data, variables, other views, templates.
+  const unrelated = hash();
+  writeFileSync(join(ws, 'notes', 'hello.md'), readFileSync(join(ws, 'notes', 'hello.md'), 'utf8') + '\nmore\n');
+  writeFileSync(join(ws, 'data', 'out.txt'), 'v2');
+  writeFileSync(join(ws, '.neuron', 'variables.json'), readFileSync(join(ws, '.neuron', 'variables.json'), 'utf8') + '\n');
+  writeFileSync(join(ws, 'report.html'), '<h1>Another view</h1>');
+  mkdirSync(join(ws, '.neuron', 'templates'), { recursive: true });
+  writeFileSync(join(ws, '.neuron', 'templates', 'x.html'), '<p>not served</p>');
+  writeFileSync(join(ws, '.neuron', 'styles', 'notes.txt'), 'not a stylesheet');
+  assert.equal(hash(), unrelated, 'an unrelated file does not change the hash');
+
+  // The server refuses a changed or untrusted code file, and serves a trusted unchanged one.
+  const s = mkSession([], [], [], view);
+  const boot = await fetch(`${srv.origin}/views/${s.id}/document?boot=${s.bootToken}`);
+  assert.equal(boot.status, 200, 'the trusted document is served');
+  assert.ok((await boot.text()).includes('Trusty'));
+  assert.equal((await api(s, `/views/${s.id}/styles/trusty.css`)).status, 200, 'a trusted stylesheet is served');
+  assert.equal((await api(s, '/api/v1/fragments/greet')).status, 200, 'a trusted fragment is served');
+  const [changeCss, restoreCss] = edit('.neuron/styles/trusty.css', 'h1 { color: blue; }');
+  changeCss();
+  const refusedCss = await api(s, `/views/${s.id}/styles/trusty.css`);
+  assert.equal(refusedCss.status, 403, 'a changed stylesheet is refused');
+  assert.equal((await refusedCss.json()).error.code, 'untrusted');
+  restoreCss();
+  assert.equal((await api(s, `/views/${s.id}/styles/trusty.css`)).status, 200, 'the trusted bytes are served again');
+  const [changeFrag, restoreFrag] = edit('.neuron/fragments/greet.html', '<script>window.stolen = 1</script>');
+  changeFrag();
+  const refusedFrag = await api(s, '/api/v1/fragments/greet', { headers: { 'HX-Request': 'true' } });
+  assert.equal(refusedFrag.status, 403, 'a changed fragment (code htmx would run) is refused');
+  assert.ok(!(await refusedFrag.text()).includes('stolen'), 'none of the changed code is sent');
+  restoreFrag();
+  writeFileSync(join(ws, '.neuron', 'fragments', 'late.html'), '<p>late</p>');
+  assert.equal((await api(s, '/api/v1/fragments/late')).status, 403, 'a fragment added after trust is refused');
+  writeFileSync(join(ws, '.neuron', 'styles', 'late.css'), 'p {}');
+  assert.equal((await api(s, `/views/${s.id}/styles/late.css`)).status, 403, 'a stylesheet added after trust is refused');
+  rmSync(join(ws, '.neuron', 'fragments', 'late.html'));
+  rmSync(join(ws, '.neuron', 'styles', 'late.css'));
+  // Reloading the document after its HTML changed does not run the new HTML.
+  writeFileSync(join(ws, view), '<h1>Trusty v2</h1><script>steal()</script>');
+  const reload = await fetch(`${srv.origin}/views/${s.id}/document`, { headers: { cookie: boot.headers.get('set-cookie').split(';')[0] } });
+  assert.equal(reload.status, 403, 'a changed document is refused on reload');
+  assert.ok(!(await reload.text()).includes('steal()'));
+  sessions.revoke(s.id);
+}
+
+// --- 7B: approvals over IPC ------------------------------------------------------
+{
+  // index.ts finds the bundled htmx runtime next to its compiled file.
+  globalThis.__dirname = dirname(htmxJs);
+  let store = {};
+  const view = 'ipc-view.html';
+  writeFileSync(join(ws, view), '<p>IPC view</p>');
+  m.initHtmxViews({
+    getRepoRoot: (event) => event.trusted ? ws : null,
+    getSetting: (key) => store[key] ?? null,
+    setSetting: (key, value) => { store = { ...store, [key]: JSON.parse(JSON.stringify(value)) }; },
+  });
+  const ev = { trusted: true };
+  const ipc = (name, ...args) => m.ipcHandlers.get(name)(ev, ...args);
+  const key = `${ws}::${view}`;
+
+  // An old manifest-hash record does not count: the view asks once more.
+  store.htmxViewApprovals = { [key]: { manifestHash: 'none', grantedAt: '2025-01-01T00:00:00.000Z' } };
+  let prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(prompt.status, 'needs-approval', 'an old manifest-hash record does not count');
+  assert.equal(prompt.changed, false, 'and it is not reported as a change');
+  assert.deepEqual((await ipc('htmx-views:list-trusted')).views, [], 'nor is it listed as trusted');
+
+  // Trust the version the prompt showed.
+  assert.equal((await ipc('htmx-views:approve', view, 'f'.repeat(64))).changed, true, 'a hash that is not the current version is refused');
+  assert.equal((await ipc('htmx-views:approve', view, 'always')).success, false, 'the old scope argument is gone');
+  assert.equal((await ipc('htmx-views:approve', view, prompt.contentHash)).success, true);
+  const record = store.htmxViewApprovals[key];
+  assert.equal(record.contentHash, prompt.contentHash, 'stored as { contentHash, grantedAt }');
+  assert.ok(!Number.isNaN(Date.parse(record.grantedAt)));
+  assert.equal(record.manifestHash, undefined, 'the old record is replaced, not merged');
+  const listed = (await ipc('htmx-views:list-trusted')).views;
+  assert.deepEqual(listed.map((v) => [v.path, v.name]), [[view, 'ipc-view']]);
+  assert.equal(m.ipcHandlers.get('htmx-views:list-trusted')({ trusted: false }).success, false, 'no workspace, no list');
+
+  let ready = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(ready.status, 'ready', 'a trusted, unchanged view runs');
+  const first = await fetch(ready.url);
+  assert.equal(first.status, 200);
+  const viewCookie = { cookie: first.headers.get('set-cookie').split(';')[0] };
+
+  // Module 7: a denied capability answers 403 to the running view.
+  const denied = await fetch(`${new URL(ready.url).origin}/api/v1/files/content?path=notes/hello.md`, { headers: viewCookie });
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error.code, 'missing_capability');
+
+  // Any change asks again, says so, and stops the running session.
+  writeFileSync(join(ws, view), '<p>IPC view, edited</p>');
+  prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(prompt.status, 'needs-approval', 'an edited view asks again');
+  assert.equal(prompt.changed, true, 'and says it changed since it was trusted');
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: viewCookie })).status, 401, 'the old session is stopped');
+
+  // A change between the prompt and the click is not trusted unseen.
+  const shown = prompt.contentHash;
+  writeFileSync(join(ws, view), '<p>IPC view, edited again</p>');
+  const raced = await ipc('htmx-views:approve', view, shown);
+  assert.equal(raced.success, false);
+  assert.equal(raced.changed, true, 'the version the user did not see is not trusted');
+  prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal((await ipc('htmx-views:approve', view, prompt.contentHash)).success, true);
+
+  // Module 7: closing the tab revokes its session.
+  ready = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(ready.status, 'ready');
+  const second = await fetch(ready.url);
+  const secondCookie = { cookie: second.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: secondCookie })).status, 200);
+  assert.equal((await ipc('htmx-views:close', ready.sessionId)).success, true);
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: secondCookie })).status, 401, 'a closed view loses its session');
+
+  // Reset removes the record and revokes the running session.
+  ready = await ipc('htmx-views:open', view, 'dark');
+  const third = await fetch(ready.url);
+  const thirdCookie = { cookie: third.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await ipc('htmx-views:reset-approval', view)).success, true);
+  assert.equal(store.htmxViewApprovals[key], undefined, 'reset removes the record');
+  assert.equal((await fetch(`${new URL(ready.url).origin}/api/v1/context`, { headers: thirdCookie })).status, 401, 'reset revokes the session');
+  assert.deepEqual((await ipc('htmx-views:list-trusted')).views, []);
+  prompt = await ipc('htmx-views:open', view, 'dark');
+  assert.equal(prompt.status, 'needs-approval', 'after reset the view asks again');
+  assert.equal(prompt.changed, false);
+}
+
 srv.close();
 rmSync(ws, { recursive: true, force: true });
 rmSync(outside, { recursive: true, force: true });
 console.log(`htmx-views: all checks passed${symlinksWork ? '' : ' (symlink test skipped: no privilege)'}`);
+// index.ts keeps its own view server for the app's lifetime and has no close;
+// the IPC checks above started it, so end the run here.
+process.exit(0);

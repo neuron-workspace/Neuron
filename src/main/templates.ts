@@ -81,24 +81,58 @@ export function listTemplates(root: string): WorkspaceTemplate[] {
  * the workspace made from it, and copying it would put a file in the user's
  * notes that only means something to the chooser they just used.
  */
-export function copyTemplate(source: string, destination: string): void {
+export function copyTemplate(source: string, destination: string, now = new Date()): void {
   fs.mkdirSync(destination, { recursive: true });
+  const shift = path.basename(source) === 'demo-repo' ? demoDateShift(source, now) : 0;
+  const shiftDates = (text: string) => text.replace(/\b\d{4}-\d{2}-\d{2}\b/g, (day) => {
+    const time = calendarTime(day);
+    return time === null ? day : new Date(time + shift).toISOString().slice(0, 10);
+  });
 
   const walk = (from: string, to: string) => {
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
       if (entry.name === 'template.json' && from === source) continue;
       const src = path.join(from, entry.name);
-      const dst = path.join(to, entry.name);
+      const isNote = /\.(md|mdx|db)$/i.test(entry.name);
+      const dst = path.join(to, shift && isNote ? shiftDates(entry.name) : entry.name);
       if (entry.isDirectory()) {
         fs.mkdirSync(dst, { recursive: true });
         walk(src, dst);
       } else if (entry.isFile()) {
-        fs.copyFileSync(src, dst);
+        if (shift && isNote) fs.writeFileSync(dst, shiftDates(fs.readFileSync(src, 'utf8')), 'utf8');
+        else fs.copyFileSync(src, dst);
       }
     }
   };
 
   walk(source, destination);
+}
+
+function calendarTime(day: string): number | null {
+  const time = Date.parse(day + 'T00:00:00Z');
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === day ? time : null;
+}
+
+/** All demo dates move together; the latest task due date lands a week from creation. */
+function demoDateShift(source: string, now: Date): number {
+  let latestDue = -Infinity;
+  let latestDate = -Infinity;
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && /\.(md|mdx|db)$/i.test(entry.name)) {
+        const text = fs.readFileSync(full, 'utf8');
+        for (const match of text.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g)) latestDate = Math.max(latestDate, calendarTime(match[0]) ?? -Infinity);
+        if (/\.db$/i.test(entry.name)) {
+          for (const match of text.matchAll(/"due"\s*:\s*"(\d{4}-\d{2}-\d{2})"/g)) latestDue = Math.max(latestDue, calendarTime(match[1]) ?? -Infinity);
+        }
+      }
+    }
+  };
+  walk(source);
+  const anchor = Number.isFinite(latestDue) ? latestDue : latestDate;
+  return Number.isFinite(anchor) ? Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + 7) - anchor : 0;
 }
 
 /** Whether a folder already holds notes, so the caller can refuse to write over them. */

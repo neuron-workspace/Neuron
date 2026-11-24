@@ -131,6 +131,88 @@ check('a note with no content is not an error', () => {
   assert.deepEqual(searchPaths(notes, 'nothing'), []);
 });
 
+// --- Module 11 ---------------------------------------------------------------
+
+check('every term must match: one missing term drops the note', () => {
+  const notes = [{ path: 'a.md', content: 'red green\n' }, { path: 'b.md', content: 'red\n' }, { path: 'c.md', content: 'green blue\n' }];
+  assert.deepEqual(searchPaths(notes, 'red green'), ['a.md']);
+  assert.deepEqual(searchPaths(notes, 'green red'), ['a.md'], 'in any order');
+  assert.deepEqual(searchPaths(notes, 'red purple'), []);
+});
+
+check('scoring order: exact name, then name, then path, then a heading, then the text', () => {
+  const notes = [
+    { path: 'z/body.md', content: 'about the comet\n' },
+    { path: 'z/heading.md', content: '# Comet\n' },
+    { path: 'comet/notes.md', content: '' },
+    { path: 'z/comet sightings.md', content: '' },
+    { path: 'z/comet.md', content: '' },
+  ];
+  assert.deepEqual(searchPaths(notes, 'comet'), ['z/comet.md', 'z/comet sightings.md', 'comet/notes.md', 'z/heading.md', 'z/body.md']);
+});
+
+check('each tier beats the one below at its fullest: the text is capped and a heading counts once', () => {
+  const many = 'comet '.repeat(50);
+  const notes = [
+    { path: 'z/body.md', content: `${many}\n${many}\n` },
+    { path: 'z/heading.md', content: '# Comet\n' },
+    { path: 'z/headings.md', content: `# Comet\n## Comet again\n${many}\n` },
+    { path: 'comet/plain.md', content: '' },
+    { path: 'z/comet sightings.md', content: '' },
+  ];
+  const order = searchPaths(notes, 'comet');
+  assert.ok(order.indexOf('z/heading.md') < order.indexOf('z/body.md'), 'one heading beats any amount of text');
+  assert.ok(order.indexOf('comet/plain.md') < order.indexOf('z/headings.md'), 'a folder match beats headings and text together');
+  assert.equal(order[0], 'z/comet sightings.md', 'a name match beats all of them');
+});
+
+check('ties are broken by path', () => {
+  const notes = [{ path: 'm/b.md', content: 'x\n' }, { path: 'a/z.md', content: 'x\n' }, { path: 'm/a.md', content: 'x\n' }];
+  assert.deepEqual(searchPaths(notes, 'x'), ['a/z.md', 'm/a.md', 'm/b.md']);
+});
+
+check('snippets are the matching lines, 1-based, in order, three by default', () => {
+  const [hit] = searchNotes([{ path: 'n.md', content: 'one\nkiwi two\nthree\nKIWI four\r\nkiwi five\nkiwi six\n' }], 'kiwi');
+  assert.deepEqual(hit.matches, [{ line: 2, text: 'kiwi two' }, { line: 4, text: 'KIWI four' }, { line: 5, text: 'kiwi five' }]);
+});
+
+check('case: either side may be upper case, accented letters included (pinned)', () => {
+  const notes = [{ path: 'n.md', content: 'Un café à Montréal\n' }];
+  assert.deepEqual(searchPaths(notes, 'CAFÉ'), ['n.md']);
+  assert.deepEqual(searchPaths(notes, 'montréal'), ['n.md']);
+  assert.deepEqual(searchPaths([{ path: 'É.md', content: '' }], 'é'), ['É.md']);
+});
+
+check('accents: an unaccented letter does not match an accented one (pinned)', () => {
+  const notes = [{ path: 'n.md', content: 'Un café à Montréal\n' }];
+  assert.deepEqual(searchPaths(notes, 'cafe'), []);
+  assert.deepEqual(searchPaths(notes, 'montreal'), []);
+});
+
+check('a note over 25 MB never appears, by its name or its text', () => {
+  const tooLarge = 'Error: This file is too large to open in Neuron (over 25 MB).';
+  const notes = [{ path: 'huge.md', content: tooLarge }, { path: 'small.md', content: 'large note\n' }];
+  assert.deepEqual(searchPaths(notes, 'huge'), []);
+  assert.deepEqual(searchPaths(notes, 'large'), ['small.md'], 'and the refusal is not searched as text');
+});
+
+check('text files are found by their text, with line numbers', () => {
+  const files = [
+    { path: 'config/settings.json', content: '{\n  "quokkaKey": true\n}\n' },
+    { path: 'logs/run.log', content: 'started\nquokka seen\n' },
+  ];
+  const hits = searchNotes(files, 'quokka');
+  assert.deepEqual(hits.map((h) => h.path), ['config/settings.json', 'logs/run.log']);
+  assert.deepEqual(hits[0].matches, [{ line: 2, text: '"quokkaKey": true' }]);
+  assert.equal(hits[0].truncated, undefined);
+});
+
+check('a text file read only in part says so in its hit', () => {
+  const [hit] = searchNotes([{ path: 'big.log', content: 'headword\n', truncated: true }], 'headword');
+  assert.equal(hit.truncated, true);
+  assert.deepEqual(searchNotes([{ path: 'big.log', content: 'headword\n', truncated: true }], 'tailword'), []);
+});
+
 console.log(`\nsearch: ${checks} checks passed`);
 
 rmSync(out, { recursive: true, force: true });

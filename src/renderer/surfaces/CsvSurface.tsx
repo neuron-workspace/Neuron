@@ -12,6 +12,7 @@ import {
   type CsvColumnMeta, type CsvColumnType, type CsvTableMeta, type CsvViewState,
 } from '@/lib/csv-table';
 import type { DbOption } from '@/lib/db';
+import { ExternalChangeBar } from '@/components/FileNotices';
 import { registerSurface, type SurfaceProps } from './index';
 
 // ===========================================================================
@@ -54,7 +55,7 @@ const copyColumns = (columns: Record<string, CsvColumnMeta>) => {
   return next;
 };
 
-export function CsvSurface({ path, content }: SurfaceProps) {
+export function CsvSurface({ path, content, onChangeNote, saveState }: SurfaceProps) {
   const fileName = path.split('/').pop()!;
   const title = fileName.replace(/\.csv$/i, '');
   const metaPath = tableMetaPath(path);
@@ -103,7 +104,10 @@ export function CsvSurface({ path, content }: SurfaceProps) {
   // `content` prop can still be the previously open file's, so it is ignored.
   const loaded = useRef<string | null>(null);
   const adoptChange = (text: string) => { loaded.current = path; adoptText(text); };
-  const csv = useFileWriter(path, adoptChange);
+  // The CSV itself is the app's shared document in an editor group (one copy,
+  // one writer, every group in step; see DbSurface). Its metadata is a file no
+  // group shows, so it keeps a writer of its own and follows the disk.
+  const csv = useFileWriter(path, adoptChange, { askOnConflict: true, save: onChangeNote, saveState });
   const metaWriter = useFileWriter(metaPath, adoptMetaText);
   const [unreadable, setUnreadable] = useState(false);
 
@@ -472,6 +476,7 @@ export function CsvSurface({ path, content }: SurfaceProps) {
 
   return (
     <main className={`font-sans h-full ${fill ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--canvas)] text-[var(--ink)]`} data-csv-table={editable ? 'managed' : 'read-only'}>
+      {csv.conflict && <ExternalChangeBar path={path} onKeepMine={csv.keepMine} onUseDisk={() => { void csv.takeDisk(); }} />}
       <SaveNotice error={csv.saveError} path={path} onRetry={() => { if (tableRef.current) writeTable(tableRef.current); }} />
       <SaveNotice error={metaWriter.saveError} path={metaPath} onRetry={() => { if (metaRef.current) void writeMeta(metaRef.current); }} />
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

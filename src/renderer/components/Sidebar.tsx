@@ -7,7 +7,10 @@ import OtherFileIcon from './OtherFileIcon';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SIDEBAR_MIME } from '../lib/layout';
 import { cn } from '../lib/utils';
-import { searchNotes } from '../lib/search';
+import { searchNotes, type SearchHit } from '../lib/search';
+import { useTextSearch } from '../lib/use-text-search';
+import { fileKind, isListedFile } from '../../main/file-kinds';
+import type { FileAction } from './FileActionDialog';
 
 type View = 'notes' | 'gallery';
 
@@ -38,13 +41,59 @@ interface SidebarProps {
   folders: string[];
   /** Files Neuron does not open: listed, selectable, never opened. */
   otherFiles: string[];
-  /** Images, video, audio and text outside the note listing: they open, but are not searched. */
+  /** Images, video, audio and text outside the note listing: they open in views of their own. */
   openFiles?: string[];
+  /** The text files among them (JSON, YAML, logs, code): search reads these when it runs. */
+  textFiles?: string[];
+  /** Size on disk, from the listing, when known: a text file past 5 MB is searched by its start. */
+  fileSize?: (path: string) => number | undefined;
+  /** Open a search hit with the cursor on the line it matched. */
+  onOpenAt?: (path: string, line: number) => void;
   onReveal: (path: string) => void;
   revealedFolder: string | null;
   tags: string[];
   onSelectTag: (tag: string | null) => void;
   selectedTag: string | null;
+  /** Rename (F2) or Move to… a file or folder. */
+  onFileAction?: (action: FileAction) => void;
+  /** A file or folder dropped onto a folder ('' for the root). */
+  onMoveInto?: (path: string, folder: string) => void;
+}
+
+/** What a dragged tree row carries: the path, and whether it is a folder. */
+export const PATH_MIME = 'application/x-neuron-path';
+
+/** Dragging rows and dropping them on folders, shared by the sidebar and the explorer. */
+export function dragPath(path: string, folder: boolean) {
+  return {
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => {
+      event.dataTransfer.setData(PATH_MIME, JSON.stringify({ path, folder }));
+      event.dataTransfer.effectAllowed = 'move';
+      event.stopPropagation();
+    },
+  };
+}
+export function dropOnFolder(folder: string, onMoveInto: ((path: string, folder: string) => void) | undefined) {
+  if (!onMoveInto) return {};
+  return {
+    'data-drop-folder': folder,
+    onDragOver: (event: React.DragEvent) => {
+      if (!event.dataTransfer.types.includes(PATH_MIME)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    },
+    onDrop: (event: React.DragEvent) => {
+      const raw = event.dataTransfer.getData(PATH_MIME);
+      if (!raw) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        const { path } = JSON.parse(raw) as { path?: unknown };
+        if (typeof path === 'string' && path !== folder) onMoveInto(path, folder);
+      } catch { /* not ours */ }
+    },
+  };
 }
 
 interface TreeNode {
@@ -74,6 +123,7 @@ function buildTree(paths: string[], other: ReadonlySet<string> = new Set()): Tre
 }
 
 const NONE: string[] = [];
+const noSize = () => undefined;
 
 function allFolderPaths(node: TreeNode, out: string[] = []): string[] {
   for (const child of node.folders.values()) {
@@ -133,10 +183,19 @@ export default function Sidebar(props: SidebarProps) {
   // Ranked over names AND bodies. This used to be a substring test against the
   // path, so a word you knew you had written was unfindable unless it happened
   // to be in the filename.
+  // Text files are read for the search only while it is open, and only once
+  // something has been typed: see useTextSearch.
+  const textFiles = useTextSearch(mode === 'search', !!query, props.textFiles ?? NONE, props.fileSize ?? noSize);
   const hits = useMemo(
-    () => (query ? searchNotes(notesData ?? notes.map((path) => ({ path, content: '' })), query) : []),
-    [notesData, notes, query],
+    () => (query ? searchNotes([...(notesData ?? notes.map((path) => ({ path, content: '' }))), ...textFiles], query) : []),
+    [notesData, notes, textFiles, query],
   );
+  const searched = (notesData?.length ?? notes.length) + textFiles.length;
+  const openHit = (hit: SearchHit, line?: number) => {
+    const at = line ?? hit.matches[0]?.line;
+    if (at !== undefined && props.onOpenAt) props.onOpenAt(hit.path, at);
+    else onSelectNote(hit.path);
+  };
   const filtered = useMemo(() => (query ? hits.map((hit) => hit.path) : notes), [hits, notes, query]);
   const otherFiles = query ? NONE : props.otherFiles;
   const openFiles = query ? NONE : props.openFiles ?? NONE;
@@ -209,9 +268,11 @@ export default function Sidebar(props: SidebarProps) {
     if (file.other) return renderOther(file, depth);
     const isSelected = selectedNote === file.path && view === 'notes' && !selectedOther;
     const isConfirming = pendingDelete === file.path;
-    return (
-      <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} style={{ paddingLeft: `${8 + depth * 14}px` }}>
-        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}>
+    const row = (
+      <div key={file.path} className="note-row group interactive mb-0.5 flex items-center gap-2 pr-2" data-selected={isSelected} data-tree-file={file.path} style={{ paddingLeft: `${8 + depth * 14}px` }}
+        {...(props.onMoveInto ? dragPath(file.path, false) : {})}>
+        <button aria-current={isSelected ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left" onClick={() => { onSelectNote(file.path); setSelectedOther(null); setPendingDelete(null); }} onDoubleClick={() => props.onKeepNote?.(file.path)}
+          onKeyDown={(event) => { if (event.key === 'F2' && props.onFileAction) { event.preventDefault(); props.onFileAction({ kind: 'rename', path: file.path, folder: false }); } }}>
           {openSet.has(file.path)
             ? <OtherFileIcon path={file.path} className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]')} />
             : /\.csv$/i.test(file.name)
@@ -230,7 +291,20 @@ export default function Sidebar(props: SidebarProps) {
         )}
       </div>
     );
+    return props.onFileAction ? withFileMenu(row, file.path, false) : row;
   };
+
+  // Rename and Move to… on a row's context menu, for files and folders alike.
+  const withFileMenu = (row: React.ReactElement, path: string, folder: boolean) => (
+    <ContextMenu key={path}>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => props.onFileAction?.({ kind: 'rename', path, folder })}>Rename<span className="ml-auto pl-4 text-[10px] text-[var(--ink-muted)]">F2</span></ContextMenuItem>
+        <ContextMenuItem onSelect={() => props.onFileAction?.({ kind: 'move', path, folder })}>Move to…</ContextMenuItem>
+        <ContextMenuItem onSelect={() => props.onReveal(path)}>Show in folder</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 
   const renderFolder = (node: TreeNode, depth: number): React.ReactNode => {
     // Search mode force-opens every folder so matches aren't hidden inside a
@@ -239,8 +313,11 @@ export default function Sidebar(props: SidebarProps) {
     const files = [...node.files];
     return (
       <div key={node.path} data-revealed-folder={node.path === props.revealedFolder}>
-        <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" style={{ paddingLeft: `${8 + depth * 14}px` }}>
-          <button className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left" onClick={() => toggleFolder(node.path)}>
+        {(() => { const row = (
+        <div className="note-row group interactive mb-0.5 flex items-center gap-1.5 pr-2" data-tree-folder={node.path} style={{ paddingLeft: `${8 + depth * 14}px` }}
+          {...(props.onMoveInto ? dragPath(node.path, true) : {})} {...dropOnFolder(node.path, props.onMoveInto)}>
+          <button className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left" onClick={() => toggleFolder(node.path)}
+            onKeyDown={(event) => { if (event.key === 'F2' && props.onFileAction) { event.preventDefault(); props.onFileAction({ kind: 'rename', path: node.path, folder: true }); } }}>
             <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)] transition-transform', isOpen && 'rotate-90')} />
             {isOpen ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink)]" /> : <FolderClosed className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
             <span className="truncate text-[12px] font-medium">{node.name}</span>
@@ -249,6 +326,7 @@ export default function Sidebar(props: SidebarProps) {
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
+        ); return props.onFileAction ? withFileMenu(row, node.path, true) : row; })()}
         {isOpen && (
           <div>
             {[...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, depth + 1))}
@@ -260,7 +338,7 @@ export default function Sidebar(props: SidebarProps) {
   };
 
   const noteTree = (
-    <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
+    <div data-sidebar-tree className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3" {...dropOnFolder('', props.onMoveInto)}>
       {[...tree.folders.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => renderFolder(child, 0))}
       {[...tree.files].sort((a, b) => a.name.localeCompare(b.name)).map((file) => renderFile(file, 0))}
       {filtered.length === 0 && openFiles.length === 0 && otherFiles.length === 0 && props.folders.length === 0 && <div className="px-2 py-8 text-center text-xs leading-5 text-[var(--ink-muted)]">{query ? 'No notes match your search.' : 'No notes yet. Create one to start writing.'}</div>}
@@ -312,14 +390,19 @@ export default function Sidebar(props: SidebarProps) {
               <input autoFocus className="field py-1.5 pl-8 pr-8 text-xs" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search notes" />
               {search && <button aria-label="Clear search" className="tool-button interactive absolute right-1 top-1/2 -translate-y-1/2" onClick={() => setSearch('')}><X className="h-3.5 w-3.5" /></button>}
             </label>
-            <p className="mt-1.5 px-0.5 text-[11px] text-[var(--ink-muted)]">{filtered.length} of {notes.length} notes</p>
+            <p className="mt-1.5 px-0.5 text-[11px] text-[var(--ink-muted)]">{query ? `${filtered.length} of ${searched} files` : `${notes.length} notes`}</p>
           </div>
           {query ? (
             <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
               {hits.map((hit) => (
                 <button
                   key={hit.path}
-                  onClick={() => onSelectNote(hit.path)}
+                  data-search-hit={hit.path}
+                  // A click on one of the lines opens the file at that line; elsewhere, at the first.
+                  onClick={(event) => {
+                    const line = (event.target as HTMLElement).closest<HTMLElement>('[data-hit-line]')?.dataset.hitLine;
+                    openHit(hit, line ? Number(line) : undefined);
+                  }}
                   onDoubleClick={() => props.onKeepNote?.(hit.path)}
                   className={cn(
                     'interactive block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--surface-hover)]',
@@ -327,17 +410,22 @@ export default function Sidebar(props: SidebarProps) {
                   )}
                 >
                   <div className="flex items-center gap-1.5">
-                    <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                    {fileKind(hit.path) === 'text' || !isListedFile(hit.path)
+                      ? <OtherFileIcon path={hit.path} aria-hidden className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                      : /\.csv$/i.test(hit.path)
+                      ? <Table2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                      : <FileCode2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />}
                     <span className="truncate text-xs font-medium text-[var(--ink)]">{hit.path}</span>
                   </div>
                   {/* The line that matched, so a body hit does not look like a
                       filename hit with nothing behind it. */}
                   {hit.matches.map((match) => (
-                    <div key={match.line} className="mt-0.5 flex gap-1.5 pl-5">
+                    <div key={match.line} data-hit-line={match.line} className="mt-0.5 flex gap-1.5 rounded pl-5 hover:bg-[var(--surface)]">
                       <span className="shrink-0 font-sans text-[10px] tabular-nums text-[var(--ink-muted)]">{match.line}</span>
                       <span className="truncate font-sans text-[10px] leading-4 text-[var(--ink-secondary)]">{match.text}</span>
                     </div>
                   ))}
+                  {hit.truncated && <div data-search-truncated className="mt-0.5 pl-5 font-sans text-[10px] leading-4 text-[var(--ink-muted)]">Only the first 5 MB of this file was searched.</div>}
                 </button>
               ))}
               {hits.length === 0 && (

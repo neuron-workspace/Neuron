@@ -47,6 +47,33 @@ assert.deepEqual(resolveWorkspacePlugins({ enabled: { a: 'yes', b: true }, confi
 // The old record is not changed by being read.
 assert.deepEqual(legacy.enabled, { 'ai-claude': true, terminal: false, 'daily-calendar': true });
 
+// --- Per workspace: switching a plugin on in one leaves another untouched ----
+// The settings store as the host uses it: load by the workspace's key, save
+// the whole record back under that key (host.tsx setEnabled/persist).
+for (const [platform, a, aAgain, b] of [
+  ['win32', 'C:\\Notes\\Work', 'c:/notes/work/', 'C:\\Notes\\Home'],
+  ['darwin', '/Users/Ada/Work', '/users/ada/Work/', '/Users/Ada/Home'],
+  ['linux', '/home/ada/Work', '/home/ada/Work//', '/home/ada/Home'],
+]) {
+  const store = new Map();
+  const open = (dir) => resolveWorkspacePlugins(store.get(workspacePluginsKey(dir, platform)) ?? null, null, null, workspaceKey(dir, platform), defaults);
+  const enable = (dir, id, on) => {
+    const current = open(dir);
+    store.set(workspacePluginsKey(dir, platform), { ...current, enabled: { ...current.enabled, [id]: on } });
+  };
+  enable(b, 'graph', true);
+  const bBefore = JSON.stringify(store.get(workspacePluginsKey(b, platform)));
+  enable(a, 'daily-calendar', true);
+  assert.equal(open(a).enabled['daily-calendar'], true, `${platform}: on where it was switched on`);
+  assert.equal(open(aAgain).enabled['daily-calendar'], true, `${platform}: another spelling of the folder is the same workspace`);
+  assert.equal(workspacePluginsKey(a, platform), workspacePluginsKey(aAgain, platform), `${platform}: one key for both spellings`);
+  assert.equal(open(b).enabled['daily-calendar'], undefined, `${platform}: off in the other workspace`);
+  assert.equal(JSON.stringify(store.get(workspacePluginsKey(b, platform))), bBefore, `${platform}: the other workspace's record is not written`);
+  enable(aAgain, 'daily-calendar', false);
+  assert.equal(store.size, 2, `${platform}: switching off under the other spelling writes the same record`);
+  assert.equal(open(a).enabled['daily-calendar'], false);
+}
+
 // --- Connectors, read off the plugin manifests -----------------------------
 const claude = {
   id: 'ai-claude', name: 'Claude Assistant', connector: { id: 'anthropic', name: 'Claude', description: 'd' },
@@ -65,11 +92,15 @@ assert.deepEqual(connectors[0].fields.map((f) => f.key), ['apiKey', 'model']);
 // --- Status ---------------------------------------------------------------
 assert.equal(connectorStatus(claude.configSchema, {}, {}), 'not-set-up');
 assert.equal(connectorStatus(claude.configSchema, { model: 'x' }, { apiKey: false }), 'not-set-up', 'a model name alone is not set up');
-assert.equal(connectorStatus(claude.configSchema, {}, { apiKey: true }), 'connected');
+// D43.5: a saved key is Configured; Connected only once a call through it has succeeded.
+assert.equal(connectorStatus(claude.configSchema, {}, { apiKey: true }), 'configured');
+assert.equal(connectorStatus(claude.configSchema, {}, { apiKey: true }, true), 'connected');
+assert.equal(connectorStatus(claude.configSchema, {}, { apiKey: false }, true), 'not-set-up', 'a success does not stand in for a missing key');
 assert.equal(connectorStatus(local.configSchema, { model: 'llama3' }, {}), 'not-set-up');
 assert.equal(connectorStatus(local.configSchema, { endpoint: '  ' }, {}), 'not-set-up');
-assert.equal(connectorStatus(local.configSchema, { endpoint: 'http://localhost:11434/v1/chat/completions' }, {}), 'connected');
-assert.equal(connectorStatus([], undefined, undefined), 'connected');
+assert.equal(connectorStatus(local.configSchema, { endpoint: 'http://localhost:11434/v1/chat/completions' }, {}), 'configured');
+assert.equal(connectorStatus(local.configSchema, { endpoint: 'http://localhost:11434/v1/chat/completions' }, {}, true), 'connected');
+assert.equal(connectorStatus([], undefined, undefined), 'configured');
 
 // --- Connector config migration: copied, nothing deleted ------------------
 const legacyConfig = {
@@ -85,5 +116,71 @@ assert.ok(!JSON.stringify(migrated.values).includes('sk-ant-plain'));
 assert.equal(JSON.stringify(legacyConfig), before, 'the old record is left as it was');
 assert.deepEqual(migrateConnectorValues(null, [claude]), { values: {}, secrets: [] });
 assert.deepEqual(migrateConnectorValues({ 'ai-claude': { model: '' } }, [claude]), { values: {}, secrets: [] }, 'empty values are not copied');
+
+// --- D43.5 in the real plugin host: Connected follows a call that succeeded ---
+{
+  const { build } = await import('esbuild');
+  const { createRequire } = await import('node:module');
+  const { rmSync } = await import('node:fs');
+  const path = await import('node:path');
+  const { parseHTML } = await import('linkedom');
+  const { window, document } = parseHTML('<!doctype html><html><body></body></html>');
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const workspace = process.platform === 'win32' ? 'C:\\Notes' : '/home/me/Notes';
+  let answer = { success: true, text: 'hi' };
+  window.electronAPI = {
+    platform: process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux',
+    settings: {
+      get: async (key) => (key.startsWith('plugins:') ? { enabled: { 'ai-claude': true }, config: {} } : key === 'connectors' ? {} : null),
+      set: async () => ({ success: true }),
+      // Status comes from whether a key is saved, never from reading it.
+      hasSecret: async () => true,
+      setSecret: async () => ({ success: true }),
+      onChanged: () => () => {},
+    },
+    ai: { complete: async () => answer },
+    net: {}, terminal: {},
+  };
+  const root = process.cwd();
+  const outfile = path.join(root, 'tools/.connectors-host.tmp.cjs');
+  await build({ stdin: { contents: `export { PluginProvider, usePlugins } from './src/renderer/plugins/host';`, resolveDir: root, loader: 'tsx' },
+    bundle: true, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic', outfile, logLevel: 'silent' });
+  const require = createRequire(import.meta.url);
+  let host;
+  try { host = require(outfile); } finally { rmSync(outfile, { force: true }); }
+  const React = require('react');
+  const { createRoot } = require('react-dom/client');
+  const { act } = React;
+  const settle = () => act(async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0)); });
+  let plugins = null;
+  const Probe = () => { plugins = host.usePlugins(); return null; };
+  const catalog = [{ manifest: claude, activate: () => () => {} }];
+  const bridge = { activeNote: null, noteContent: '', notes: [], notesData: [], openNote: () => {}, createNote: async () => true, refreshNotes: async () => {} };
+  const container = document.createElement('div');
+  const rootNode = createRoot(container);
+  await act(async () => { rootNode.render(React.createElement(host.PluginProvider, { catalog, bridge, workspace }, React.createElement(Probe))); });
+  await settle();
+  assert.equal(plugins.connectorStatus('anthropic'), 'configured', 'a saved key is Configured, not Connected');
+  const complete = (request) => act(async () => { await plugins.runtimeFor('ai-claude').ai.complete(request); });
+  await complete({ provider: 'anthropic', messages: [{ role: 'user', content: 'hi' }] });
+  await settle();
+  assert.equal(plugins.connectorStatus('anthropic'), 'connected', 'Connected once a call through it succeeded');
+  answer = { success: false, error: '401' };
+  await complete({ provider: 'anthropic', messages: [{ role: 'user', content: 'hi' }] });
+  await settle();
+  assert.equal(plugins.connectorStatus('anthropic'), 'configured', 'a failed call takes it back to Configured');
+  answer = { success: true, text: 'hi' };
+  await complete({ provider: 'anthropic', messages: [{ role: 'user', content: 'hi' }] });
+  await act(async () => { await plugins.saveConnector('anthropic', { apiKey: 'sk-new' }); });
+  await settle();
+  assert.equal(plugins.connectorStatus('anthropic'), 'configured', 'a replaced key has not been tried yet');
+  // A refused call (another provider) is no call through this connector.
+  await complete({ provider: 'openai', messages: [{ role: 'user', content: 'hi' }] });
+  await settle();
+  assert.equal(plugins.connectorStatus('anthropic'), 'configured');
+  await act(async () => rootNode.unmount());
+}
 
 console.log('connectors: ok');

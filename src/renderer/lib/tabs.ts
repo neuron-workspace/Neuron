@@ -146,7 +146,7 @@ export function moveTab(state: GroupsState, from: number, to: number, path: stri
     const tabs = group.tabs.filter((tab) => tab !== path);
     const at = before === null ? tabs.length : tabs.indexOf(before);
     tabs.splice(at < 0 ? tabs.length : at, 0, path);
-    return { tabs, preview: group.preview, selected: path };
+    return { tabs, preview: group.preview === path ? null : group.preview, selected: path };
   };
   const placed = focusGroup(mapGroup(state, to, place), to);
   return from === to ? placed : closeInGroup(placed, from, path);
@@ -157,6 +157,25 @@ export function removeMissingAll(state: GroupsState, existing: readonly string[]
   const pruned = state.groups.map((group) => removeMissing(group, existing));
   if (pruned.every((group, i) => group === state.groups[i])) return state;
   return dropEmptyGroups({ ...state, groups: pruned });
+}
+
+/**
+ * Follow a rename or move in every group: each tab, preview and selection whose
+ * file `rename` maps (to its new path) takes the new path, in place. Unchanged
+ * when nothing open moved.
+ */
+export function renameInGroups(state: GroupsState, rename: (path: string) => string | null): GroupsState {
+  const next = (path: string | null) => (path === null ? null : rename(path) ?? path);
+  let changed = false;
+  const groups = state.groups.map((group) => {
+    const tabs = group.tabs.map((tab) => next(tab)!);
+    const preview = next(group.preview);
+    const selected = next(group.selected);
+    if (preview === group.preview && selected === group.selected && tabs.every((tab, i) => tab === group.tabs[i])) return group;
+    changed = true;
+    return { tabs: [...new Set(tabs)], preview, selected };
+  });
+  return changed ? { ...state, groups } : state;
 }
 
 /** Close the preview tab of every group, as a workspace switch does. */

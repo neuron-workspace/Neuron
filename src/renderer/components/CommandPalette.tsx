@@ -1,11 +1,11 @@
 import { useRef } from 'react';
-import { Blocks, Chrome, Columns2, Rows2, Database, FileCode2, FolderOpen, FolderPlus, Focus, Frame, Globe, PanelsTopLeft, Settings, Shapes, SquareStack, Share2, Table2, TerminalSquare } from 'lucide-react';
+import { Blocks, FileCode2 } from 'lucide-react';
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import type { SavedLayout, WorkbenchLayout } from '../lib/layout';
 import type { RepositoryInfo } from '../electron.d';
 import { usePlugins } from '../plugins/host';
-import { parentFolder, sharedName } from './TitleBar';
-import { formatChord, type Bindings } from '../lib/keybindings';
+import type { Bindings } from '../lib/keybindings';
+import { paletteCommands, shortcutText, type PaletteCommand, type PaletteGroup } from '../lib/palette-commands';
 import { useTerminalToggle } from '../lib/useTerminalToggle';
 
 /**
@@ -15,11 +15,11 @@ import { useTerminalToggle } from '../lib/useTerminalToggle';
  * commands without once mentioning that five of them have a shortcut -- so the
  * fastest way to work was the one thing the interface never taught.
  */
-function Shortcut({ chord }: { chord?: string }) {
-  if (!chord) return null;
+function Shortcut({ text }: { text: string | null }) {
+  if (!text) return null;
   return (
     <kbd className="ml-auto shrink-0 rounded border border-[var(--divider)] bg-[var(--surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--ink-muted)]">
-      {formatChord(chord)}
+      {text}
     </kbd>
   );
 }
@@ -63,15 +63,31 @@ interface CommandPaletteProps {
   bindings: Bindings;
 }
 
-export default function CommandPalette({ layout, savedLayouts = [], onApplySavedLayout, onSearchNotes, editorGroups = 1, canSplitRight = false, canSplitDown = false, onSplitEditor, onCloseEditorGroup, onFocusNextGroup, onLayoutChange, onResetLayout, open, onOpenChange, notes, recents, onOpenRepo, onCreateRepo, onSwitchRepo, onSelectNote, onOpenMarketplace, onOpenSettings, onCreate, onCreateSurface, onCreateKind, onOpenWebsite, onOpenGallery, onToggleShell, shellActive, onToggleGraph, graphActive, onImportChromeLogins, bindings }: CommandPaletteProps) {
-  const { commands, runtimeFor } = usePlugins();
-  const terminal = useTerminalToggle(layout, onLayoutChange, onOpenMarketplace);
+const GROUPS: PaletteGroup[] = ['Actions', 'Workspaces', 'Layout'];
+
+export default function CommandPalette(props: CommandPaletteProps) {
+  const { layout, savedLayouts = [], editorGroups = 1, canSplitRight = false, canSplitDown = false, open, onOpenChange, notes, recents, onSelectNote, bindings } = props;
+  const { commands: pluginCommands, runtimeFor } = usePlugins();
+  const terminal = useTerminalToggle(layout, props.onLayoutChange, props.onOpenMarketplace);
   const close = () => onOpenChange(false);
   // A new file takes focus itself (a new table opens with its first cell
   // focused). Focus returned to the palette's trigger after that would take
   // the first keystrokes typed into it.
   const keepFocus = useRef(false);
-  const createKind = (kind: 'database' | 'canvas' | 'table') => { keepFocus.current = true; onCreateKind(kind); close(); };
+
+  const commands = paletteCommands(
+    { layout, savedLayouts, recents, editorGroups, canSplitRight, canSplitDown, shellActive: props.shellActive, graphActive: props.graphActive },
+    {
+      ...props,
+      onToggleFullScreen: () => { void window.electronAPI.windowControls.toggleFullScreen(); },
+      onToggleTerminal: () => terminal.toggle(),
+    },
+  );
+  const select = (command: PaletteCommand) => {
+    if (command.keepsFocus) keepFocus.current = true;
+    if (command.closeFirst) { close(); command.run(); }
+    else { command.run(); close(); }
+  };
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} onCloseAutoFocus={(event) => { if (keepFocus.current) { keepFocus.current = false; event.preventDefault(); } }}>
@@ -79,61 +95,24 @@ export default function CommandPalette({ layout, savedLayouts = [], onApplySaved
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
 
-        <CommandGroup heading="Actions">
-          <CommandItem onSelect={() => { onCreate(); close(); }}><FolderPlus /> Create note or section<Shortcut chord={bindings['new-note']} /></CommandItem>
-          <CommandItem onSelect={() => createKind('database')}><Database /> New database</CommandItem>
-          <CommandItem onSelect={() => createKind('canvas')}><Frame /> New canvas</CommandItem>
-          <CommandItem onSelect={() => createKind('table')}><Table2 /> New table</CommandItem>
-          <CommandItem onSelect={() => { onCreateSurface(); close(); }}><SquareStack /> New HTMX view in current folder<Shortcut chord={bindings['new-view']} /></CommandItem>
-          <CommandItem onSelect={() => { onToggleShell(); close(); }}><PanelsTopLeft /> {shellActive ? 'Hide workspace layout' : 'Use workspace layout (.neuron/layout.json)'}</CommandItem>
-          <CommandItem onSelect={() => { onToggleGraph(); close(); }}><Share2 /> {graphActive ? 'Hide workspace graph' : 'Show workspace graph'}<Shortcut chord={bindings['toggle-graph']} /></CommandItem>
-          <CommandItem onSelect={() => { onOpenWebsite(); close(); }}><Globe /> Open website tab<Shortcut chord={bindings['open-website']} /></CommandItem>
-          <CommandItem onSelect={() => { onImportChromeLogins(); close(); }}><Chrome /> Import Chrome logins</CommandItem>
-          <CommandItem onSelect={() => { onOpenMarketplace(); close(); }}><Blocks /> Plugins & integrations</CommandItem>
-          <CommandItem onSelect={() => { onOpenGallery(); close(); }}><Shapes /> Component gallery</CommandItem>
-          <CommandItem onSelect={() => { onOpenSettings(); close(); }}><Settings /> Open settings</CommandItem>
-        </CommandGroup>
+        {GROUPS.map((group) => (
+          <CommandGroup key={group} heading={group}>
+            {commands.filter((command) => command.group === group).map((command) => {
+              const Icon = command.icon;
+              return (
+                <CommandItem key={command.id} value={command.value ?? command.label} disabled={command.disabled} data-command={command.id} onSelect={() => select(command)}>
+                  <Icon /> {command.label}
+                  {command.detail && <span className="ml-1 truncate text-[11px] text-[var(--ink-muted)]">{command.detail}</span>}
+                  <Shortcut text={shortcutText(command, bindings)} />
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
 
-        <CommandGroup heading="Workspaces">
-          <CommandItem onSelect={() => { close(); onOpenRepo(); }}><FolderOpen /> Open folder…</CommandItem>
-          <CommandItem onSelect={() => { close(); onCreateRepo(); }}><FolderPlus /> Create workspace…</CommandItem>
-          {recents.map((repo) => (
-            <CommandItem key={repo.path} value={'Switch workspace: ' + repo.name + ' ' + repo.path} onSelect={() => { close(); onSwitchRepo(repo.path); }}>
-              <FolderOpen /> Switch workspace: {repo.name}
-              {sharedName(recents, repo) && <span className="ml-1 truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
-            </CommandItem>
-          ))}
-        </CommandGroup>
-
-        <CommandGroup heading="Layout">
-          <CommandItem onSelect={() => { onLayoutChange({ sidebar: true, sidebarCollapsed: !layout.sidebarCollapsed }); close(); }}><PanelsTopLeft /> {layout.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar to icons'}</CommandItem>
-          <CommandItem onSelect={() => { onLayoutChange({ statusBar: !layout.statusBar }); close(); }}><PanelsTopLeft /> {layout.statusBar ? 'Hide' : 'Show'} status bar</CommandItem>
-          <CommandItem onSelect={() => { close(); void window.electronAPI.windowControls.toggleFullScreen(); }}><Focus /> Toggle full screen<Shortcut chord={bindings['toggle-fullscreen']} /></CommandItem>
-          <CommandItem onSelect={() => { onLayoutChange({ zen: !layout.zen }); close(); }}><Focus /> {layout.zen ? 'Exit zen mode' : 'Zen mode'}<Shortcut chord={bindings['toggle-zen']} /></CommandItem>
-          <CommandItem onSelect={() => { terminal.toggle(); close(); }}><TerminalSquare /> Toggle terminal<Shortcut chord={bindings['toggle-terminal']} /></CommandItem>
-          {(['sidebar', 'leftPanel', 'rightPanel', 'bottomPanel'] as const).map((key) => (
-            <CommandItem key={key} onSelect={() => { onLayoutChange({ [key]: !layout[key] }); close(); }}>
-              <PanelsTopLeft /> {layout[key] ? 'Hide' : 'Show'} {key === 'sidebar' ? 'sidebar' : key.replace('Panel', ' dock')}
-            </CommandItem>
-          ))}
-          <CommandItem disabled={layout.sidebarSide === 'left'} onSelect={() => { onLayoutChange({ sidebarSide: 'left' }); close(); }}><PanelsTopLeft /> Move sidebar to the left</CommandItem>
-          <CommandItem disabled={layout.sidebarSide === 'right'} onSelect={() => { onLayoutChange({ sidebarSide: 'right' }); close(); }}><PanelsTopLeft /> Move sidebar to the right</CommandItem>
-          <CommandItem onSelect={() => { onResetLayout(); close(); }}><PanelsTopLeft /> Reset layout</CommandItem>
-          <CommandItem onSelect={() => { onSearchNotes?.(); close(); }}><PanelsTopLeft /> Search in notes</CommandItem>
-          <CommandItem disabled={!canSplitRight} onSelect={() => { onSplitEditor?.('row'); close(); }}><Columns2 /> Split editor right<Shortcut chord={bindings['split-editor-right']} /></CommandItem>
-          <CommandItem disabled={!canSplitDown} onSelect={() => { onSplitEditor?.('column'); close(); }}><Rows2 /> Split editor down</CommandItem>
-          {/* The command this replaced, under its old name. */}
-          <CommandItem disabled={!canSplitRight} onSelect={() => { onSplitEditor?.('row'); close(); }}><Columns2 /> Open current note to the side</CommandItem>
-          <CommandItem disabled={editorGroups < 2} onSelect={() => { onCloseEditorGroup?.(); close(); }}><PanelsTopLeft /> Close editor group</CommandItem>
-          <CommandItem disabled={editorGroups < 2} onSelect={() => { onFocusNextGroup?.(); close(); }}><PanelsTopLeft /> Focus next editor group</CommandItem>
-          {savedLayouts.map((saved) => (
-            <CommandItem key={saved.id} onSelect={() => { onApplySavedLayout?.(saved.id); close(); }}><PanelsTopLeft /> Layout: switch to {saved.name}</CommandItem>
-          ))}
-        </CommandGroup>
-
-        {commands.length > 0 && (
+        {pluginCommands.length > 0 && (
           <CommandGroup heading="Plugin commands">
-            {commands.map(({ pluginId, command }) => (
+            {pluginCommands.map(({ pluginId, command }) => (
               <CommandItem key={command.id} value={command.title} onSelect={() => { command.run(runtimeFor(pluginId)); close(); }}>
                 <Blocks /> {command.title}
               </CommandItem>

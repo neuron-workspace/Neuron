@@ -4,12 +4,27 @@ import chokidar from 'chokidar';
 
 export type WatchEvent = 'add' | 'change' | 'unlink';
 
-const ignored = /(^|[\/\\])\.(?!neuron([\/\\]|$))/;
+const ignored = /(^|[\/\\])\.(?!neuron([\/\\]|$))|\.tmp$/;
 
+/**
+ * The system ran out of what watching needs: inotify watches on Linux
+ * (ENOSPC, in a large workspace), or file handles (EMFILE).
+ */
+export function isWatchLimitError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOSPC' || code === 'EMFILE';
+}
+
+/**
+ * Report files added, changed and removed under `workspace`, debounced.
+ *
+ * On an error the watcher stops (and says so through `onError`); the app goes
+ * on without it.
+ */
 export function watchWorkspace(
   workspace: string,
   onEvent: (event: WatchEvent, relativePath: string) => void,
-  options: { debounceMs?: number; useNative?: boolean } = {},
+  options: { debounceMs?: number; useNative?: boolean; onError?: (error: Error) => void } = {},
 ): { close(): void } {
   // Given a path with an 8.3 short name in it (C:\Users\RUNNER~1\...), the
   // recursive watcher in Electron's Node reports names relative to the long
@@ -35,6 +50,7 @@ export function watchWorkspace(
     if (closed) return;
     console.warn('Workspace watcher stopped:', error);
     close();
+    try { options.onError?.(error); } catch { /* a listener's failure must not escape the watcher */ }
   };
 
   const walk = async (relativePath: string): Promise<void> => {
@@ -69,22 +85,28 @@ export function watchWorkspace(
     else if (stat.isDirectory() && renamed) await walk(relativePath);
   };
 
+  // Report a path once its events have been quiet for debounceMs, from what is
+  // on disk then -- not from the event, which may describe a write half done.
+  const schedule = (relativePath: string, event: string) => {
+    const pending = timers.get(relativePath);
+    clearTimeout(pending?.timer);
+    const renamed = event === 'rename' || (pending?.renamed ?? false);
+    timers.set(relativePath, {
+      renamed,
+      timer: setTimeout(() => {
+        timers.delete(relativePath);
+        void inspect(relativePath, event, renamed);
+      }, debounceMs),
+    });
+  };
+
   if (useNative) {
     try {
       watcher = fs.watch(dir, { recursive: true }, (event, filename) => {
         if (closed || filename == null) return;
         const relativePath = filename.toString().replace(/\\/g, '/');
         if (ignored.test(relativePath)) return;
-        const pending = timers.get(relativePath);
-        clearTimeout(pending?.timer);
-        const renamed = event === 'rename' || (pending?.renamed ?? false);
-        timers.set(relativePath, {
-          renamed,
-          timer: setTimeout(() => {
-            timers.delete(relativePath);
-            void inspect(relativePath, event, renamed);
-          }, debounceMs),
-        });
+        schedule(relativePath, event);
       }).on('error', onError);
       return { close };
     } catch {
@@ -94,9 +116,18 @@ export function watchWorkspace(
 
   const fallback = chokidar.watch(dir, { ignored, persistent: true, ignoreInitial: true });
   watcher = fallback;
+  // Debounced like the native watcher, and for a reason that bit on Linux:
+  // chokidar 3 reports at most one event per file per 5ms (and one change per
+  // 50ms) and drops the rest, with nothing at the end of the window. A program
+  // that rewrites a file in place truncates it, then writes it, so the one
+  // event chokidar sends can describe the empty file -- the reader saw "Not
+  // valid JSON" -- and nothing ever reports the finished one. Checking the
+  // disk after a quiet spell reports the final state. An add anywhere in the
+  // burst stays an add, so a new file still reaches the listing.
   fallback.on('all', (event, filePath) => {
     if (event === 'add' || event === 'change' || event === 'unlink' || event === 'unlinkDir') {
-      emit(event === 'unlinkDir' ? 'unlink' : event, path.relative(dir, filePath).replace(/\\/g, '/'));
+      const relativePath = path.relative(dir, filePath).replace(/\\/g, '/');
+      schedule(relativePath, event === 'add' || timers.get(relativePath)?.renamed ? 'rename' : 'change');
     }
   });
   fallback.on('error', onError);

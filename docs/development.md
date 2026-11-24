@@ -49,8 +49,21 @@ CI runs the first three on every pull request and on pushes to `main` and `dev`.
 ## End-to-end tests
 
 ```bash
-npm run test:e2e
+npm run build:main
+npm run test:e2e:integration                        # every integration spec, a few minutes
+npx playwright test e2e/integration/graph.spec.ts   # one feature's integration spec
+npm run test:e2e                                    # the full suite
 ```
+
+Every feature has two kinds of tests (D44): unit tests (`tools/*.test.mjs`,
+run by `npm test`) and an **integration** spec, `e2e/integration/<feature>.spec.ts`,
+a few end-to-end flows through the feature's main use. The detailed specs in
+`e2e/` cover the edge cases; with the integration specs they are the **full**
+suite. While working towards `dev`, run the unit tests and the integration spec
+of the feature you changed (`tools/affected-e2e.mjs` maps files to features);
+run the full suite only when preparing `dev` → `test`. CI follows the same rule:
+`dev` runs the affected integration specs (all of them for shared or unmapped
+code), `test` and `main` run the full suite.
 
 Playwright drives the real Electron app (`e2e/`). Only the app is launched --
 no browser download is needed, so `npx playwright install` is not part of setup.
@@ -59,9 +72,10 @@ directory, because the app writes to its workspace as you use it and a suite
 pointed at the committed demo content would rewrite it.
 
 The renderer is served by Vite during the run (Playwright starts it), since an
-unpackaged Electron loads the dev URL. `npm run test:e2e` is deliberately not
-part of `npm test`: it takes minutes, needs a desktop session, and `npm test`
-is the fast gate.
+unpackaged Electron loads the dev URL. The e2e scripts are deliberately not
+part of `npm test`: they take minutes, need a desktop session, and `npm test`
+is the fast gate. `test:e2e` builds the main process itself; the integration
+script does not, so run `npm run build:main` (or `npm run build`) first.
 
 Before a release, also run `npm run dist:dir` and open the unpacked application. Verify repository creation, note editing, settings persistence, plugin enablement, the terminal, external links, and the bundled demo repository.
 

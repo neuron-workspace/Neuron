@@ -1,18 +1,17 @@
 // Runnable check for src/main/journal.ts -- no test framework needed:
 // transpile with vite's bundled esbuild, then assert.
 // Run: node tools/journal.test.mjs
-import { transform } from 'esbuild';
-import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, existsSync, readdirSync } from 'node:fs';
+import { build } from 'esbuild';
+import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const src = readFileSync(join(root, 'src/main/journal.ts'), 'utf-8');
-const { code } = await transform(src, { loader: 'ts', format: 'esm' });
+const { outputFiles } = await build({ entryPoints: [join(root, 'src/main/journal.ts')], bundle: true, platform: 'node', format: 'esm', write: false });
 const tmpModule = join(root, 'tools/.journal.tmp.mjs');
-writeFileSync(tmpModule, code);
+writeFileSync(tmpModule, outputFiles[0].text);
 const { WriteJournal, DEFAULT_JOURNAL_LIMITS } = await import(pathToFileURL(tmpModule));
 rmSync(tmpModule);
 
@@ -210,6 +209,20 @@ const newUserData = () => {
   const afterDelete = journal.list(ws);
   assert.equal(afterDelete.length, 3, 'delete captures even inside the coalesce window');
   assert.equal(afterDelete[0].operation, 'delete');
+
+  // Links rewritten by Neuron (11D/11E) are their own entry, inside the window
+  // too, so restoring it undoes exactly the rewrite and not the user's edit.
+  clock += 10;
+  writeFileSync(file, 'edited by hand [[Old]]');
+  journal.capturePreImage(ws, file, 'overwrite');
+  clock += 10;
+  writeFileSync(file, 'edited by hand [[New]]');
+  assert.equal(journal.capturePreImage(ws, file, 'overwrite').status, 'not-needed', 'an ordinary save coalesces');
+  const forced = journal.capturePreImage(ws, file, 'overwrite', { coalesce: false });
+  assert.equal(forced.status, 'captured', 'a rewrite is recorded anyway');
+  writeFileSync(file, 'edited by hand [[Rewritten]]');
+  assert.equal(journal.restore(ws, forced.entry.id).success, true);
+  assert.equal(readFileSync(file, 'utf-8'), 'edited by hand [[New]]', 'undoing the rewrite keeps the edit before it');
 }
 
 // --- workspaces do not share a store ----------------------------------------
@@ -254,6 +267,61 @@ const newUserData = () => {
   const journal = new WriteJournal(newUserData());
   for (const forged of ['../../etc/passwd', '..', '', 'not-an-id', '1234-zzzz']) {
     assert.equal(journal.restore(ws, forged).success, false, `forged id rejected: ${forged}`);
+  }
+}
+
+// --- restore refuses a pre-image whose bytes do not match its hash ----------
+{
+  const ws = newWorkspace();
+  const userData = newUserData();
+  const journal = new WriteJournal(userData, { reportError: () => {} });
+  const file = join(ws, 'kept.md');
+  writeFileSync(file, 'the original\n');
+  const captured = journal.capturePreImage(ws, file, 'overwrite');
+  writeFileSync(file, 'current\n');
+  const store = join(userData, 'journal', readdirSync(join(userData, 'journal'))[0]);
+  const bin = join(store, `${captured.entry.id}.bin`);
+  for (const tampered of ['the 0riginal\n', 'short']) {
+    writeFileSync(bin, tampered);
+    const restored = journal.restore(ws, captured.entry.id);
+    assert.equal(restored.success, false, `tampered pre-image (${tampered.length} bytes) is refused`);
+    assert.match(restored.error, /integrity/i);
+    assert.equal(readFileSync(file, 'utf-8'), 'current\n', 'the file is untouched');
+  }
+}
+
+// --- restore refuses to write through a link --------------------------------
+{
+  const ws = newWorkspace();
+  const journal = new WriteJournal(newUserData(), { reportError: () => {} });
+  const outside = join(scratch, `outside-${seq++}`);
+  mkdirSync(outside);
+  mkdirSync(join(ws, 'sub'));
+  const file = join(ws, 'sub', 'linked.md');
+  writeFileSync(file, 'before\n');
+  const captured = journal.capturePreImage(ws, file, 'delete');
+  assert.equal(captured.status, 'captured');
+  // The folder becomes a link to somewhere outside the workspace. A junction
+  // needs no privilege on Windows.
+  rmSync(join(ws, 'sub'), { recursive: true });
+  symlinkSync(outside, join(ws, 'sub'), process.platform === 'win32' ? 'junction' : 'dir');
+  const throughFolder = journal.restore(ws, captured.entry.id);
+  assert.equal(throughFolder.success, false, 'a folder link out of the workspace is refused');
+  assert.equal(existsSync(join(outside, 'linked.md')), false, 'nothing was written outside');
+
+  // The file itself a link (needs privilege on Windows; skipped without it).
+  rmSync(join(ws, 'sub'));
+  mkdirSync(join(ws, 'sub'));
+  const target = join(outside, 'target.md');
+  writeFileSync(target, 'outside\n');
+  let fileLink = true;
+  try { symlinkSync(target, file, 'file'); } catch (error) { if (error.code !== 'EPERM') throw error; fileLink = false; }
+  if (fileLink) {
+    const throughFile = journal.restore(ws, captured.entry.id);
+    assert.equal(throughFile.success, false, 'a file link is refused');
+    assert.equal(readFileSync(target, 'utf-8'), 'outside\n', 'the link target is untouched');
+  } else {
+    console.log('  skip file-link restore: not permitted here');
   }
 }
 

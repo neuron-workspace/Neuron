@@ -27,11 +27,55 @@ export interface AppFixture {
   page: Page;
   workspace: string;
   prepareWorkspace: ((directory: string) => void | Promise<void>) | null;
+  /** Extra Chromium switches for this test's app, e.g. `--disable-gpu` to see the app without WebGL. */
+  launchArgs: string[];
   launchTiming: { startedAt: number };
+}
+
+/** The GPU state is logged once per worker, not once per test. */
+let gpuLogged = false;
+
+/**
+ * Software WebGL, but only where there is no hardware to use.
+ *
+ * The graph renders through Sigma, which needs a WebGL context. CI's Linux
+ * runner has a display (xvfb) but no GPU, and the macOS runner is a VM with no
+ * GPU either, so `new Sigma(...)` threw there and the app showed its "needs
+ * WebGL" message -- the graph tests failed on both while passing on the Windows
+ * machine they were written on.
+ *
+ * Not forced on a developer machine, and not on Windows CI either -- that runner
+ * already has a working GL path, which is why the graph tests passed there while
+ * both others failed. Turning it on anyway bought nothing and cost four minutes
+ * a run, and the palette race in T-012 started losing inside the wider window.
+ *
+ * SwiftShader draws the same pixels on a different schedule, so it goes only
+ * where there is no alternative. Supplying a GPU that a runner lacks is a
+ * different thing from changing how the app renders for everyone who works on
+ * it, and none of this reaches the shipped app: these are test-launch switches.
+ *
+ * Two SwiftShader modes. `swiftshader` stands SwiftShader in for the whole GPU,
+ * which is what Linux has always used. On the macOS runner that stopped giving
+ * WebGL with Electron 45 (Chromium 156) though the same three switches worked on
+ * Electron 42, so macOS uses `swiftshader-webgl`: Chromium's documented opt-in
+ * for software WebGL alone, the replacement for the automatic fallback it
+ * removed (docs/gpu/swiftshader.md). Both need `--enable-unsafe-swiftshader`.
+ *
+ * `NEURON_SOFTWARE_GL=1` forces the platform's mode anywhere, and
+ * `NEURON_SOFTWARE_GL=webgl` forces `swiftshader-webgl`, which is how a runner's
+ * failure is reproduced on a Windows desktop in a minute rather than a
+ * ten-minute push and wait.
+ */
+function softwareGlArgs(): string[] {
+  const forced = process.env.NEURON_SOFTWARE_GL;
+  if (!forced && !(process.env.CI && process.platform !== 'win32')) return [];
+  const angle = forced === 'webgl' || process.platform === 'darwin' ? 'swiftshader-webgl' : 'swiftshader';
+  return ['--use-gl=angle', `--use-angle=${angle}`, '--enable-unsafe-swiftshader'];
 }
 
 export const test = base.extend<AppFixture>({
   prepareWorkspace: [null, { option: true }],
+  launchArgs: [[], { option: true }],
   launchTiming: async ({}, use) => { await use({ startedAt: 0 }); },
   workspace: async ({ prepareWorkspace }, use) => {
     // Sweep ONCE per run, not per test. Teardown deletes nothing (below), so
@@ -105,7 +149,7 @@ export const test = base.extend<AppFixture>({
     } catch { /* the sweep collects it */ }
   },
 
-  app: async ({ workspace, launchTiming }, use) => {
+  app: async ({ workspace, launchTiming, launchArgs }, use) => {
     // Pre-seed settings so the app opens our copy instead of running its
     // first-launch demo-repo discovery, which would reach the real one.
     const userData = join(workspace, '..', 'userData');
@@ -116,36 +160,34 @@ export const test = base.extend<AppFixture>({
     );
 
     const background = process.env.NEURON_E2E_VISIBLE !== '1';
+    const linuxCi = !!process.env.CI && process.platform === 'linux';
+    // A test that takes the GPU away is testing the app without WebGL; giving
+    // it SwiftShader back would test nothing.
+    const softwareGl = launchArgs.includes('--disable-gpu') ? [] : softwareGlArgs();
     launchTiming.startedAt = performance.now();
     const app = await electron.launch({
       args: [
+        // A real keychain on the Linux runner, which has no desktop session and
+        // so no Secret Service of its own: Chromium would fall back to its
+        // plain-text store there, and Neuron (by design) refuses to keep a key
+        // in that. ci.yml starts an unlocked gnome-keyring on a session bus
+        // before the e2e steps, and this preload points Electron at it.
+        //
+        // Not `--password-store=gnome-libsecret` on the command line: Playwright's
+        // own preload appends `--password-store=basic` after the command line is
+        // read, and the later value wins, so the app never saw the keychain and
+        // the key tests skipped. linux-keychain.cjs runs after that preload and
+        // sets the switch back. It selects a real backend -- nothing here fakes
+        // encryption -- and is off everywhere else, where Chromium's own choice
+        // is the one users get. Preload flags go before the app's script.
+        ...(linuxCi ? ['-r', join(repoRoot, 'e2e', 'linux-keychain.cjs')] : []),
         join(repoRoot, 'dist', 'main', 'main.js'),
         `--user-data-dir=${userData}`,
-        // Software WebGL, but only where there is no hardware to use.
-        //
-        // The graph renders through Sigma, which needs a WebGL context. CI's
-        // Linux runner has a display (xvfb) but no GPU, and the macOS runner is
-        // no better, so `new Sigma(...)` threw there and the app fell back to
-        // its "WebGL is unavailable" state -- seven graph tests failed on both
-        // while passing on the Windows machine they were written on.
-        //
-        // Not forced on a developer machine, and not on Windows CI either --
-        // that runner already has a working GL path, which is why the graph
-        // tests passed there while both others failed. Turning it on anyway
-        // bought nothing and cost four minutes a run, and the palette race in
-        // T-012 started losing inside the wider window.
-        //
-        // SwiftShader draws the same pixels on a different schedule, so it goes
-        // only where there is no alternative. Supplying a GPU that a runner
-        // lacks is a different thing from changing how the app renders for
-        // everyone who works on it.
-        // `NEURON_SOFTWARE_GL=1` forces it anywhere, which is how the Linux
-        // failure was reproduced and fixed on a Windows desktop in a minute
-        // rather than a ten-minute push and wait.
-        ...(process.env.NEURON_SOFTWARE_GL === '1'
-          || (process.env.CI && process.platform !== 'win32')
-          ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-          : []),
+        // Software WebGL where a runner has no GPU; see softwareGlArgs. GPU
+        // switches are not among those Playwright's preload appends, so these
+        // reach Chromium as given (the GPU log below says what it made of them).
+        ...softwareGl,
+        ...launchArgs,
         // Windows marks an off-screen window as occluded and Chromium then stops
         // painting it, which would stall every test waiting on a frame.
         ...(background ? ['--disable-features=CalculateNativeWinOcclusion'] : []),
@@ -169,6 +211,29 @@ export const test = base.extend<AppFixture>({
       store.__openExternal = [];
       shell.openExternal = async (url: string) => { store.__openExternal!.push(url); };
     });
+
+    // Say once which GL this run has, where it chose software GL: a runner
+    // without WebGL fails every graph test with the same "needs WebGL" message,
+    // and this line says whether the switches arrived and what Chromium did
+    // with them, without another push to find out.
+    if (!gpuLogged && softwareGl.length) {
+      gpuLogged = true;
+      const switches = await app.evaluate(({ app: electronApp }) => ({
+        useGl: electronApp.commandLine.getSwitchValue('use-gl'),
+        useAngle: electronApp.commandLine.getSwitchValue('use-angle'),
+        unsafeSwiftShader: electronApp.commandLine.hasSwitch('enable-unsafe-swiftshader'),
+      }));
+      // Asked of the page, not of getGPUFeatureStatus(): with swiftshader-webgl
+      // that reports webgl "disabled_off" while the page draws WebGL fine.
+      const first = await app.firstWindow();
+      await first.waitForLoadState('domcontentloaded', { timeout: 90_000 });
+      const webgl = await first.evaluate(() => {
+        const gl = document.createElement('canvas').getContext('webgl2');
+        const info = gl?.getExtension('WEBGL_debug_renderer_info');
+        return gl ? (info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'available') : 'unavailable';
+      }).catch((error: unknown) => `not checked: ${String(error)}`);
+      console.log(`[gpu] ${JSON.stringify({ ...switches, webgl })}`);
+    }
 
     await use(app);
 
@@ -194,11 +259,19 @@ export const test = base.extend<AppFixture>({
 
   page: async ({ app }, use) => {
     const page = await app.firstWindow();
+    page.on('console', (message) => {
+      if (/Content Security Policy|\[CSP\]/i.test(message.text())) console.warn(message.text());
+    });
+    const watchCsp = () => document.addEventListener('securitypolicyviolation', (event) => {
+      console.error(`[CSP] ${event.effectiveDirective}: ${event.blockedURI}`);
+    });
+    await page.addInitScript(watchCsp);
     // Generous, because this is Electron cold-starting against a Vite dev server
     // that compiles on first request. On a loaded CI runner individual tests were
     // taking 15-20s just to reach this point, and the 30s default tipped two of
     // them over -- a slow machine, not a broken app.
     await page.waitForLoadState('domcontentloaded', { timeout: 90_000 });
+    await page.evaluate(watchCsp);
     await use(page);
   },
 });
@@ -288,18 +361,59 @@ export async function setPluginEnabled(_app: ElectronApplication, page: Page, na
 }
 
 /**
- * Close an open menu with a pointer click outside it.
+ * Close the open menu the way a press outside it does.
  *
- * Escape does not close menus under xvfb on Linux or on the macOS runner, and
- * clicking (1, 1) is no good either: on macOS the top-left corner is the
- * title-bar drag region, which never delivers pointer events to the page. So
- * click near the bottom-left of the focused editor group, which is page content,
- * not draggable, and far from a menu opened from a tab.
+ * Every attempt to do this through the window's input has been flaky somewhere:
+ * Escape does not close menus under xvfb on Linux or on the macOS runner,
+ * clicking (1, 1) lands in the macOS title-bar drag region, and a mouse click
+ * inside the focused editor group still left the menu open on the macOS runner
+ * now and then. Each of those depends on where the OS puts an off-screen window
+ * and on what is under one pixel at that moment.
+ *
+ * A Radix menu closes on a `pointerdown` that reaches `document` from outside
+ * its own React tree (DismissableLayer listens there). So dispatch exactly
+ * that, on `document.body`: outside the menu, outside the React root, and
+ * independent of hit-testing and window placement, followed by the matching
+ * `pointerup` so nothing listening for a press (react-resizable-panels starts
+ * tracking one on any pointerdown at the body) is left mid-press.
+ *
+ * Pressed again until the menu reports it has closed. One press was not always
+ * enough on the Linux runner: two right-click menus stayed open after it while
+ * the same press closed the same kind of menu in editor-groups.spec.ts, and
+ * Windows never reproduced it. DismissableLayer can swallow exactly one outside
+ * press in two ways: it starts listening a tick after the menu mounts, and it
+ * counts the first document pointerdown after any press that went through the
+ * menu's own React tree as "inside" (that is how it learns such a press ended).
+ * A second press is still an outside press, so this closes only a menu that a
+ * user's second click would close, and a menu that never closes still fails
+ * here, saying the dismiss did not happen rather than surfacing later.
  */
 export async function closeMenuByClickingOutside(page: Page) {
-  const box = await page.locator('[data-editor-group][data-focused="true"]').boundingBox();
-  if (!box) throw new Error('no focused editor group to click in');
-  await page.mouse.click(box.x + 8, box.y + box.height - 8);
+  const open = page.locator('[role="menu"][data-state="open"]');
+  await expect(open).toHaveCount(1);
+  await expect(async () => {
+    await page.evaluate(() => {
+      const press = { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', isPrimary: true, button: 0 };
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { ...press, buttons: 1 }));
+      document.body.dispatchEvent(new PointerEvent('pointerup', { ...press, buttons: 0 }));
+    });
+    await expect(open).toHaveCount(0, { timeout: 1_000 });
+  }, 'the open menu should close on a press outside it').toPass({ timeout: 10_000 });
+}
+
+/**
+ * Whether this app instance can keep a key, by the same rule as secretCodec()
+ * in src/main/main.ts: encryption available, and on Linux not Chromium's
+ * plain-text fallback. Logged, so a CI run says which keychain it had.
+ */
+export async function keychain(app: ElectronApplication) {
+  const state = await app.evaluate(({ safeStorage }) => ({
+    available: safeStorage.isEncryptionAvailable(),
+    backend: process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : process.platform,
+  }));
+  const usable = state.available && state.backend !== 'basic_text';
+  console.log(`[keychain] ${JSON.stringify({ ...state, usable })}`);
+  return { ...state, usable };
 }
 
 /** URLs the app handed to the OS browser, recorded by the stub above. */

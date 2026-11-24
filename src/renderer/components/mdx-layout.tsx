@@ -60,7 +60,7 @@ type Span = keyof typeof SPAN;
 type Tone = keyof typeof TONE;
 
 const pick = <T extends Record<string, string>>(table: T, value: unknown, fallback: keyof T) =>
-  table[(typeof value === 'string' && value in table ? value : fallback) as keyof T];
+  table[(typeof value === 'string' && Object.hasOwn(table, value) ? value : fallback) as keyof T];
 
 interface BoxProps {
   children?: ReactNode;

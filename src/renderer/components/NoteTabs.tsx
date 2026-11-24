@@ -1,5 +1,6 @@
 import { useState, type DragEvent } from 'react';
-import { FileCode2, Globe, Plus, X } from 'lucide-react';
+import { FileCode2, Globe, Plus, Table2, X } from 'lucide-react';
+import { isCsvPath } from '../lib/csv-table';
 import { cn } from '../lib/utils';
 import type { SplitDirection } from '../lib/tabs';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
@@ -121,10 +122,14 @@ export default function NoteTabs({ tabs, previewTab = null, activeTab, focused =
               className="interactive flex min-w-0 flex-1 items-center gap-1.5 self-stretch px-2 text-left text-xs"
               onClick={() => onSelect(note)}
               onDoubleClick={() => onKeep?.(note)}
+              // A middle press over the scrollable strip would start the
+              // browser's autoscroll, which swallows the click that closes.
+              onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
               onAuxClick={(event) => { if (event.button === 1) onClose(note); }}
             >
               {isUrl(note)
                 ? <Globe className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />
+                : isCsvPath(note) ? <Table2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />
                 : <FileCode2 className={cn('h-3 w-3 shrink-0', active && 'text-[var(--ink)]')} />}
               <span className={cn('truncate font-sans', preview && 'italic')}>{noteLabel(note)}</span>
             </button>

@@ -4,11 +4,10 @@ import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Stat } from './mdx-layout';
 import { useFileWriter } from './db/table-kit';
-import { serializeDb } from '../lib/db';
 import { csvReadOnlyReason } from '../lib/csv';
 import { tableMetaPath } from '../lib/csv-table';
 import {
-  appendCsvRow, appendDbRow, filterRows, findColumn, formatNumber, groupByDate, groupRows, measureFrom, measureRows, parseSource,
+  appendSourceRow, filterRows, findColumn, formatNumber, groupByDate, groupRows, measureFrom, measureRows, parseSource,
   parseWhere, pickDbTable, readCsvTable, titleColumn, type DataColumn, type DataTable, type DateStep, type FieldValue, type Group, type SourceRef,
 } from '../lib/data-query';
 
@@ -121,7 +120,7 @@ function niceMax(value: number): number {
 const sliceColor = (group: Group, index: number, own: boolean) =>
   own && group.color ? group.color : `color-mix(in srgb, var(--accent) ${Math.max(28, 100 - index * 14)}%, var(--canvas))`;
 
-function BarChart({ groups, width, own }: { groups: Group[]; width: number; own: boolean }) {
+export function BarChart({ groups, width, own }: { groups: Group[]; width: number; own: boolean }) {
   const row = 24;
   const labelWidth = Math.min(160, Math.max(64, width * 0.32));
   const valueWidth = 44;
@@ -147,7 +146,7 @@ function BarChart({ groups, width, own }: { groups: Group[]; width: number; own:
   );
 }
 
-function LineChart({ groups, width }: { groups: Group[]; width: number }) {
+export function LineChart({ groups, width }: { groups: Group[]; width: number }) {
   const height = 200;
   const pad = { left: 40, right: 12, top: 10, bottom: 24 };
   const plotW = Math.max(20, width - pad.left - pad.right);
@@ -177,7 +176,7 @@ function LineChart({ groups, width }: { groups: Group[]; width: number }) {
   );
 }
 
-function PieChart({ groups, width, own }: { groups: Group[]; width: number; own: boolean }) {
+export function PieChart({ groups, width, own }: { groups: Group[]; width: number; own: boolean }) {
   const slices = groups.filter((g) => g.value > 0);
   const total = slices.reduce((sum, g) => sum + g.value, 0);
   const size = Math.max(96, Math.min(180, width));
@@ -262,7 +261,7 @@ export function Chart({ label, raw = {} }: { label?: ReactNode; raw?: DataAttrs 
   const what = measure.kind === 'count' ? 'count' : `${measure.kind} of ${measure.column}`;
   const summary = type === 'number'
     ? `${named ?? 'Number'}: ${formatNumber(number)}`
-    : `${type[0].toUpperCase() + type.slice(1)} chart${named ? ` of ${named}` : ''}, ${what}: ${groups.map((g) => `${g.label} ${formatNumber(g.value)}`).join(', ')}.`;
+    : `${type.charAt(0).toUpperCase() + type.slice(1)} chart${named ? ` of ${named}` : ''}, ${what}: ${groups.map((g) => `${g.label} ${formatNumber(g.value)}`).join(', ')}.`;
 
   let body: ReactNode;
   if (state.status === 'loading') body = <div className="py-6 text-xs text-[var(--ink-muted)]" role="status">Loading…</div>;
@@ -360,6 +359,7 @@ export function DataForm({ title, raw = {} }: { title?: ReactNode; raw?: DataAtt
       .filter((c, i, all) => all.indexOf(c) === i)
     : [];
   const title_ = data ? titleColumn(data) : null;
+  if (title_ && !columns.includes(title_)) columns.unshift(title_);
 
   const shell = (children: ReactNode) => (
     <section className="mdx-form my-4 min-w-0 rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-3"
@@ -388,23 +388,7 @@ export function DataForm({ title, raw = {} }: { title?: ReactNode; raw?: DataAtt
     setBusy(true);
     try {
       const api = window.electronAPI;
-      const path = state.ref.path;
-      const text = await api.readNote(path);
-      if (isError(text)) throw new Error(`No file at ${path}.`);
-      let next: string;
-      if (state.ref.kind === 'db') {
-        const picked = pickDbTable(text, path, state.ref.table);
-        if ('error' in picked) throw new Error(picked.error);
-        next = serializeDb(appendDbRow(picked.db, picked.tableId, current, uid()));
-      } else {
-        const metaText = await api.readNote(tableMetaPath(path));
-        if (isError(metaText)) throw new Error('Convert this CSV to a Neuron table to add rows.');
-        const { csv, meta } = readCsvTable(text, metaText);
-        const reason = csvReadOnlyReason(text, csv.rows.length);
-        if (reason) throw new Error(reason);
-        next = appendCsvRow(csv, meta, current);
-      }
-      if (!(await writer.write(next))) throw new Error(`Couldn't save ${path.split('/').pop()}.`);
+      await appendSourceRow(state.ref, current, uid(), api.readNote, writer.write);
       setValues({});
       setResult({ ok: true, message: 'Added.' });
       timer.current = window.setTimeout(() => setResult(null), 3000);

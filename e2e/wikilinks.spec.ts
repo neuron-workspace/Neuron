@@ -62,7 +62,7 @@ test('a unique basename opens its note', async ({ page, workspace }) => {
   await expect(page.locator('article.preview-prose h1')).toHaveText('Recovery');
 });
 
-test('missing and ambiguous targets are explained, inert, and markup-safe', async ({ page, workspace }) => {
+test('missing targets are explained, inert, and markup-safe; a shared name resolves', async ({ page, workspace }) => {
   mkdirSync(join(workspace, 'alpha'), { recursive: true });
   mkdirSync(join(workspace, 'beta'), { recursive: true });
   writeFileSync(join(workspace, 'alpha', 'Shared.mdx'), '# Alpha shared\n');
@@ -109,8 +109,11 @@ test('missing and ambiguous targets are explained, inert, and markup-safe', asyn
   expect(missingState.decorationLine).toContain('line-through');
   expect(missingState.borderStyle).toContain('dashed');
 
-  await expect(page.getByTitle('No note found for "Shared"')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Open note .*Shared/ })).toHaveCount(0);
+  // A shared name is no longer missing (11D): from the root, both are one
+  // folder down, so the first by path wins.
+  await expect(page.getByTitle('No note found for "Shared"')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open note alpha/Shared.mdx' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open note beta/Shared.mdx' })).toHaveCount(0);
 
   const hostileResolved = page.getByRole('button', { name: "Open note x' onmouseover='alert(1).mdx" });
   await expect(hostileResolved).toBeVisible();

@@ -40,16 +40,22 @@ export function connectorsOf(manifests: PluginManifest[]): Connector[] {
 
 export const secretFields = (fields: PluginConfigField[]) => fields.filter((f) => f.type === 'password');
 
+export type ConnectorStatus = 'not-set-up' | 'configured' | 'connected';
+
 /**
- * Connected once what the service cannot work without is saved: every secret
- * field, or for a connector with no secret (a local model), its endpoint.
+ * Configured once what the service cannot work without is saved: every secret
+ * field, or for a connector with no secret (a local model), its endpoint. A
+ * saved key is only known to be there, never read back to check it (D43.5),
+ * so it is Connected only once a call through it has succeeded in this window
+ * (`succeeded`).
  */
-export function connectorStatus(fields: PluginConfigField[], values: Record<string, string> | undefined, secrets: Record<string, boolean> | undefined): 'connected' | 'not-set-up' {
+export function connectorStatus(fields: PluginConfigField[], values: Record<string, string> | undefined, secrets: Record<string, boolean> | undefined, succeeded = false): ConnectorStatus {
   const secret = secretFields(fields);
-  if (secret.length > 0) return secret.every((f) => secrets?.[f.key]) ? 'connected' : 'not-set-up';
   const endpoints = fields.filter((f) => f.type === 'url');
-  if (endpoints.length > 0) return endpoints.some((f) => (values?.[f.key] ?? '').trim()) ? 'connected' : 'not-set-up';
-  return 'connected';
+  const configured = secret.length > 0 ? secret.every((f) => secrets?.[f.key])
+    : endpoints.length > 0 ? endpoints.some((f) => (values?.[f.key] ?? '').trim()) : true;
+  if (!configured) return 'not-set-up';
+  return succeeded ? 'connected' : 'configured';
 }
 
 /**

@@ -2,11 +2,11 @@
 // the same way: `source="Planner.db" table="tasks"` or `source="people.csv"`,
 // with an optional `where="status = done and due < today"`. This module turns a
 // .db table or a CSV into one shape, and filters, measures and groups it. It is
-// pure: reading files and watching them is the caller's job.
+// Reading and writing use callbacks supplied by the caller; watching stays there.
 
-import { parseDb, type DbFile, type DbOption, type DbTable } from './db';
-import { parseCsv, serializeCsv, type CsvParseResult } from './csv';
-import { checkboxValue, columnMeta, isChecked, isIsoDate, isNumberText, parseTableMeta, type CsvTableMeta } from './csv-table';
+import { parseDb, serializeDb, type DbFile, type DbOption, type DbTable } from './db';
+import { csvReadOnlyReason, parseCsv, serializeCsv, type CsvParseResult } from './csv';
+import { checkboxValue, columnMeta, isChecked, isIsoDate, isNumberText, parseTableMeta, tableMetaPath, type CsvTableMeta } from './csv-table';
 
 export type ColumnType = 'text' | 'number' | 'checkbox' | 'date' | 'url' | 'select' | 'multiselect';
 
@@ -42,7 +42,10 @@ const asType = (type: string): ColumnType => (TYPES.has(type as ColumnType) ? ty
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'string' && isNumberText(value.trim())) return Number(value.trim());
+  if (typeof value === 'string' && isNumberText(value.trim())) {
+    const number = Number(value.trim());
+    return Number.isFinite(number) ? number : null;
+  }
   return null;
 }
 
@@ -52,7 +55,7 @@ export function fromDbTable(table: DbTable): DataTable {
     return { id, name: prop.name, type: asType(prop.type), ...(prop.options ? { options: prop.options } : {}) };
   });
   const rows = table.rows.map((row): DataRow => {
-    const values: Record<string, unknown> = {};
+    const values: Record<string, unknown> = Object.create(null);
     for (const column of columns) {
       const value = row.values[column.id];
       values[column.id] = column.type === 'number' ? toNumber(value)
@@ -70,7 +73,7 @@ export function fromCsv(headers: readonly string[], cells: readonly (readonly st
     return { id: header, name: header, type: column.type, ...(column.options ? { options: column.options } : {}) };
   });
   const rows = cells.map((row, index): DataRow => {
-    const values: Record<string, unknown> = {};
+    const values: Record<string, unknown> = Object.create(null);
     columns.forEach((column, i) => {
       const text = row[i] ?? '';
       values[column.id] = column.type === 'number' ? toNumber(text)
@@ -375,6 +378,7 @@ export function dbCellValue(column: DataColumn, value: FieldValue): unknown {
 /** The database with one row appended to a table; empty fields stay out of the row. */
 export function appendDbRow(db: DbFile, tableId: string, fields: Record<string, FieldValue>, rowId: string): DbFile {
   const table = db.tables[tableId];
+  if (!Object.hasOwn(db.tables, tableId)) throw new Error(`Database has no table named "${tableId}".`);
   const data = fromDbTable(table);
   const values: Record<string, unknown> = {};
   for (const column of data.columns) {
@@ -390,6 +394,7 @@ export function appendDbRow(db: DbFile, tableId: string, fields: Record<string, 
  * writes its option's name, and a checkbox the words its column already uses.
  */
 export function appendCsvRow(csv: CsvParseResult, meta: CsvTableMeta | null, fields: Record<string, FieldValue>): string {
+  if (!csv.exact) throw new Error("This table's file can't be added to safely; open it as a table first.");
   const row = csv.headers.map((header, index) => {
     const value = fields[header];
     const column = columnMeta(meta, header);
@@ -401,7 +406,45 @@ export function appendCsvRow(csv: CsvParseResult, meta: CsvTableMeta | null, fie
     if (column.type === 'select') return column.options?.find((o) => o.id === value)?.name ?? value.trim();
     return value.trim();
   });
-  return serializeCsv(csv.headers, [...csv.rows, row], csv.dialect);
+  return serializeCsv(csv.rawHeaders, [...csv.rows, row], csv.dialect);
+}
+
+const appends = new Map<string, Promise<void>>();
+
+/** Serialize the entire read/append/write, so two forms cannot overwrite a row. */
+export async function appendSourceRow(ref: SourceRef, fields: Record<string, FieldValue>, rowId: string,
+  read: (path: string) => Promise<string>, write: (text: string) => Promise<boolean>): Promise<void> {
+  const previous = appends.get(ref.path) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => appendSourceRowNow(ref, fields, rowId, read, write));
+  appends.set(ref.path, pending);
+  try { await pending; }
+  finally { if (appends.get(ref.path) === pending) appends.delete(ref.path); }
+}
+
+async function appendSourceRowNow(ref: SourceRef, fields: Record<string, FieldValue>, rowId: string,
+  read: (path: string) => Promise<string>, write: (text: string) => Promise<boolean>): Promise<void> {
+  const text = await read(ref.path);
+  if (typeof text !== 'string' || text.startsWith('Error:')) throw new Error(`No file at ${ref.path}.`);
+  let next: string;
+  const requireTitle = (data: DataTable) => {
+    const title = titleColumn(data);
+    if (title && !String(fields[title.id] ?? '').trim()) throw new Error(`${title.name} is required.`);
+  };
+  if (ref.kind === 'db') {
+    const picked = pickDbTable(text, ref.path, ref.table);
+    if ('error' in picked) throw new Error(picked.error);
+    requireTitle(picked.data);
+    next = serializeDb(appendDbRow(picked.db, picked.tableId, fields, rowId));
+  } else {
+    const metaText = await read(tableMetaPath(ref.path));
+    if (typeof metaText !== 'string' || metaText.startsWith('Error:')) throw new Error('Convert this CSV to a Neuron table to add rows.');
+    const { csv, meta, data } = readCsvTable(text, metaText);
+    const reason = csvReadOnlyReason(text, csv.rows.length);
+    if (reason) throw new Error(reason);
+    requireTitle(data);
+    next = appendCsvRow(csv, meta, fields);
+  }
+  if (!(await write(next))) throw new Error(`Couldn't save ${ref.path.split('/').pop()}.`);
 }
 
 /** A number as a stat shows it: whole numbers plain, others to two places at most. */

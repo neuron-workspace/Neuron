@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { Session } from 'electron';
+import { cookieDomainMatches, normalizeCookieDomain } from './cookie-domain';
 
 // sql.js is a UMD/WASM module; require keeps it out of the type system.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -37,13 +38,20 @@ function getAesKey(userData: string): Buffer {
   return dpapiUnprotect(encryptedKey);
 }
 
-function decryptValue(encrypted: Buffer, aesKey: Buffer): string | null {
-  const prefix = encrypted.subarray(0, 3).toString('latin1');
+const PREFIX_BYTES = 3; // "v10" / "v11"
+const NONCE_BYTES = 12;
+const TAG_BYTES = 16;
+
+export function decryptValue(encrypted: Buffer, aesKey: Buffer): string | null {
+  const prefix = encrypted.subarray(0, PREFIX_BYTES).toString('latin1');
   if (prefix !== 'v10' && prefix !== 'v11') return null; // app-bound (v20) or legacy DPAPI — skip
-  const nonce = encrypted.subarray(3, 15);
-  const tag = encrypted.subarray(encrypted.length - 16);
-  const ciphertext = encrypted.subarray(15, encrypted.length - 16);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce);
+  // Too short to hold a whole nonce and tag. Sliced anyway, the "tag" would be
+  // shorter than 16 bytes, and GCM would check only that many bytes of it.
+  if (encrypted.length < PREFIX_BYTES + NONCE_BYTES + TAG_BYTES) return null;
+  const nonce = encrypted.subarray(PREFIX_BYTES, PREFIX_BYTES + NONCE_BYTES);
+  const tag = encrypted.subarray(encrypted.length - TAG_BYTES);
+  const ciphertext = encrypted.subarray(PREFIX_BYTES + NONCE_BYTES, encrypted.length - TAG_BYTES);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce, { authTagLength: TAG_BYTES });
   decipher.setAuthTag(tag);
   let plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   // Chrome ≥ v104 prepends a 32-byte SHA-256 of the domain to the plaintext.
@@ -62,7 +70,22 @@ function chromeTimeToUnix(expiresUtc: number): number | undefined {
   return Math.floor(expiresUtc / 1_000_000 - 11_644_473_600);
 }
 
-export async function importChromeCookies(session: Session, domain?: string): Promise<ImportResult> {
+export function cleanupChromeCookieCopies(): void {
+  const directory = os.tmpdir();
+  try {
+    for (const name of fs.readdirSync(directory)) {
+      if (!/^neuron-cookies-.*\.db$/.test(name)) continue;
+      const file = path.join(directory, name);
+      try {
+        if (fs.lstatSync(file).isFile() && fs.statSync(file).mtimeMs < Date.now() - 60 * 60 * 1000) fs.unlinkSync(file);
+      } catch { /* another import or process may have removed it */ }
+    }
+  } catch { /* a temporarily unavailable temp directory must not prevent startup */ }
+}
+
+export async function importChromeCookies(session: Session, domain: unknown): Promise<ImportResult> {
+  const site = normalizeCookieDomain(domain);
+  if (!site) return { success: false, error: 'Enter a hostname such as github.com, without a scheme or path.' };
   if (process.platform !== 'win32') return { success: false, error: 'Chrome cookie import is currently Windows-only.' };
   const userData = chromeUserData();
   const cookiesDb = path.join(userData, 'Default', 'Network', 'Cookies');
@@ -76,20 +99,24 @@ export async function importChromeCookies(session: Session, domain?: string): Pr
   }
 
   // Copy the DB first — Chrome keeps the live file locked.
-  const tmp = path.join(os.tmpdir(), `neuron-cookies-${Date.now()}.db`);
+  const tmp = path.join(os.tmpdir(), `neuron-cookies-${crypto.randomUUID()}.db`);
   try {
-    fs.copyFileSync(cookiesDb, tmp);
+    fs.copyFileSync(cookiesDb, tmp, fs.constants.COPYFILE_EXCL);
     const SQL = await initSqlJs({ locateFile: (f: string) => path.join(path.dirname(require.resolve('sql.js')), f) });
     const db = new SQL.Database(fs.readFileSync(tmp));
-    const res = db.exec('SELECT host_key, name, encrypted_value, path, is_secure, is_httponly, expires_utc FROM cookies');
-    db.close();
+    let res;
+    try {
+      res = db.exec('SELECT host_key, name, encrypted_value, path, is_secure, is_httponly, expires_utc FROM cookies');
+    } finally {
+      db.close();
+    }
     if (!res.length) return { success: true, imported: 0, skipped: 0 };
 
     const rows = res[0].values as unknown[][];
     let imported = 0;
     let skipped = 0;
     for (const [hostKey, name, encValue, cookiePath, isSecure, isHttpOnly, expiresUtc] of rows as [string, string, Uint8Array, string, number, number, number][]) {
-      if (domain && !String(hostKey).includes(domain)) continue;
+      if (!cookieDomainMatches(String(hostKey), site)) continue;
       let value: string | null = null;
       try {
         value = decryptValue(Buffer.from(encValue), aesKey);

@@ -142,7 +142,8 @@ The commands below are the scripts defined by `package.json`:
 | `npm run typecheck` | Type-check the main/preload and renderer projects |
 | `npm test` | Run the fast unit and integration suites |
 | `npm run build` | Clean and build the main and renderer outputs |
-| `npm run test:e2e` | Build the main process and drive the real Electron app with Playwright |
+| `npm run test:e2e:integration` | Drive the real Electron app through every feature's integration spec (`e2e/integration`; build first) |
+| `npm run test:e2e` | Build the main process and run the full end-to-end suite, detailed specs included |
 | `npm run dist:test` | Build a local test installer |
 | `npm run dist:dir` | Build an unpacked test application |
 | `npm run dist:store` | Build production Microsoft Store artifacts |
@@ -161,11 +162,14 @@ Run all four standing checks from the repository root:
 npm run typecheck
 npm test
 npm run build
-npm run test:e2e
+npx playwright test e2e/integration/<feature>.spec.ts
 ```
 
-The E2E suite needs a desktop session and uses throwaway copies of the demo
-workspace. For visible changes, also exercise the affected flow in the running
+A pull request into `dev` runs the unit tests and the integration spec of each
+feature it touches (`e2e/integration/<feature>.spec.ts`; `tools/affected-e2e.mjs`
+says which), or `npm run test:e2e:integration` for shared code. The full suite,
+`npm run test:e2e`, is for preparing `dev` → `test`. The E2E specs need a desktop
+session and use throwaway copies of the demo workspace. For visible changes, also exercise the affected flow in the running
 app on the relevant operating system. For a bug fix, add or update a test that
 fails without the fix; verify a failing UI assertion against the running product
 before assuming the product is wrong.
@@ -203,8 +207,9 @@ A UI pull request without screenshots is returned to draft.
 
 CI runs on **Windows, macOS and Linux** for every pull request and push to `dev`,
 `test` and `main`. It installs with `npm ci`, then enforces the same typecheck, fast
-tests and build on all three. `dev` runs only affected e2e specs; `test` runs
-everything, including packaged smoke. Playwright failure
+tests and build on all three. `dev` runs only the integration specs of the
+features a change touches (all of them for shared code); `test` and `main` run
+the full suite, including packaged smoke. Playwright failure
 artifacts are uploaded for seven days — download them from the failed run to see
 what the app looked like when a test failed. A local pass is still required: CI
 is confirmation, not a substitute for describing what you tested.

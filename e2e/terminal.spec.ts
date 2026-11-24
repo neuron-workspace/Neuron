@@ -1,6 +1,7 @@
 import { test, expect, setPluginEnabled } from './fixtures';
-import type { Page } from '@playwright/test';
-import { realpathSync } from 'node:fs';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The shell and the terminal must agree on the width. When they did not -- the
 // first fit ran before the panel and its font were ready, and every pixel of a
@@ -94,4 +95,178 @@ test('the shell and the terminal agree on the width, on first open and after a r
     const flat = (await screenText(page)).replace(/\r?\n/g, '');
     return Math.max(0, ...[...flat.matchAll(/Z+/g)].map((m) => m[0].length));
   }, { timeout: 30_000 }).toBe(150);
+});
+
+// --- shells, windows and automations -----------------------------------------
+//
+// `x''-y` prints `x-y` in PowerShell, bash, zsh and fish alike, so an output
+// never matches the command line that produced it: finding it means it ran.
+
+const terminalButton = (page: Page) => page.getByRole('button', { name: /^(Show|Hide) terminal$/ });
+
+/** Show the terminal panel (if it is not already) and wait for its shell's first output. */
+async function showTerminal(page: Page) {
+  const button = terminalButton(page);
+  await expect(button).toBeVisible();
+  if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
+  await expect(page.locator('.xterm-rows').first()).not.toBeEmpty({ timeout: 60_000 });
+}
+
+const seen = (page: Page, text: string) => expect.poll(() => screenText(page), { timeout: 60_000 }).toContain(text);
+
+/** The pid of the shell on screen, as the shell itself reports it. */
+async function shellPid(page: Page): Promise<number> {
+  await run(page, win ? 'echo "PID=$PID"' : 'echo "PID=$$"');
+  let pid = 0;
+  await expect.poll(async () => {
+    pid = Number((await screenText(page)).match(/PID=(\d+)/)?.[1] ?? 0);
+    return pid;
+  }, { timeout: 30_000 }).toBeGreaterThan(0);
+  return pid;
+}
+
+const alive = (pid: number) => {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+};
+
+function folder(workspace: string, name: string): string {
+  const dir = join(workspace, '..', name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'elsewhere.md'), '# Elsewhere\n');
+  return dir;
+}
+
+test('two terminals keep separate output', async ({ page }) => {
+  test.setTimeout(150_000);
+  await showTerminal(page);
+  await run(page, "echo first''-shell");
+  await seen(page, 'first-shell');
+
+  await page.getByRole('button', { name: 'New terminal', exact: true }).first().click();
+  const list = page.getByRole('navigation', { name: 'Terminals' });
+  await expect(list.getByRole('button', { name: 'Terminal 2', exact: true })).toHaveAttribute('aria-current', 'true');
+  await expect(page.locator('.xterm-rows').first()).not.toBeEmpty({ timeout: 60_000 });
+  await run(page, "echo second''-shell");
+  await seen(page, 'second-shell');
+  expect(await screenText(page)).not.toContain('first-shell');
+
+  // Back to the first: its own output, replayed, and none of the second's.
+  await list.getByRole('button', { name: 'Terminal 1', exact: true }).click();
+  await seen(page, 'first-shell');
+  expect(await screenText(page)).not.toContain('second-shell');
+});
+
+test('switching workspace ends the old shells, and a new one starts in the new folder', async ({ app, page, workspace }) => {
+  test.setTimeout(150_000);
+  await showTerminal(page);
+  const before = await shellPid(page);
+  expect(alive(before)).toBe(true);
+
+  // This window leaves its workspace (removed from the list) and opens another
+  // in its place -- the one way a window changes folder rather than a new
+  // window opening beside it.
+  const other = folder(workspace, 'second-folder-neuron');
+  await page.evaluate(async ({ from, to }) => {
+    const api = (window as unknown as { electronAPI: any }).electronAPI;
+    await api.repository.remove(from);
+    const opened = await api.repository.switch(to);
+    if (!opened.success) throw new Error(opened.error);
+  }, { from: workspace, to: other });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { electronAPI: any }).electronAPI.repository.getCurrent().then((r: any) => r?.path))).toBe(other);
+  expect(app.windows()).toHaveLength(1);
+
+  await expect.poll(() => alive(before), { timeout: 30_000 }).toBe(false);
+  await showTerminal(page);
+  await run(page, win ? '(Get-Location).Path' : 'pwd');
+  await seen(page, 'second-folder-neuron');
+  const after = await shellPid(page);
+  expect(after).not.toBe(before);
+  expect(alive(after)).toBe(true);
+});
+
+test('closing a window ends its shells, and only its own', async ({ app, page, workspace }) => {
+  test.setTimeout(150_000);
+  const other = folder(workspace, 'closing-folder-neuron');
+  const [second] = await Promise.all([
+    app.waitForEvent('window'),
+    page.evaluate((dir) => (window as unknown as { electronAPI: any }).electronAPI.repository.switch(dir), other),
+  ]);
+  await second.waitForLoadState('domcontentloaded');
+  await showTerminal(second);
+  const theirs = await shellPid(second);
+  await showTerminal(page);
+  const mine = await shellPid(page);
+  expect(alive(theirs) && alive(mine)).toBe(true);
+
+  await second.close();
+  await expect.poll(() => app.windows().length).toBe(1);
+  await expect.poll(() => alive(theirs), { timeout: 30_000 }).toBe(false);
+  expect(alive(mine)).toBe(true);
+});
+
+/** The Automations panel, switched on and selected in the bottom dock. */
+async function openAutomations(app: ElectronApplication, page: Page) {
+  await setPluginEnabled(app, page, 'Automations');
+  await page.getByRole('button', { name: 'Show bottom peek', exact: true }).click();
+  const dock = page.getByRole('complementary', { name: 'Bottom plugin peek' });
+  await dock.getByRole('button', { name: 'Automations', exact: true }).click();
+  await expect(dock.getByPlaceholder('Automation name')).toBeVisible();
+  return dock;
+}
+
+async function addAutomation(dock: Locator, name: string, commands: string[]) {
+  await dock.getByPlaceholder('Automation name').fill(name);
+  await dock.getByPlaceholder(/One command per line/).fill(commands.join('\n'));
+  await dock.getByRole('button', { name: 'Add automation' }).click();
+}
+
+const REFUSAL = "This command contains hidden characters and won't run.";
+
+test('an automation with three commands runs them in order', async ({ app, page }) => {
+  test.setTimeout(150_000);
+  const dock = await openAutomations(app, page);
+  await addAutomation(dock, 'Three', ["echo auto''-a", "echo auto''-b", "echo auto''-c"]);
+  await dock.getByRole('button', { name: 'Run Three', exact: true }).click();
+
+  // The terminal tab is selected in place of Automations, and its new shell
+  // runs all three once it is ready, in order, each once.
+  await expect(dock.getByRole('button', { name: 'Terminal', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await seen(page, 'auto-c');
+  const text = await screenText(page);
+  const at = ['auto-a', 'auto-b', 'auto-c'].map((word) => text.indexOf(word));
+  expect(at.every((index) => index >= 0)).toBe(true);
+  expect(at).toEqual([...at].sort((a, b) => a - b));
+  for (const word of ['auto-a', 'auto-b', 'auto-c']) expect(text.split(word).length - 1, word).toBe(1);
+});
+
+test('an automation with a bad line runs none of it', async ({ app, page }) => {
+  test.setTimeout(150_000);
+  const dock = await openAutomations(app, page);
+  const commands = ["echo auto''-x", 'echo ​auto-y', "echo auto''-z"];
+
+  // Typed in: refused, and not saved.
+  await addAutomation(dock, 'Typed', commands);
+  await expect(dock.getByRole('status')).toHaveText(`Line 2: ${REFUSAL}`);
+  await expect(dock.getByRole('button', { name: 'Run Typed', exact: true })).toHaveCount(0);
+
+  // Saved anyway (settings synced or edited by hand): marked, and refused as a
+  // whole when run -- the good lines around the bad one do not run either.
+  await page.evaluate((list) => (window as unknown as { electronAPI: any }).electronAPI.settings.set('automations', [{ id: '1', name: 'Synced', commands: list }]), commands);
+  await dock.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await expect(page.locator('.xterm-rows').first()).not.toBeEmpty({ timeout: 60_000 });
+  await dock.getByRole('button', { name: 'Automations', exact: true }).click();
+  const runSynced = dock.getByRole('button', { name: 'Run Synced', exact: true });
+  await expect(runSynced).toBeVisible();
+  await expect(dock.getByText(REFUSAL)).toBeVisible();
+  await runSynced.click();
+  await expect(dock.getByRole('status')).toHaveText(`Synced: ${REFUSAL} Nothing was sent.`);
+  // Nothing to run, so the terminal is not brought forward.
+  await expect(dock.getByRole('button', { name: 'Automations', exact: true })).toHaveAttribute('aria-pressed', 'true');
+
+  // The shell got none of it, even once its panel is back and ready to drain a queue.
+  await dock.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await expect(page.locator('.xterm-rows').first()).not.toBeEmpty({ timeout: 60_000 });
+  await page.waitForTimeout(2_000);
+  const text = await screenText(page);
+  for (const word of ['auto-x', 'auto-y', 'auto-z']) expect(text).not.toContain(word);
 });

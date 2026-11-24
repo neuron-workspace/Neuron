@@ -109,7 +109,19 @@ check('Store redelivery is guarded and downloads the retained artifact', () => {
 });
 
 check('CI keeps the three required platform names and pushes on test', () => {
-  assert.deepEqual(ci.jobs.build.strategy.matrix.include.map(p => p.name), ['Windows', 'macOS', 'Linux']);
+  assert.deepEqual(ci.jobs.build.strategy.matrix.include.map(p => p.name), ['Windows', 'Linux']);
+  // macOS runs last (its runners queue longest), with the same env and steps.
+  const mac = ci.jobs['build-macos'];
+  assert.deepEqual(mac.strategy.matrix.include.map(p => p.name), ['macOS']);
+  // macOS only after Windows and Linux pass (no `if`, so the default success()).
+  assert.deepEqual(mac.needs, ['changes', 'build']);
+  assert.equal(mac.if, undefined);
+  // Windows and Linux only after the security checks pass.
+  assert.deepEqual(ci.jobs.build.needs, ['changes', 'static-analysis', 'security']);
+  assert.equal(ci.jobs['static-analysis'].uses, './.github/workflows/codeql.yml');
+  assert.equal(ci.jobs.security.uses, './.github/workflows/security-scan.yml');
+  assert.deepEqual(mac.steps, ci.jobs.build.steps);
+  assert.deepEqual(mac.env, ci.jobs.build.env);
   assert.deepEqual(ci.on.push.branches, ['main', 'test', 'dev']);
   assert.equal(ci.jobs.changes.name, 'Detect changes');
   for (const output of ['code', 'scope', 'specs']) assert.ok(ci.jobs.changes.outputs[output]);
@@ -290,6 +302,71 @@ check('the tag comes from head_branch, which is where it survives', () => {
   for (const line of tags) {
     assert.match(line, /TAG:\s*\$\{\{\s*github\.event\.workflow_run\.head_branch\s*\|\|\s*inputs\.tag\s*\}\}/, line.trim());
   }
+});
+
+// --- CI's test scope by branch (D44) ------------------------------------------
+// Into test and main: the full suite. Into dev: integration specs only, the
+// affected ones, or all of them when the change is shared or unknown.
+
+check('CI runs the full suite for test and main and only integration specs for dev', () => {
+  const steps = ci.jobs.build.steps;
+  const step = (name) => {
+    const found = steps.find((s) => s.name === name);
+    assert.ok(found, `ci.yml must have the step "${name}"`);
+    return found;
+  };
+  const full = step('Run the full end-to-end suite');
+  assert.equal(full.if, "env.RUN == 'true' && env.SPECS == 'full' && env.E2E_PAUSED != 'true'");
+  assert.equal(full.run, '${{ matrix.wrap }} npm run test:e2e');
+  const all = step('Run all integration end-to-end tests');
+  assert.equal(all.if, "env.RUN == 'true' && env.SPECS == 'all' && env.E2E_PAUSED != 'true'");
+  assert.match(all.run, /npm run test:e2e:integration$/);
+  const affected = step('Run affected integration end-to-end tests');
+  assert.equal(affected.if, "env.RUN == 'true' && env.SPECS != 'full' && env.SPECS != 'all' && env.SPECS != '' && env.E2E_PAUSED != 'true'");
+  assert.match(affected.run, /npx playwright test "\$\{specs\[@\]\}"/);
+  // The other e2e paths never reach the full suite.
+  for (const s of [all, affected]) assert.doesNotMatch(s.run, /test:e2e(?!:integration)/);
+  // The switch, the Linux keychain and the packaged smoke test stay where they were.
+  assert.equal(ci.jobs.build.env.E2E_PAUSED, 'false');
+  assert.ok(steps.some((s) => /keychain/i.test(s.name) && /runner\.os == 'Linux'/.test(s.if ?? '')));
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8'));
+  assert.equal(pkg.scripts['test:e2e:integration'], 'playwright test e2e/integration');
+  // The full suite is every spec under e2e/, which includes e2e/integration.
+  assert.equal(pkg.scripts['test:e2e'], 'npm run build:main && playwright test');
+});
+
+/** Run ci.yml's real classification script for an event and read back its outputs. */
+const classifyStep = ci.jobs.changes.steps.find((s) => s.id === 'filter');
+const classifyScript = join(out, 'classify.sh');
+writeFileSync(classifyScript, classifyStep.run, 'utf-8');
+const classify = (env) => {
+  const outputs = join(out, 'classify.txt');
+  writeFileSync(outputs, '');
+  execFileSync(BASH, [classifyScript], {
+    cwd: root,
+    env: { ...process.env, EVENT: '', REF: '', BASE_REF: '', BASE: '', HEAD: '', BEFORE: '', AFTER: '', ...env, GITHUB_OUTPUT: outputs },
+    encoding: 'utf-8',
+    // The unreachable-BEFORE case makes git complain on stderr, by design.
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return Object.fromEntries(readFileSync(outputs, 'utf-8').split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+};
+
+check('pushes and pull requests into test and main take the full suite', () => {
+  for (const ref of ['refs/heads/test', 'refs/heads/main']) {
+    assert.deepEqual(classify({ EVENT: 'push', REF: ref, BEFORE: '0'.repeat(40) }), { scope: 'full', code: 'true', specs: 'full' }, ref);
+  }
+  for (const base of ['test', 'main']) {
+    assert.equal(classify({ EVENT: 'pull_request', BASE_REF: base, BASE: 'HEAD', HEAD: 'HEAD' }).specs, 'full', base);
+  }
+});
+
+check('dev never takes the full suite: an unknown change runs every integration spec', () => {
+  // The first push of dev has no BEFORE; a force-push can leave it unreachable.
+  assert.deepEqual(classify({ EVENT: 'push', REF: 'refs/heads/dev', BEFORE: '0'.repeat(40), AFTER: 'HEAD' }), { scope: 'affected', code: 'true', specs: 'all' });
+  assert.deepEqual(classify({ EVENT: 'push', REF: 'refs/heads/dev', BEFORE: 'f'.repeat(40), AFTER: 'HEAD' }), { scope: 'affected', code: 'true', specs: 'all' });
+  // A pull request into dev runs what tools/affected-e2e.mjs selects: here, nothing changed.
+  assert.deepEqual(classify({ EVENT: 'pull_request', BASE_REF: 'dev', BASE: 'HEAD', HEAD: 'HEAD' }), { scope: 'affected', code: 'true', specs: '' });
 });
 
 rmSync(out, { recursive: true, force: true });

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FolderGit2, Info, Keyboard, Palette, PencilLine, Plug, Settings } from 'lucide-react';
-import type { RepositoryInfo } from '../electron.d';
+import type { RecentWorkspace } from '../electron.d';
 import { settingsSectionOf, type SettingsSection } from '../../main/workspace-windows';
 import type { Appearance } from '../lib/theme';
 import type { Bindings } from '../lib/keybindings';
@@ -50,36 +50,34 @@ interface SettingsWindowProps {
   onBindingsChange: (bindings: Bindings) => void;
   properties: PropertiesSettings;
   onPropertiesChange: (properties: PropertiesSettings) => void;
-  recents: RepositoryInfo[];
+  /** Every known workspace, once each, with the opener marked (main decides both). */
+  recents: RecentWorkspace[];
   onSwitchRepo: (dir: string) => void;
   /** Stable across renders: the window's listeners are set up once with it. */
   onReloadRepos: () => void;
+  /** The app's notice (a workspace that could not be opened, for one), or nothing. */
+  notice?: React.ReactNode;
 }
 
 /** The one Settings window: a fixed list of sections, one shown at a time. */
 export default function SettingsWindow(props: SettingsWindowProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [opener, setOpener] = useState<RepositoryInfo | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
-  const loadOpener = useCallback(() => {
-    void window.electronAPI?.windowControls.openerWorkspace().then(setOpener).catch(() => setOpener(null));
-  }, []);
-  const { onReloadRepos } = props;
-  const reload = useCallback(() => { onReloadRepos(); loadOpener(); }, [onReloadRepos, loadOpener]);
+  const { onReloadRepos: reload } = props;
 
   useEffect(() => {
-    loadOpener();
-    // Another window asked for a section, possibly from another workspace.
+    // Another window asked for a section, possibly from another workspace,
+    // which changes the workspace the list marks as the opener.
     const unsubscribe = window.electronAPI?.windowControls.onShowSection((asked) => {
       const next = settingsSectionOf(asked);
       if (next) setSection(next);
-      loadOpener();
+      reload();
     });
-    // Workspaces open and close in other windows while this one waits.
-    window.addEventListener('focus', reload);
-    return () => { unsubscribe?.(); window.removeEventListener('focus', reload); };
-  }, [loadOpener, reload]);
+    // Workspaces open and close in other windows while this one waits; App
+    // asks for the list again whenever a window comes forward.
+    return () => { unsubscribe?.(); };
+  }, [reload]);
 
   useLayoutEffect(() => { if (scroller.current) scroller.current.scrollTop = 0; }, [section]);
 
@@ -92,7 +90,7 @@ export default function SettingsWindow(props: SettingsWindowProps) {
     case 'keyboard': content = <KeyboardSettings bindings={props.bindings} onBindingsChange={props.onBindingsChange} />; break;
     case 'editor': content = <EditorSettings properties={props.properties} onPropertiesChange={props.onPropertiesChange} />; break;
     case 'connectors': content = <ConnectorsPage />; break;
-    case 'workspaces': content = <RepositoriesPage opener={opener} recents={props.recents} onSwitch={props.onSwitchRepo} onReload={reload} />; break;
+    case 'workspaces': content = <RepositoriesPage recents={props.recents} onSwitch={props.onSwitchRepo} onReload={reload} />; break;
     case 'about': content = <AboutSettings />; break;
   }
 
@@ -108,7 +106,8 @@ export default function SettingsWindow(props: SettingsWindowProps) {
             <SectionRow key={row.id} label={row.label} icon={row.icon} selected={section === row.id} onSelect={() => setSection(row.id)} />
           ))}
         </nav>
-        <main className="shell-card flex min-w-0 flex-1 flex-col" data-settings-section={section}>
+        <main className="shell-card relative flex min-w-0 flex-1 flex-col" data-settings-section={section}>
+          {props.notice}
           <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
             <div className="w-full max-w-[720px] px-7 pb-12 pt-6">
               <h1 className="flex items-center gap-2 text-[18px] font-semibold text-[var(--ink)]">

@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol } from 'electron';
-import type { WebContents } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol, safeStorage } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { decideOpen, settingsSectionOf, ownsPtyKey, ptyKey, type SettingsSection, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
 import { generateText } from 'ai';
@@ -8,11 +8,13 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { importChromeCookies } from './chrome-cookies';
-import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions } from './htmx';
+import { importChromeCookies, cleanupChromeCookieCopies } from './chrome-cookies';
+import { requestPublic } from './public-network';
+import { encodeSecret, decodeSecret, hasStoredSecret, carriesApiKey, migrateSecretSettings, rendererSettingsValue, noKeychainError, type SecretCodec } from './secret-storage';
+import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions, APPROVALS_KEY as VIEW_TRUST_KEY } from './htmx';
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
-import { folderKey, uniqueRecents } from './recentRepos';
+import { folderKey, keyNames, listedWorkspaces, nameOf, startupRecents, uniqueRecents, withName } from './recentRepos';
 import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
@@ -22,19 +24,31 @@ import { configureCrashReporter } from './crash-reporter';
 import { installDirectory, isInsideInstall, workspacePathFromArgv } from './workspace-argv';
 import * as path from 'path';
 import * as fs from 'fs';
+import { openSafe, mkdirSafeSync, unlinkSafeSync, renameSafe } from './safe-fs';
 import * as os from 'os';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
-import { Readable } from 'node:stream';
-import { fileKind, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
-import { authorizeFileUrl, FILE_HEADERS, FILE_SCHEME, parseRange } from './file-protocol';
-import { watchWorkspace } from './workspace-watcher';
+import { fileKind, isListedFile, isUnlistedText, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
+import { FILE_SCHEME, respondWithFile } from './file-protocol';
+import { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './file-limits';
+import { createSaveQueue, isOutsideChange, SAVE_CONFLICT, saveConflict, saveKey, textHash, writeAtomically } from './save-file';
+import { createSettingsReader } from './settings-file';
+import { checkRendererSetting } from './settings-schema';
+import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
-import { exec } from 'child_process';
+import { moveRefusal, normalizeRelative, samePath, tableMetaMove } from './workspace-rename';
 import * as pty from 'node-pty';
+import { defaultShell } from './terminal-shell';
+import { appendHistory } from './terminal-history';
 
 
 const RENDERER_ROOT = pathToFileURL(path.join(__dirname, '../renderer') + path.sep).href;
+/**
+ * Unpackaged build: the renderer comes from the dev server. The one switch for
+ * loading DEV_URL and for letting the app frame navigate to it, so a packaged
+ * app never trusts that port, whatever NODE_ENV says.
+ */
+const IS_DEV = !app.isPackaged;
 /**
  * Every window, and the workspace it owns.
  *
@@ -47,6 +61,8 @@ interface AppWindow {
   kind: WindowKind;
   repo: string | null;
   watcher: { close(): void } | null;
+  /** The workspace this window was last told it cannot fully watch, so it is told once. */
+  watchLimitNoticed: string | null;
   /** Random, per window: proves a neuron-file:// request came from this window. */
   fileToken: string;
 }
@@ -62,8 +78,13 @@ protocol.registerSchemesAsPrivileged([{
 let lastWorkspaceId: number | null = null;
 /** The workspace of the window that last opened Settings, which its Workspaces section marks. */
 let settingsOpener: string | null = null;
-type Sender = { sender: WebContents };
-const entryOf = (event: Sender): AppWindow | null => appWindows.get(event.sender.id) ?? null;
+type Sender = Pick<IpcMainEvent | IpcMainInvokeEvent, 'sender' | 'senderFrame'>;
+const entryOf = (event: Sender): AppWindow | null => {
+  const entry = appWindows.get(event.sender.id);
+  if (!entry || entry.window.isDestroyed()) return null;
+  const contents = entry.window.webContents;
+  return event.sender === contents && event.senderFrame != null && event.senderFrame === contents.mainFrame ? entry : null;
+};
 const windowOf = (event: Sender): BrowserWindow | null => {
   const window = entryOf(event)?.window;
   return window && !window.isDestroyed() ? window : null;
@@ -127,10 +148,10 @@ app.on('child-process-gone', (_event, details) => {
   });
 });
 
-// Workspace files: Markdown notes, HTMX views (+ their manifests), databases,
-// canvases, Mermaid diagrams, CSV tables, the internal shell
-// config, and .neuron configuration/assets (CSV table metadata is .neuron/tables/**.json).
-const WORKSPACE_FILE = /(^\.neuron[\/\\].+\.(json|html|css)$|^neuron\.config$|\.neuron\.json$|\.(md|mdx|html|db|canvas|mmd|mermaid|csv)$)/;
+// Workspace files (isListedFile): Markdown notes, HTMX views (+ their
+// manifests), databases, canvases, Mermaid diagrams, CSV tables, the internal
+// shell config, and .neuron configuration/assets (CSV table metadata is
+// .neuron/tables/**.json). The renderer uses the same test.
 
 // ==========================================================================
 // Settings store — JSON file in userData. Holds the active/recent
@@ -143,37 +164,44 @@ interface Settings {
   [key: string]: unknown;
 }
 
-const settingsFile = () => {
-  const newPath = path.join(app.getPath('userData'), 'neuron-settings.json');
-  const oldPath = path.join(app.getPath('userData'), 'autonote-settings.json');
-  if (!fs.existsSync(newPath) && fs.existsSync(oldPath)) {
-    try {
-      fs.copyFileSync(oldPath, newPath);
-    } catch (e) {
-      console.error('Failed to migrate settings file:', e);
-    }
-  }
-  return newPath;
-};
+const settingsFile = () => path.join(app.getPath('userData'), 'neuron-settings.json');
+const legacySettingsFile = () => path.join(app.getPath('userData'), 'autonote-settings.json');
+
+// A damaged file is moved aside before anything can write over it, and the
+// user is told once, when the app can show a dialog. See ./settings-file.
+const settingsReader = createSettingsReader({
+  fs,
+  file: settingsFile,
+  legacyFile: legacySettingsFile,
+  notify: (message) => {
+    void diagnostics.write({ level: 'warn', category: 'settings.damaged', message });
+    void app.whenReady().then(() => dialog.showMessageBox({ type: 'warning', title: 'Neuron', message }));
+  },
+});
 
 function readSettings(): Settings {
-  try {
-    const raw = fs.readFileSync(settingsFile(), 'utf-8').trim();
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<Settings>;
-      return { repositories: { current: null, recent: [] }, ...parsed } as Settings;
-    }
-  } catch {
-    /* first run or unreadable — fall through to defaults */
-  }
-  return { repositories: { current: null, recent: [] } };
+  return { repositories: { current: null, recent: [] }, ...settingsReader.read() } as Settings;
 }
 
-function writeSettings(settings: Settings): void {
+function writeSettingsAtomically(file: string, settings: Record<string, unknown>): void {
+  const temporary = `${file}.${randomBytes(12).toString('hex')}.tmp`;
   try {
-    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2), 'utf-8');
+    fs.writeFileSync(temporary, JSON.stringify(settings, null, 2), { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+    fs.renameSync(temporary, file);
+  } finally {
+    try { fs.unlinkSync(temporary); } catch { /* renamed or never created */ }
+  }
+}
+
+function writeSettings(settings: Settings): boolean {
+  // The damaged file is still where this would write. Keep it rather than the change.
+  if (!settingsReader.canWrite()) return false;
+  try {
+    writeSettingsAtomically(settingsFile(), settings);
+    return true;
   } catch (err) {
     console.error('Failed to persist settings:', err);
+    return false;
   }
 }
 
@@ -217,27 +245,41 @@ function demoRepoPath(): string {
 
 function repoInfo(dir: string) {
   const lower = dir.toLowerCase();
-  const names = readSettings().repositories.names ?? {};
   // In development the demo is in the list, and a workspace copied from it is
   // usually a folder called demo-repo too: two rows reading "demo-repo".
   const base = folderKey(dir) === folderKey(demoRepoPath()) ? 'Demo workspace' : path.basename(dir) || dir;
   return {
     path: dir,
-    name: names[dir] || base,
+    // By folder, not spelling: a rename made through C:\Notes still names c:\notes\.
+    name: nameOf(readSettings().repositories.names, dir) || base,
     cloud: CLOUD_HINTS.some((hint) => lower.includes(hint)),
   };
 }
 
+/** The workspace whose window opened Settings, while a window still shows it (in any spelling). */
+function openSettingsOpener(): string | null {
+  const opener = settingsOpener;
+  if (!opener) return null;
+  const key = folderKey(opener);
+  const open = [...appWindows.values()].some((entry) => entry.kind === 'workspace' && !!entry.repo && folderKey(entry.repo) === key);
+  return open ? opener : null;
+}
+
+const isFolder = (dir: string): boolean => {
+  try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+};
+
 /** Repair saved workspace paths and keep the development demo discoverable. */
 function ensureDefaultRepo(): void {
   const settings = readSettings();
-  const isDir = (p: string) => fs.existsSync(p) && fs.statSync(p).isDirectory();
   const demo = demoRepoPath();
-  const demoExists = isDir(demo);
+  const demoExists = isFolder(demo);
 
-  // Prune repositories whose folders no longer exist (e.g. renamed/removed),
-  // and collapse entries that are the same folder spelled differently.
-  settings.repositories.recent = uniqueRecents(settings.repositories.recent.filter((p) => !isInstallWorkspace(p) && isDir(p)), null);
+  // Folders that are not there stay listed (an unplugged drive comes back);
+  // install-folder workspaces go, and two spellings of one folder become one.
+  settings.repositories.recent = startupRecents(settings.repositories.recent, isInstallWorkspace);
+  // Names saved under a spelling are kept under the folder's identity instead.
+  if (settings.repositories.names) settings.repositories.names = keyNames(settings.repositories.names);
 
   if (settings.repositories.current && isInstallWorkspace(settings.repositories.current)) {
     settings.repositories.current = null;
@@ -327,13 +369,24 @@ function setupWatcher(entry: AppWindow) {
 
   entry.watcher = watchWorkspace(dir, (event, relativePath) => {
     if (entry.window.isDestroyed()) return;
-    if (WORKSPACE_FILE.test(relativePath) || event === 'unlink') {
+    // Text files too (JSON, YAML, a README): an open one follows its file on
+    // disk the way a note does. The renderer keeps them out of its notes.
+    if (isListedFile(relativePath) || isUnlistedText(relativePath) || event === 'unlink') {
       entry.window.webContents.send('notes:changed', event, relativePath);
     }
     // The renderer asks for the full listing again. Not for edits to notes, or
     // every save while typing would re-walk the folder. Other files count even
     // on 'change': the native watcher can report a new file as one.
-    if (event !== 'change' || !WORKSPACE_FILE.test(relativePath)) entry.window.webContents.send('workspace:changed');
+    if (event !== 'change' || !isListedFile(relativePath)) entry.window.webContents.send('workspace:changed');
+  }, {
+    // Linux runs out of inotify watches in a large workspace (ENOSPC), and any
+    // system can run out of file handles (EMFILE). Neuron goes on without the
+    // watcher; the window says so once for this workspace.
+    onError: (error) => {
+      if (!isWatchLimitError(error) || entry.window.isDestroyed() || entry.watchLimitNoticed === dir) return;
+      entry.watchLimitNoticed = dir;
+      entry.window.webContents.send('workspace:watch-limit');
+    },
   });
 }
 
@@ -370,6 +423,10 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
       : { titleBarStyle: 'hidden' as const, titleBarOverlay: { height: 39, color: '#f3f4f6', symbolColor: '#171a1f' } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      // Electron's defaults, stated so a later change cannot drop them unseen.
+      // The preload needs nothing but `electron` (contextBridge, ipcRenderer),
+      // which is what a sandboxed preload is allowed.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true, // enables in-app browser tabs (<webview>)
@@ -380,7 +437,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   if (testInBackground) window.once('ready-to-show', () => { if (!window.isDestroyed()) window.showInactive(); });
   // Settings is a smaller window with no workspace of its own.
   if (kind !== 'workspace') { window.setMinimumSize(760, 520); window.setSize(1000, 720); }
-  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null, fileToken: randomBytes(32).toString('hex') };
+  const entry: AppWindow = { window, kind, repo: kind === 'workspace' ? usableRepo(repo) : null, watcher: null, watchLimitNoticed: null, fileToken: randomBytes(32).toString('hex') };
   const id = window.webContents.id;
   appWindows.set(id, entry);
   if (kind === 'workspace') lastWorkspaceId = id;
@@ -392,9 +449,8 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   if (process.platform !== 'darwin') window.setMenuBarVisibility(false);
   installApplicationMenu(() => BrowserWindow.getFocusedWindow());
 
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   const query: Record<string, string> | null = kind === 'workspace' ? null : { window: kind, ...(section ? { section } : {}) };
-  if (isDev) {
+  if (IS_DEV) {
     void window.loadURL(query ? DEV_URL + (DEV_URL.includes('?') ? '&' : '?') + new URLSearchParams(query).toString() : DEV_URL);
   } else {
     void window.loadFile(path.join(__dirname, '../renderer/index.html'), query ? { query } : undefined);
@@ -471,15 +527,14 @@ ipcMain.handle('window:open-page', (event, asked: unknown) => {
 // Only the opener's name and folder cross over, and only while a window still
 // has it open: Settings gets no file access to it.
 ipcMain.handle('window:opener-workspace', (event) => {
-  if (entryOf(event)?.kind !== 'settings' || !settingsOpener) return null;
-  const opener = settingsOpener;
-  const open = [...appWindows.values()].some((entry) => entry.kind === 'workspace' && entry.repo === opener);
-  return open ? repoInfo(opener) : null;
+  if (entryOf(event)?.kind !== 'settings') return null;
+  const opener = openSettingsOpener();
+  return opener ? repoInfo(opener) : null;
 });
 ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; symbolColor?: unknown } | null) => {
   const window = windowOf(event);
   if ((process.platform !== 'win32' && process.platform !== 'linux') || !window) return;
-  if (event.senderFrame !== window.webContents.mainFrame) return;
+  if (!isRecord(colors)) return;
   if (typeof colors?.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.color)
     || typeof colors?.symbolColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors.symbolColor)) return;
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor });
@@ -496,33 +551,66 @@ ipcMain.handle('window:set-overlay-colors', (event, colors: { color?: unknown; s
 // every ai:complete call. Any renderer code could read every plugin's key, and
 // plugins are not sandboxed (risk R3), so one plugin could read another's.
 const SECRETS_KEY = '__secrets';
+const safeSettingsKey = (key: unknown): key is string => typeof key === 'string'
+  && !['__proto__', 'constructor', 'prototype'].includes(key);
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null
+  && typeof value === 'object' && !Array.isArray(value)
+  && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+
+function secretCodec(): SecretCodec {
+  return {
+    available: safeStorage.isEncryptionAvailable()
+      && !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'),
+    encrypt: (value) => safeStorage.encryptString(value),
+    decrypt: (value) => safeStorage.decryptString(value),
+  };
+}
+
+/** The saved form of a secret, still encrypted. Own properties only. */
+function storedSecret(scope: string, field: string): unknown {
+  const store = readSettings()[SECRETS_KEY];
+  if (!store || typeof store !== 'object' || !Object.hasOwn(store, scope)) return null;
+  const scoped = (store as Record<string, unknown>)[scope];
+  if (!scoped || typeof scoped !== 'object' || !Object.hasOwn(scoped, field)) return null;
+  return (scoped as Record<string, unknown>)[field];
+}
 
 function readSecret(scope: string, field: string): string | null {
-  const store = readSettings()[SECRETS_KEY];
-  if (!store || typeof store !== 'object') return null;
-  const scoped = (store as Record<string, unknown>)[scope];
-  if (!scoped || typeof scoped !== 'object') return null;
-  const value = (scoped as Record<string, unknown>)[field];
-  return typeof value === 'string' && value.length > 0 ? value : null;
+  return decodeSecret(storedSecret(scope, field), secretCodec());
 }
 
 ipcMain.handle('settings:get', (_event, key: string) => {
+  if (!entryOf(_event) || !safeSettingsKey(key)) return null;
   // The renderer may never read the secret namespace, by any key that resolves
   // to it. Without this the store would be one settings.get('__secrets') away
   // from being exactly as exposed as before.
   if (key === SECRETS_KEY) return null;
   const settings = readSettings();
-  if (key in settings) {
+  if (Object.hasOwn(settings, key)) {
     const value = settings[key];
-    return key === SECRETS_KEY ? null : value;
+    return rendererSettingsValue(key, value);
   }
   return null;
 });
 ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
+  if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+  if (!safeSettingsKey(key)) return { success: false, error: 'Invalid settings key.' };
   if (key === SECRETS_KEY) return { success: false, error: 'Reserved key.' };
+  // Which HTML views are trusted is written by the trust prompt in main only
+  // (htmx/index.ts); a renderer write here would trust a view nobody saw.
+  if (key === VIEW_TRUST_KEY) return { success: false, error: 'Reserved key.' };
+  // Not only where keys used to live: an apiKey anywhere in any value would be
+  // plain text on disk and readable back by every renderer.
+  if (carriesApiKey(value)) return { success: false, error: 'Use the secret store for keys.' };
+  // Every key has a rule (P0-2): unknown keys, main-only keys (`sync`,
+  // `repositories`...) and values that do not fit their key write nothing.
+  const verdict = checkRendererSetting(key, value);
+  if (!verdict.ok) return { success: false, error: verdict.error };
   const settings = readSettings();
   settings[key] = value;
-  writeSettings(settings);
+  // Not saved is not success: the caller keeps showing the change as unsaved,
+  // and no other window is told to reload it.
+  if (!writeSettings(settings)) return { success: false, error: 'Could not save the settings file.' };
   // Settings are shared by every window; the others reload what changed. Only
   // the key is sent, never the value.
   for (const [id, entry] of appWindows) {
@@ -534,22 +622,29 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
 // Write-only from the renderer's side: it can set a secret and ask whether one
 // exists, and it can never read the value back.
 ipcMain.handle('settings:set-secret', (_event, scope: string, field: string, value: string) => {
-  if (typeof scope !== 'string' || typeof field !== 'string' || !scope || !field) {
+  if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+  if (!safeSettingsKey(scope) || !safeSettingsKey(field) || !scope || !field || typeof value !== 'string') {
     return { success: false, error: 'Invalid secret reference.' };
   }
   const settings = readSettings();
   const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object'
     ? settings[SECRETS_KEY]
-    : {}) as Record<string, Record<string, string>>;
+    : {}) as Record<string, Record<string, unknown>>;
   const scoped = { ...(store[scope] ?? {}) };
-  if (typeof value === 'string' && value.length > 0) scoped[field] = value;
+  if (typeof value === 'string' && value.length > 0) {
+    const codec = secretCodec();
+    if (!codec.available) return { success: false, error: noKeychainError(process.platform) };
+    try { scoped[field] = encodeSecret(value, codec); }
+    catch { return { success: false, error: 'Could not encrypt the key with the system keychain.' }; }
+  }
   else delete scoped[field];
   settings[SECRETS_KEY] = { ...store, [scope]: scoped };
-  writeSettings(settings);
-  return { success: true };
+  return writeSettings(settings) ? { success: true } : { success: false, error: 'Could not save the key.' };
 });
 
-ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => readSecret(scope, field) !== null);
+// Answered from the saved shape: asking whether a key exists never decrypts it.
+ipcMain.handle('settings:has-secret', (_event, scope: string, field: string) => !!entryOf(_event)
+  && safeSettingsKey(scope) && safeSettingsKey(field) && hasStoredSecret(storedSecret(scope, field), secretCodec()));
 
 // ==========================================================================
 // IPC — repository
@@ -562,9 +657,16 @@ ipcMain.handle('repository:get-current', (event) => {
 
 // The open workspace is not "recent": the switcher already shows it on its
 // button, and listing it again underneath was the name appearing twice.
+// Settings gets every folder once, with its opener marked. A folder that is
+// not there is still listed, marked missing, so a drive that is plugged back
+// in brings its workspace back.
 ipcMain.handle('repository:list-recent', (event) => {
-  const recent = readSettings().repositories.recent;
-  return uniqueRecents(recent.filter((p) => !isInstallWorkspace(p) && fs.existsSync(p)), repoOf(event)).map(repoInfo);
+  const entry = entryOf(event);
+  if (!entry) return [];
+  const recent = readSettings().repositories.recent.filter((p) => typeof p === 'string' && !isInstallWorkspace(p));
+  const opener = entry.kind === 'settings' ? openSettingsOpener() : null;
+  return listedWorkspaces(recent, entry.repo, opener)
+    .map(({ dir, isOpener }) => ({ ...repoInfo(dir), missing: !isFolder(dir), isOpener }));
 });
 
 ipcMain.handle('repository:create', async (event) => {
@@ -583,8 +685,8 @@ ipcMain.handle('repository:create', async (event) => {
   return repoInfo(dir);
 });
 
-ipcMain.handle('templates:list', () =>
-  listTemplates(templatesRoot(app.isPackaged, process.resourcesPath)));
+ipcMain.handle('templates:list', (event) =>
+  entryOf(event) ? listTemplates(templatesRoot(app.isPackaged, process.resourcesPath)) : []);
 
 /**
  * Copy a template into a folder the user picks, then open it.
@@ -597,6 +699,7 @@ ipcMain.handle('templates:list', () =>
 ipcMain.handle('templates:create', async (event, templateId: string) => {
   const parent = windowOf(event);
   if (!parent) return null;
+  if (typeof templateId !== 'string') return { error: 'Invalid template id.' };
 
   const templates = listTemplates(templatesRoot(app.isPackaged, process.resourcesPath));
   const template = templates.find((t) => t.id === templateId);
@@ -645,27 +748,31 @@ ipcMain.handle('repository:open', async (event) => {
 ipcMain.handle('repository:switch', (event, dir: string) => {
   if (typeof dir !== 'string' || !entryOf(event)) return { success: false, error: 'Folder no longer exists.' };
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-    return { success: false, error: 'Folder no longer exists.' };
+    return { success: false, error: `Folder not found: “${repoInfo(dir).name}” may have been moved, renamed or deleted, or be on a drive that is not connected.` };
   }
   if (!openWorkspace(dir, entryOf(event))) return { success: false, error: INSTALL_FOLDER_MESSAGE };
   return { success: true, repository: repoInfo(dir) };
 });
 
 ipcMain.handle('repository:set-name', (_event, dir: string, name: string) => {
+  if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+  if (!safeSettingsKey(dir) || typeof name !== 'string') return { success: false, error: 'Invalid workspace name.' };
   const settings = readSettings();
-  const names = { ...(settings.repositories.names ?? {}) };
-  const trimmed = name.trim();
-  if (trimmed) names[dir] = trimmed;
-  else delete names[dir];
-  settings.repositories.names = names;
+  // Stored by folder identity, so every spelling of the folder shows the name.
+  settings.repositories.names = withName(settings.repositories.names, dir, name);
   writeSettings(settings);
+  const key = folderKey(dir);
   for (const entry of appWindows.values()) {
-    if (entry.repo === dir && !entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', repoInfo(dir));
+    if (entry.repo && folderKey(entry.repo) === key && !entry.window.isDestroyed()) {
+      entry.window.webContents.send('repository:changed', repoInfo(entry.repo));
+    }
   }
   return { success: true, repository: repoInfo(dir) };
 });
 
 ipcMain.handle('repository:remove', (event, dir: string) => {
+  if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+  if (typeof dir !== 'string') return { success: false, error: 'Invalid workspace path.' };
   const settings = readSettings();
   const key = folderKey(dir);
   settings.repositories.recent = settings.repositories.recent.filter((p) => folderKey(p) !== key);
@@ -683,6 +790,11 @@ ipcMain.handle('repository:remove', (event, dir: string) => {
 });
 
 ipcMain.handle('repository:reveal', (_event, dir: string) => {
+  if (!entryOf(_event) || typeof dir !== 'string') return { success: false };
+  const { current, recent } = readSettings().repositories;
+  const known = [current, ...recent, ...[...appWindows.values()]
+    .filter((entry) => entry.kind === 'workspace' && !entry.window.isDestroyed()).map((entry) => entry.repo)];
+  if (!known.some((repo) => repo && folderKey(repo) === folderKey(dir)) || !fs.existsSync(dir)) return { success: false };
   shell.showItemInFolder(dir);
   return { success: true };
 });
@@ -710,7 +822,7 @@ ipcMain.handle('notes:list', async (_event) => {
   const repo = repoOf(_event);
   if (!repo) return [];
   try {
-    return walkRepoFiles(repo).filter((file) => WORKSPACE_FILE.test(file));
+    return walkRepoFiles(repo).filter(isListedFile);
   } catch (err) {
     console.error('Failed to list notes:', err);
   }
@@ -729,7 +841,7 @@ ipcMain.handle('workspace:entries', async (event): Promise<WorkspaceEntries> => 
   const text: string[] = [];
   for (let i = 0; i < unknown.length; i += 32) {
     const batch = unknown.slice(i, i + 32);
-    const results = await Promise.all(batch.map((file) => startsAsText(path.join(repo, file))));
+    const results = await Promise.all(batch.map((file) => startsAsText(repo, path.join(repo, file))));
     batch.forEach((file, index) => { if (results[index]) text.push(file); });
   }
   return { ...listing, text };
@@ -740,10 +852,10 @@ const SNIFF_FILE_LIMIT = 2000;
 const TEXT_READ_LIMIT = 5 * 1024 * 1024;
 
 /** Whether a file's first SNIFF_BYTES are UTF-8 text with no NUL byte. */
-async function startsAsText(fullPath: string): Promise<boolean> {
+async function startsAsText(repo: string, fullPath: string): Promise<boolean> {
   let handle: fs.promises.FileHandle | undefined;
   try {
-    handle = await fs.promises.open(fullPath, 'r');
+    handle = await openSafe(repo, fullPath);
     const sample = Buffer.alloc(SNIFF_BYTES);
     const { bytesRead } = await handle.read(sample, 0, SNIFF_BYTES, 0);
     return looksLikeText(sample.subarray(0, bytesRead));
@@ -772,7 +884,7 @@ function textGuard(relativePath: string): 'refuse' | 'text' | 'unknown' | 'free'
 // main frame of a workspace window gets it.
 ipcMain.on('workspace:file-base', (event) => {
   const entry = entryOf(event);
-  event.returnValue = entry && entry.kind === 'workspace' && event.senderFrame === entry.window.webContents.mainFrame
+  event.returnValue = entry && entry.kind === 'workspace'
     ? `${FILE_SCHEME}://w/${event.sender.id}/${entry.fileToken}/`
     : null;
 });
@@ -794,7 +906,7 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   try {
     if (guard === 'text' || guard === 'unknown') {
       // At most TEXT_READ_LIMIT; the renderer opens a larger file read-only.
-      const handle = await fs.promises.open(resolved.fullPath, 'r');
+      const handle = await openSafe(resolved.repo, resolved.fullPath);
       try {
         const size = (await handle.stat()).size;
         const buffer = Buffer.alloc(Math.min(size, TEXT_READ_LIMIT));
@@ -806,11 +918,21 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
         await handle.close();
       }
     }
+    // Read whole, so never past NOTE_READ_LIMIT: a 500 MB CSV read into a
+    // string would exhaust the main process. The size is checked first and the
+    // file is not opened at all past it.
+    // One handle for the size check and the read, so both see the same file.
     // Async: opening a workspace reads every note at once, and synchronous
     // reads hold the main thread -- which in Electron is also the browser's UI
     // thread -- for the whole batch. Opening 5,000 freshly written notes on
     // Windows: explorer after 33 s with sync reads, 7-8 s with these.
-    return await fs.promises.readFile(resolved.fullPath, 'utf-8');
+    const note = await openSafe(resolved.repo, resolved.fullPath);
+    try {
+      if ((await note.stat()).size > NOTE_READ_LIMIT) return TOO_LARGE_TO_OPEN;
+      return await note.readFile('utf-8');
+    } finally {
+      await note.close();
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // Missing files are an expected probe result (e.g. optional .neuron/layout.json);
@@ -820,66 +942,187 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
   }
 });
 
-ipcMain.handle('notes:write', async (_event, relativePath: string, content: string) => {
+const saveQueue = createSaveQueue();
+// Per window and file, the hash of the text that window last saved there: its
+// own earlier save is never an outside change (see isOutsideChange).
+const ownSaves = new Map<string, string>();
+/** The file's text as notes:read gives it, or null when it is not there. */
+async function diskText(repo: string, fullPath: string): Promise<string | null> {
+  let handle: fs.promises.FileHandle;
+  try { handle = await openSafe(repo, fullPath); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    // Past the read limit it is no version the renderer had.
+    if ((await handle.stat()).size > NOTE_READ_LIMIT) throw saveConflict();
+    return await handle.readFile('utf-8');
+  } finally { await handle.close(); }
+}
+ipcMain.handle('notes:write', async (_event, relativePath: string, content: string, base?: string) => {
+  if (typeof content !== 'string') return { success: false, error: 'Invalid note content.' };
+  // The hash of the version the edit was based on (contentHash in the
+  // renderer). Without one, nothing is compared: a new file, a settings file.
+  if (base !== undefined && (typeof base !== 'string' || !/^[0-9a-f]{64}$/.test(base))) return { success: false, error: 'Invalid save base.' };
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   const guard = textGuard(relativePath);
   if (guard === 'refuse') return { success: false, error: 'Neuron does not write this kind of file.' };
-  try {
-    if (guard === 'text' || guard === 'unknown') {
-      // Never write back a file that was opened truncated, or one that is not text.
+  // Nothing Neuron writes is read back past the limit, so nothing is written past it.
+  if (content.length > NOTE_READ_LIMIT || Buffer.byteLength(content, 'utf-8') > NOTE_READ_LIMIT) return { success: false, error: TOO_LARGE_TO_SAVE };
+  // In call order, one at a time per file: see createSaveQueue.
+  return saveQueue(saveKey(resolved.fullPath), async () => {
+    const tmp = `${resolved.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`;
+    const own = `${_event.sender.id}\n${saveKey(resolved.fullPath)}`;
+    // Changed outside Neuron while this edit was on its way (queued, or being
+    // written): refused, so the outside version is never lost without a word.
+    // The renderer shows ExternalChangeBar. Checked before journalling and
+    // again just before the file is replaced.
+    const unchanged = base === undefined ? undefined : async () => {
+      if (isOutsideChange(await diskText(resolved.repo, resolved.fullPath), base, ownSaves.get(own))) throw saveConflict();
+    };
+    try {
       const size = await fs.promises.stat(resolved.fullPath).then((stat) => stat.size, () => -1);
-      if (size > TEXT_READ_LIMIT) return { success: false, error: 'This file is too large to edit in Neuron.' };
-      if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.fullPath))) return { success: false, error: 'This file is not text.' };
-    }
-    const dir = path.dirname(resolved.fullPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
-    // Atomic write: a crash mid-write must never leave a half-written note or database.
-    const tmp = `${resolved.fullPath}.tmp`;
-    fs.writeFileSync(tmp, content, 'utf-8');
-    // On Windows a rename over a file another process holds open (the file
-    // watcher, an indexer, antivirus) fails with EPERM/EBUSY/EACCES for a few
-    // milliseconds. Retry briefly instead of dropping the user's edit.
-    for (let attempt = 0; ; attempt++) {
-      try { fs.renameSync(tmp, resolved.fullPath); break; }
-      catch (renameError) {
-        const code = (renameError as NodeJS.ErrnoException).code;
-        if (!['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) {
-          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
-          throw renameError;
-        }
-        if (attempt >= 5) {
-          // Still held open: write in place rather than lose the edit.
-          fs.writeFileSync(resolved.fullPath, content, 'utf-8');
-          try { fs.unlinkSync(tmp); } catch { /* already gone */ }
-          break;
-        }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * (attempt + 1));
+      if (guard === 'text' || guard === 'unknown') {
+        // Never write back a file that was opened truncated, or one that is not text.
+        if (size > TEXT_READ_LIMIT) return { success: false, error: 'This file is too large to edit in Neuron.' };
+        if (guard === 'unknown' && size >= 0 && !(await startsAsText(resolved.repo, resolved.fullPath))) return { success: false, error: 'This file is not text.' };
+      } else if (size > NOTE_READ_LIMIT) {
+        // Never opened (notes:read refused it), so nothing here is a version of it.
+        return { success: false, error: 'This file is too large to edit in Neuron (over 25 MB).' };
       }
+      const dir = path.dirname(resolved.fullPath);
+      mkdirSafeSync(resolved.repo, dir);
+      await unchanged?.();
+      capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
+      await writeAtomically(resolved.fullPath, content, tmp, { root: resolved.repo, beforeReplace: unchanged });
+      ownSaves.set(own, textHash(content));
+      return { success: true };
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === SAVE_CONFLICT) return { success: false, conflict: true, error: 'This file changed outside Neuron.' };
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to write note ${relativePath}:`, err);
+      return { success: false, error: message };
     }
-    return { success: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Failed to write note ${relativePath}:`, err);
-    return { success: false, error: message };
-  }
+  });
 });
 
 ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   try {
-    if (fs.existsSync(resolved.fullPath)) {
-      capturePreImage(resolved.repo, resolved.fullPath, 'delete');
-      fs.unlinkSync(resolved.fullPath);
-    }
+    const stat = fs.lstatSync(resolved.fullPath);
+    if (stat.isDirectory()) return { success: false, error: 'Use the folder delete for folders.' };
+    if (stat.isFile()) capturePreImage(resolved.repo, resolved.fullPath, 'delete');
+    unlinkSafeSync(resolved.repo, resolved.fullPath);
     return { success: true };
   } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { success: true };
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Failed to delete note ${relativePath}:`, err);
     return { success: false, error: message };
   }
+});
+
+/**
+ * Rename `fromFull` to `toFull`. A case-only rename goes through a temporary
+ * name, which Windows and macOS need to change only the case. A rename held
+ * for a moment (the watcher, an indexer) is retried, as a save's is.
+ */
+async function moveEntry(repo: string, fromFull: string, toFull: string, caseOnly: boolean): Promise<void> {
+  const once = async (a: string, b: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try { await renameSafe(repo, a, b); return; } catch (error) {
+        if (attempt >= 6 || !['EPERM', 'EBUSY', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 15 * attempt));
+      }
+    }
+  };
+  mkdirSafeSync(repo, path.dirname(toFull));
+  if (!caseOnly) { await once(fromFull, toFull); return; }
+  const between = `${fromFull}.${randomBytes(6).toString('hex')}.tmp`;
+  await once(fromFull, between);
+  await once(between, toFull);
+}
+
+// Rename or move a file or folder: every entry point (F2, the menus, Move to…,
+// dragging onto a folder) comes here. Both paths are guarded like every other
+// file handler, nothing is overwritten, a folder never goes into itself, and a
+// managed CSV's settings in .neuron/tables/ go with it. The renderer rewrites
+// links afterwards through notes:write-links.
+ipcMain.handle('workspace:rename', async (event, from: string, to: string) => {
+  if (typeof from !== 'string' || typeof to !== 'string') return { success: false, error: 'Invalid path.' };
+  const source = resolveInRepo(event, from);
+  const target = resolveInRepo(event, to);
+  if (!source || !target) return { success: false, error: 'That path is outside this workspace.' };
+  const fromPath = normalizeRelative(from);
+  const toPath = normalizeRelative(to);
+  const ignoreCase = process.platform === 'win32' || process.platform === 'darwin';
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(source.fullPath); } catch { return { success: false, error: `“${fromPath}” is no longer there.` }; }
+  if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory())) return { success: false, error: 'Neuron only renames files and folders.' };
+  const folder = stat.isDirectory();
+  const refusal = moveRefusal(fromPath, toPath, folder, ignoreCase);
+  if (refusal) return { success: false, error: refusal };
+  if (fromPath === toPath) return { success: true };
+  if (!folder && (fileKind(fromPath) === 'blocked' || fileKind(toPath) === 'blocked')) return { success: false, error: 'Neuron doesn’t rename programs or scripts.' };
+  const caseOnly = samePath(fromPath, toPath, ignoreCase);
+  const name = toPath.slice(toPath.lastIndexOf('/') + 1);
+  if (!caseOnly && fs.existsSync(target.fullPath)) return { success: false, error: `“${name}” already exists there. Choose another name.` };
+  // After any save of this file still queued, so that save cannot land at the old name.
+  return saveQueue(saveKey(source.fullPath), async () => {
+    try {
+      // Journalled as what left the old path, so version history can bring it
+      // back there. A folder of more than 200 files is not: the move loses no
+      // content, and it would push the rest of the history out.
+      const files = folder ? walkWorkspace(source.fullPath, { limit: 201 }).files.map((file) => path.join(source.fullPath, file)) : [source.fullPath];
+      if (files.length <= 200) for (const file of files) capturePreImage(source.repo, file, 'delete');
+      await moveEntry(source.repo, source.fullPath, target.fullPath, caseOnly);
+      const meta = tableMetaMove(fromPath, toPath, folder);
+      const metaFrom = meta && resolveInRepo(event, meta.from);
+      const metaTo = meta && resolveInRepo(event, meta.to);
+      if (metaFrom && metaTo && fs.existsSync(metaFrom.fullPath) && (caseOnly || !fs.existsSync(metaTo.fullPath))) {
+        await moveEntry(metaFrom.repo, metaFrom.fullPath, metaTo.fullPath, caseOnly).catch((error) => console.error(`Failed to move table settings for ${fromPath}:`, error));
+      }
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to rename ${fromPath} to ${toPath}:`, err);
+      return { success: false, error: `Could not rename “${fromPath}”. ${message}` };
+    }
+  });
+});
+
+// Links rewritten after a rename, a move or a new duplicate name: each note
+// written whole, one save at a time per file like notes:write, and journalled
+// on its own (never folded into an edit made a moment ago), so version history
+// can undo exactly this. Notes only, and only ones that are there.
+ipcMain.handle('notes:write-links', async (event, edits: unknown) => {
+  if (!Array.isArray(edits) || !edits.length || edits.length > 10_000) return { success: false, error: 'Invalid link changes.' };
+  const repo = repoOf(event);
+  if (!repo) return { success: false, error: 'No workspace is open.' };
+  const checked: { fullPath: string; content: string }[] = [];
+  for (const edit of edits as unknown[]) {
+    const item = edit as { path?: unknown; content?: unknown } | null;
+    if (!item || typeof item !== 'object' || typeof item.path !== 'string' || typeof item.content !== 'string') return { success: false, error: 'Invalid link changes.' };
+    if (!/\.mdx?$/i.test(item.path)) return { success: false, error: 'Links are rewritten in notes only.' };
+    if (Buffer.byteLength(item.content, 'utf-8') > NOTE_READ_LIMIT) return { success: false, error: TOO_LARGE_TO_SAVE };
+    const resolved = resolveInRepo(event, item.path);
+    if (!resolved) return { success: false, error: 'That path is outside this workspace.' };
+    checked.push({ fullPath: resolved.fullPath, content: item.content });
+  }
+  let written = 0;
+  for (const edit of checked) {
+    const ok = await saveQueue(saveKey(edit.fullPath), async () => {
+      if (!fs.existsSync(edit.fullPath)) return false;
+      capturePreImage(repo, edit.fullPath, 'overwrite', { coalesce: false });
+      await writeAtomically(edit.fullPath, edit.content, `${edit.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`, { root: repo });
+      ownSaves.set(`${event.sender.id}\n${saveKey(edit.fullPath)}`, textHash(edit.content));
+      return true;
+    }).catch((error) => { console.error('Failed to rewrite links:', error); return false; });
+    if (ok) written++;
+  }
+  return { success: written === checked.length, written };
 });
 
 // Version history. Reads the write journal captured on every overwrite/delete.
@@ -888,7 +1131,7 @@ ipcMain.handle('notes:delete', async (_event, relativePath: string) => {
 // view would hand it file contents outside its path policy (DECISIONS.md D20).
 ipcMain.handle('journal:list', (_event, relativePath?: string) => {
   const repo = repoOf(_event);
-  if (!repo) return [];
+  if (!repo || (relativePath !== undefined && !resolveInRepo(_event, relativePath))) return [];
   const entries = listJournalEntries(repo);
   return relativePath ? entries.filter((e) => e.relativePath === relativePath) : entries;
 });
@@ -896,6 +1139,7 @@ ipcMain.handle('journal:list', (_event, relativePath?: string) => {
 ipcMain.handle('journal:restore', (_event, entryId: string) => {
   const repo = repoOf(_event);
   if (!repo) return { success: false, error: 'No workspace is open.' };
+  if (typeof entryId !== 'string') return { success: false, error: 'Invalid journal entry.' };
   const result = restoreJournalEntry(repo, entryId);
   return result.success ? { success: true } : { success: false, error: result.error };
 });
@@ -919,70 +1163,24 @@ ipcMain.handle('notes:get-dir', (event) => repoOf(event));
 // IPC — surface file helpers
 // ==========================================================================
 
-// Read a workspace image for .canvas file nodes as a data URL.
-// ponytail: whole-file base64 over IPC — fine for note-sized images; switch to a custom protocol if galleries get huge.
-const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
-ipcMain.handle('views:file', (_event, relativePath: string) => {
-  const resolved = resolveInRepo(_event, relativePath);
-  if (!resolved) return { success: false, error: 'No workspace is open.' };
-  try {
-    if (!fs.existsSync(resolved.fullPath)) return { success: false, error: `File not found: ${relativePath}` };
-    const mime = IMAGE_MIME[path.extname(resolved.fullPath).slice(1).toLowerCase()];
-    if (!mime) return { success: false, error: `Not an image: ${relativePath}` };
-    return { success: true, dataUrl: `data:${mime};base64,${fs.readFileSync(resolved.fullPath).toString('base64')}` };
-  } catch (err: unknown) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
 /**
- * neuron-file:// -- workspace images, video and audio for the window that owns
- * the token in the URL (see ./file-protocol). 404 for a missing file, 403 for
- * anything refused, 206 for a range.
+ * neuron-file:// -- workspace images, video and audio (canvas image cards
+ * included) for the window that owns the token in the URL. See
+ * respondWithFile in ./file-protocol.
  */
-async function serveWorkspaceFile(request: Request): Promise<Response> {
-  if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 403 });
-  const decision = authorizeFileUrl(request.url, (id) => {
+function serveWorkspaceFile(request: Request): Promise<Response> {
+  return respondWithFile(request, (id) => {
     const entry = appWindows.get(id);
     return entry && !entry.window.isDestroyed() ? { token: entry.fileToken, repo: entry.repo } : null;
   });
-  if (!decision.ok) return new Response(null, { status: 403 });
-  let stat: fs.Stats;
-  try { stat = await fs.promises.stat(decision.fullPath); } catch { return new Response(null, { status: 404 }); }
-  if (!stat.isFile()) return new Response(null, { status: 403 });
-  const headers: Record<string, string> = { ...FILE_HEADERS, 'Content-Type': decision.mime, 'Accept-Ranges': 'bytes' };
-  const range = parseRange(request.headers.get('range'), stat.size);
-  if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${stat.size}` } });
-  const start = range ? range.start : 0;
-  const end = range ? range.end : stat.size - 1;
-  const length = Math.max(0, end - start + 1);
-  headers['Content-Length'] = String(length);
-  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
-  const body = request.method === 'HEAD' || length === 0
-    ? null
-    : Readable.toWeb(fs.createReadStream(decision.fullPath, { start, end })) as unknown as ReadableStream<Uint8Array>;
-  return new Response(body, { status: range ? 206 : 200, headers });
 }
 
 // Pull Chrome's cookies into the in-app browser's persistent session so the
 // user stays logged in without signing in again.
-ipcMain.handle('cookies:import-chrome', (_event, domain?: string) =>
-  importChromeCookies(session.fromPartition('persist:neuron-browser'), domain),
+ipcMain.handle('cookies:import-chrome', (_event, domain: unknown) =>
+  entryOf(_event) && typeof domain === 'string' ? importChromeCookies(session.fromPartition('persist:neuron-browser'), domain)
+    : { success: false, error: 'Not available here.' },
 );
-
-ipcMain.handle('terminal:run', async (_event, cmd: string) => {
-  const dir = repoOf(_event) || process.cwd();
-  return new Promise((resolve) => {
-    exec(cmd, { cwd: dir }, (error, stdout, stderr) => {
-      resolve({
-        success: !error,
-        stdout: stdout || '',
-        stderr: stderr || '',
-        code: error?.code ?? 0,
-      });
-    });
-  });
-});
 
 // ==========================================================================
 // IPC — interactive PTY terminals (node-pty). One pty per window;
@@ -991,7 +1189,6 @@ ipcMain.handle('terminal:run', async (_event, cmd: string) => {
 
 const ptys = new Map<number, pty.IPty>();
 const ptyHistory = new Map<number, string>();
-const TERMINAL_HISTORY_LIMIT = 200 * 1024;
 
 /**
  * One shell per terminal, identified by a key the renderer chooses.
@@ -1010,7 +1207,7 @@ const TERMINAL_HISTORY_LIMIT = 200 * 1024;
 const ptyByKey = new Map<string, number>();
 /** Which window started each pty. A window may only drive its own shells. */
 const ptyOwner = new Map<number, number>();
-const ownsPty = (event: Sender, id: number) => ptyOwner.get(id) === event.sender.id;
+const ownsPty = (event: Sender, id: number) => !!entryOf(event) && ptyOwner.get(id) === event.sender.id;
 let nextPtyId = 1;
 
 /** The first of these that exists on PATH, or null. */
@@ -1025,55 +1222,6 @@ function onPath(candidates: string[]): string | null {
     }
   }
   return null;
-}
-
-/**
- * PowerShell on Windows, not cmd.
- *
- * Notes are written once and opened on whatever machine the workspace lands on,
- * so a `<Run />` button saying `ls` is the normal case rather than a mistake.
- * cmd.exe answers that with "'ls' is not recognized"; PowerShell ships `ls`,
- * `pwd`, `cat` and `rm` as aliases, so the same note works on all three
- * platforms without pretending Windows is Linux.
- *
- * pwsh is preferred because it is the maintained one. COMSPEC remains the last
- * resort for a machine with neither, which is not a machine PowerShell was ever
- * removed from -- it is one where PATH is unusual.
- */
-const defaultShell = () => {
-  if (process.platform !== 'win32') return process.env.SHELL || '/bin/bash';
-  return onPath(['pwsh.exe', 'powershell.exe']) ?? process.env.COMSPEC ?? 'cmd.exe';
-};
-
-/**
- * Sequences that mean "what came before this is gone".
- *
- *   ESC[2J  erase the screen        ESC[3J  erase the scrollback
- *   ESC c   full reset
- *
- * Kept out of the append below so the intent is readable rather than a regex
- * in a hot path.
- */
-const CLEARS_SCREEN = /\x1b\[[23]J|\x1bc/g;
-
-/**
- * Add pty output to the replayable history.
- *
- * The history exists so a panel that remounts does not show an empty pane; it
- * is replayed verbatim on attach. That made `cls` look broken: the shell
- * cleared the screen, but the erased output was still in this buffer and came
- * straight back on the next attach. Anything before the last clear is gone as
- * far as the user is concerned, so it goes here too.
- */
-function appendHistory(history: string, data: string): string {
-  let next = history + data;
-
-  CLEARS_SCREEN.lastIndex = 0;
-  let cut = -1;
-  for (let m = CLEARS_SCREEN.exec(next); m; m = CLEARS_SCREEN.exec(next)) cut = m.index;
-  if (cut >= 0) next = next.slice(cut);
-
-  return next.length > TERMINAL_HISTORY_LIMIT ? next.slice(-TERMINAL_HISTORY_LIMIT) : next;
 }
 
 /**
@@ -1106,6 +1254,10 @@ function killAllPtys() {
 
 ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; key?: string } = {}) => {
   if (!entryOf(_event)) throw new Error('terminals are only available to app windows');
+  if (!isRecord(opts) || (opts.key !== undefined && typeof opts.key !== 'string')
+    || (opts.cols !== undefined && !Number.isInteger(opts.cols)) || (opts.rows !== undefined && !Number.isInteger(opts.rows))) {
+    throw new Error('Invalid terminal options.');
+  }
   const owner = _event.sender;
   const key = ptyKey(owner.id, opts.key || 'default');
   const known = ptyByKey.get(key);
@@ -1127,8 +1279,10 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
   // explanation anywhere the user could see. Let the failure reach the caller
   // so the panel can print it.
   let proc: pty.IPty;
+  // PowerShell on Windows; a login shell on macOS and Linux (terminal-shell.ts).
+  const launch = defaultShell(process.platform, process.env, onPath);
   try {
-    proc = pty.spawn(defaultShell(), [], {
+    proc = pty.spawn(launch.shell, launch.args, {
       name: 'xterm-color',
       cols: opts.cols ?? 80,
       rows: opts.rows ?? 24,
@@ -1136,7 +1290,7 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
       env: process.env as { [key: string]: string },
     });
   } catch (error) {
-    throw new Error(`could not start ${defaultShell()}: ${(error as Error).message}`);
+    throw new Error(`could not start ${launch.shell}: ${(error as Error).message}`);
   }
   ptys.set(id, proc);
   ptyHistory.set(id, '');
@@ -1159,19 +1313,20 @@ ipcMain.handle('terminal:spawn', (_event, opts: { cols?: number; rows?: number; 
 ipcMain.handle('terminal:history', (_event, id: number) => (ownsPty(_event, id) ? ptyHistory.get(id) ?? '' : ''));
 
 ipcMain.handle('terminal:write', (_event, id: number, data: string) => {
-  if (!ownsPty(_event, id)) return;
+  if (!ownsPty(_event, id) || typeof data !== 'string') return;
   try { ptys.get(id)?.write(data); } catch { /* pty closed */ }
 });
 
 ipcMain.handle('terminal:resize', (_event, id: number, cols: number, rows: number) => {
-  if (!ownsPty(_event, id)) return;
+  if (!ownsPty(_event, id) || !Number.isInteger(cols) || !Number.isInteger(rows)) return;
   try { ptys.get(id)?.resize(Math.max(1, cols), Math.max(1, rows)); } catch { /* pty closed */ }
 });
 // ConPTY wraps long lines itself. xterm.js reflows them again on resize unless
 // told it is attached to ConPTY -- which is what split a prompt path across two
 // lines after narrowing the panel. node-pty uses ConPTY on every Windows build
-// Electron 42 supports, so the build number is all the renderer needs.
-ipcMain.handle('terminal:windows-pty', () => {
+// Electron supports (Windows 10 and later), so the build number is all the renderer needs.
+ipcMain.handle('terminal:windows-pty', (event) => {
+  if (!entryOf(event)) return null;
   if (process.platform !== 'win32') return null;
   const buildNumber = Number(os.release().split('.')[2]);
   return Number.isFinite(buildNumber) ? { backend: 'conpty' as const, buildNumber } : null;
@@ -1200,28 +1355,22 @@ function connectorValues(id: string): Record<string, string> {
   return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
 }
 
-// Connectors are global and their secrets are filed under the connector id.
-// They used to be filed under each plugin's id; copy those across once, and
-// leave the old entries where they are. Once only, or a Disconnect would be
-// undone by the next launch.
-const LEGACY_SECRET_SCOPES: Record<string, string> = { anthropic: 'ai-claude', openai: 'ai-openai', google: 'ai-gemini', openrouter: 'ai-openrouter', local: 'ai-local' };
 function migrateConnectorSecrets(): void {
-  const settings = readSettings();
-  if (settings.connectorSecretsMigrated === true) return;
-  const store = (settings[SECRETS_KEY] && typeof settings[SECRETS_KEY] === 'object' ? settings[SECRETS_KEY] : {}) as Record<string, Record<string, unknown>>;
-  const next: Record<string, Record<string, unknown>> = { ...store };
-  for (const [connector, legacy] of Object.entries(LEGACY_SECRET_SCOPES)) {
-    const old = store[legacy];
-    if (!old || typeof old !== 'object') continue;
-    const scoped = { ...(next[connector] ?? {}) };
-    for (const [field, value] of Object.entries(old)) {
-      if (typeof value === 'string' && value && typeof scoped[field] !== 'string') scoped[field] = value;
+  const codec = secretCodec();
+  if (!codec.available) return;
+  // Rewrite both names: the former copy-based migration left a plaintext backup.
+  for (const file of [settingsFile(), legacySettingsFile()]) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      const original = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      // Not a settings object: readSettings moves it aside, so leave it as it is.
+      if (!isRecord(original)) continue;
+      const migrated = migrateSecretSettings(original, codec);
+      if (JSON.stringify(migrated) !== JSON.stringify(original)) writeSettingsAtomically(file, migrated);
+    } catch {
+      console.error('Could not migrate saved keys to the system keychain.');
     }
-    next[connector] = scoped;
   }
-  settings[SECRETS_KEY] = next;
-  settings.connectorSecretsMigrated = true;
-  writeSettings(settings);
 }
 
 ipcMain.handle(
@@ -1231,6 +1380,13 @@ ipcMain.handle(
     request: { provider?: unknown; model?: unknown; system?: unknown; messages?: unknown },
   ) => {
     if (!entryOf(event)) return { success: false, error: 'Not available here.' };
+    if (!isRecord(request) || typeof request.provider !== 'string'
+      || (request.model !== undefined && typeof request.model !== 'string')
+      || (request.system !== undefined && typeof request.system !== 'string')
+      || !Array.isArray(request.messages) || !request.messages.every((m) => isRecord(m)
+        && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')) {
+      return { success: false, error: 'Invalid AI request.' };
+    }
     const provider = typeof request?.provider === 'string' ? request.provider : '';
     if (!Object.prototype.hasOwnProperty.call(CONNECTOR_NAMES, provider)) return { success: false, error: `Unknown AI provider "${provider}".` };
     const messages = Array.isArray(request.messages)
@@ -1298,11 +1454,15 @@ ipcMain.handle(
 ipcMain.handle(
   'plugin:net-request',
   async (_event, req: { url: string; method?: string; headers?: Record<string, string>; body?: string }) => {
+    if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+    if (!isRecord(req) || typeof req.url !== 'string'
+      || (req.method !== undefined && typeof req.method !== 'string')
+      || (req.body !== undefined && typeof req.body !== 'string')
+      || (req.headers !== undefined && (!isRecord(req.headers) || !Object.values(req.headers).every((v) => typeof v === 'string')))) {
+      return { success: false, error: 'Invalid network request.' };
+    }
     try {
-      if (!/^https?:\/\//.test(req.url)) return { success: false, error: 'Only http(s) URLs are allowed.' };
-      const res = await fetch(req.url, { method: req.method || 'GET', headers: req.headers, body: req.body });
-      const text = await res.text();
-      return { success: true, status: res.status, body: text };
+      return { success: true, ...await requestPublic(req) };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -1317,6 +1477,10 @@ ipcMain.handle(
 ipcMain.handle(
   'notes:log-error',
   async (_event, errorData: { phase: string; error_message: string; stack_trace: string; remediation_step: string }) => {
+    if (!entryOf(_event)) return { success: false, error: 'Not available here.' };
+    if (!isRecord(errorData) || !(['phase', 'error_message', 'stack_trace', 'remediation_step'] as const).every((key) => typeof errorData[key] === 'string')) {
+      return { success: false, error: 'Invalid diagnostic data.' };
+    }
     const success = await diagnostics.write({
       level: 'error',
       category: `renderer.${errorData.phase || 'unknown'}`,
@@ -1327,7 +1491,8 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('diagnostics:open-logs', async () => {
+ipcMain.handle('diagnostics:open-logs', async (event) => {
+  if (!entryOf(event)) return { success: false, error: 'Not available here.' };
   const error = await shell.openPath(diagnostics.directory);
   return error ? { success: false, error } : { success: true };
 });
@@ -1360,6 +1525,7 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (_e, webPreferences) => {
     delete webPreferences.preload;
     webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
   });
@@ -1381,19 +1547,21 @@ app.on('web-contents-created', (_event, contents) => {
   // 3. The app's own frame may not be navigated away from its bundled content
   //    (clickjacking / drive-by nav). An HTMX view webview is pinned to its own
   //    session on the view server. The browser <webview> may roam.
-  contents.on('will-navigate', (event, url) => {
+  const guardNavigation = (event: Electron.Event, url: string) => {
     if (isHtmxView()) {
       const origin = getViewServerOrigin();
       if (!isSameOrigin(url, origin)) event.preventDefault();
       return;
     }
     if (contents.getType() === 'webview') return;
-    const allowed = isAppContent(url, RENDERER_ROOT, process.platform === 'win32');
+    const allowed = isAppContent(url, RENDERER_ROOT, process.platform === 'win32', IS_DEV);
     if (!allowed) {
       event.preventDefault();
       if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     }
-  });
+  };
+  contents.on('will-navigate', guardNavigation);
+  contents.on('will-redirect', guardNavigation);
 
   // 4. Deny all permission requests (camera, mic, geolocation, …) from the
   //    embedded browser; scoped to the webview session so the app is untouched.
@@ -1452,6 +1620,7 @@ function hasCodeSignature(): boolean {
 }
 
 app.on('ready', () => {
+  cleanupChromeCookieCopies();
   void diagnostics.startSession({
     appVersion: app.getVersion(),
     platform: process.platform,
@@ -1467,8 +1636,8 @@ app.on('ready', () => {
     message: `Native crash dumps (local only, never uploaded): ${crashDumps}`,
   });
   configureWriteJournal(app.getPath('userData'));
-  ensureDefaultRepo();
   migrateConnectorSecrets();
+  ensureDefaultRepo();
   const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);
   if (workspace && usableRepo(workspace)) rememberRepo(workspace);
   protocol.handle(FILE_SCHEME, serveWorkspaceFile);

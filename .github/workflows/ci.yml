@@ -9,14 +9,22 @@ permissions:
   contents: read
 
 jobs:
-  # Code moves dev -> test -> main.
+  # Code moves dev -> test -> main (D44).
   #
-  # - test and main (pushes, and pull requests into them): everything, on all
-  #   three platforms.
-  # - dev: typecheck, unit tests and build on all three platforms. Only the
-  #   e2e specs for the changed area run (tools/affected-e2e.mjs), and there is
-  #   no packaged smoke test. A change to shared code still runs every spec.
+  # - test and main (pushes, and pull requests into them): the full suite on
+  #   all three platforms -- every e2e spec, detailed and integration alike
+  #   (`npm run test:e2e`), and the packaged smoke test.
+  # - dev (pushes, and pull requests into it): typecheck, unit tests and build
+  #   on all three platforms, plus only the integration specs
+  #   (e2e/integration/<feature>.spec.ts) for the features the change touches,
+  #   chosen by tools/affected-e2e.mjs. Shared or unmapped code runs every
+  #   integration spec, never the detailed ones, and there is no packaged smoke
+  #   test. A failure the full suite finds at dev -> test is fixed on a branch
+  #   into dev.
   # - A documentation-only pull request skips every step.
+  #
+  # The `specs` output says which: `full` (the full suite), `all` (every
+  # integration spec), a list of integration specs, or empty (none).
   #
   # This is not `paths-ignore`: Windows, macOS and Linux are required checks,
   # and a workflow that never starts never reports them, so the pull request
@@ -51,16 +59,20 @@ jobs:
         run: |
           scope=affected
           if { [ "$EVENT" = push ] && { [ "$REF" = refs/heads/main ] || [ "$REF" = refs/heads/test ]; }; } ||
-             { [ "$EVENT" = pull_request ] && { [ "$BASE_REF" = main ] || [ "$BASE_REF" = test ]; }; } ||
-             { [ "$EVENT" = push ] && [ "$REF" = refs/heads/dev ] && [[ "$BEFORE" =~ ^0+$ ]]; }; then
+             { [ "$EVENT" = pull_request ] && { [ "$BASE_REF" = main ] || [ "$BASE_REF" = test ]; }; }; then
             scope=full
           fi
           changed=
+          unknown=
           if [ "$EVENT" = pull_request ]; then
             changed=$(git diff --name-only "$BASE...$HEAD")
           elif [ "$scope" = affected ]; then
-            # A force-push can leave BEFORE unreachable; test everything then.
-            changed=$(git diff --name-only "$BEFORE..$AFTER") || scope=full
+            # The first push of the branch has no BEFORE, and a force-push can
+            # leave it unreachable: nothing says what changed, so run every
+            # integration spec (still not the full suite, which is for test and main).
+            if [[ "$BEFORE" =~ ^0+$ ]]; then unknown=1
+            else changed=$(git diff --name-only "$BEFORE..$AFTER") || unknown=1
+            fi
           fi
           echo "$changed"
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
@@ -76,14 +88,32 @@ jobs:
             echo code=true >> "$GITHUB_OUTPUT"
           fi
           if [ "$scope" = full ]; then
+            echo specs=full >> "$GITHUB_OUTPUT"
+          elif [ -n "$unknown" ]; then
             echo specs=all >> "$GITHUB_OUTPUT"
           else
             echo "specs=$(printf '%s\n' "$changed" | node tools/affected-e2e.mjs)" >> "$GITHUB_OUTPUT"
           fi
 
+  # Security checks go first. Windows and Linux start only when both pass, so a
+  # failing scan costs no platform minutes.
+  static-analysis:
+    name: Static analysis
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+  security:
+    name: Security
+    uses: ./.github/workflows/security-scan.yml
+    permissions:
+      contents: read
+
   build:
     name: ${{ matrix.name }}
-    needs: changes
+    needs: [changes, static-analysis, security]
     # One platform is not cross-platform testing. Neuron leans on node-pty, a
     # filesystem watcher, spawned processes, keyboard chords, path handling and
     # Electron window behaviour -- every one of which diverges between Windows,
@@ -96,9 +126,6 @@ jobs:
           - name: Windows
             os: windows-latest
             wrap: ''
-          - name: macOS
-            os: macos-latest
-            wrap: ''
           # Electron needs a display server and the Linux runner has none, so
           # everything that opens a window runs under a virtual framebuffer.
           # Without it the failure reads as "Electron crashed" rather than as a
@@ -107,11 +134,14 @@ jobs:
             os: ubuntu-latest
             wrap: 'xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24"'
     runs-on: ${{ matrix.os }}
-    env:
+    env: &build-env
       RUN: ${{ needs.changes.outputs.code }}
       SCOPE: ${{ needs.changes.outputs.scope }}
       SPECS: ${{ needs.changes.outputs.specs }}
-    steps:
+      # Set to 'true' to pause end-to-end tests (they were paused during the
+      # 2026-11 security review and resumed once Sync Phase 0 was done).
+      E2E_PAUSED: 'false'
+    steps: &build-steps
       - name: Skip for a documentation-only change
         if: env.RUN != 'true'
         run: echo "Only documentation changed, so there is nothing to build or test."
@@ -130,6 +160,13 @@ jobs:
       - name: Install dependencies
         if: env.RUN == 'true'
         run: npm ci
+      # `npm ci` does not fetch the Electron binary (the package has no install
+      # script); the first require('electron') does, which would be inside the
+      # first test, under its timeout. Fetch it here, where a failure says what
+      # failed.
+      - name: Download the Electron binary
+        if: env.RUN == 'true'
+        run: npx --no install-electron
       - name: Type-check main and renderer
         if: env.RUN == 'true'
         run: npm run typecheck
@@ -140,19 +177,66 @@ jobs:
         if: env.RUN == 'true'
         run: npm run build
 
-      - name: Run Electron end-to-end tests
-        if: env.RUN == 'true' && env.SPECS == 'all'
+      # Neuron keeps API keys only in the system keychain and refuses to save one
+      # when there is none. The Linux runner has no desktop session, so no
+      # Secret Service, and the key tests would see that refusal. Give the job a
+      # real keychain: a session bus with an unlocked gnome-keyring on it.
+      # e2e/fixtures.ts points Electron at it (e2e/linux-keychain.cjs sets
+      # --password-store after Playwright's own preload, which sets it to basic).
+      - name: Start a keychain for the end-to-end tests
+        if: env.RUN == 'true' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends dbus gnome-keyring libsecret-tools
+          bus="unix:path=$RUNNER_TEMP/e2e-session-bus"
+          dbus-daemon --session --fork --address="$bus"
+          export DBUS_SESSION_BUS_ADDRESS="$bus"
+          printf 'e2e' | gnome-keyring-daemon --daemonize --unlock --components=secrets > /dev/null 2>&1
+          # Fail here, with the cause in the name, not as a refused key later.
+          printf 'probe' | timeout 30 secret-tool store --label='Neuron CI probe' neuron ci-probe
+          [ "$(timeout 30 secret-tool lookup neuron ci-probe)" = probe ]
+          echo "DBUS_SESSION_BUS_ADDRESS=$bus" >> "$GITHUB_ENV"
+      # Diagnostic only (runs even while end-to-end tests are paused): what Electron itself makes of that keychain, with
+      # Chromium's os_crypt logging, in a later step than the one that started
+      # it (so it also shows whether the daemon survived the step boundary).
+      - name: Check the keychain from Electron
+        if: env.RUN == 'true' && runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          pgrep -a gnome-keyring || echo "gnome-keyring-daemon is not running"
+          timeout 30 secret-tool lookup neuron ci-probe || echo "secret-tool lookup failed"
+          cat > "$RUNNER_TEMP/keychain-probe.cjs" <<'EOF'
+          const { app, safeStorage } = require('electron');
+          app.whenReady().then(async () => {
+            const asyncAvailable = await safeStorage.isAsyncEncryptionAvailable().catch(String);
+            console.log('[keychain-probe]', JSON.stringify({ available: safeStorage.isEncryptionAvailable(), backend: safeStorage.getSelectedStorageBackend(), asyncAvailable }));
+            app.quit();
+          });
+          EOF
+          timeout 90 xvfb-run --auto-servernum npx electron "$RUNNER_TEMP/keychain-probe.cjs" --no-sandbox --password-store=gnome-libsecret --enable-logging=stderr --vmodule='*os_crypt*=2,*key_storage*=2,*libsecret*=2' > "$RUNNER_TEMP/keychain-probe.log" 2>&1 && echo "electron exit: 0" || echo "electron exit: $?"; tail -n 80 "$RUNNER_TEMP/keychain-probe.log"
+      # test and main: the full suite, detailed specs and integration specs.
+      - name: Run the full end-to-end suite
+        if: env.RUN == 'true' && env.SPECS == 'full' && env.E2E_PAUSED != 'true'
         run: ${{ matrix.wrap }} npm run test:e2e
-      - name: Run affected Electron end-to-end tests
-        if: env.RUN == 'true' && env.SPECS != 'all' && env.SPECS != ''
+      # dev, shared or unmapped code: every integration spec, never the detailed ones.
+      - name: Run all integration end-to-end tests
+        if: env.RUN == 'true' && env.SPECS == 'all' && env.E2E_PAUSED != 'true'
+        shell: bash
+        run: npm run build:main && ${{ matrix.wrap }} npm run test:e2e:integration
+      # dev: the integration specs of the features the change touches.
+      - name: Run affected integration end-to-end tests
+        if: env.RUN == 'true' && env.SPECS != 'full' && env.SPECS != 'all' && env.SPECS != '' && env.E2E_PAUSED != 'true'
         shell: bash
         run: |
-          echo "Affected specs: $SPECS"
+          echo "Affected integration specs: $SPECS"
           read -r -a specs <<< "$SPECS"
           npm run build:main && ${{ matrix.wrap }} npx playwright test "${specs[@]}"
+      - name: End-to-end tests paused
+        if: env.RUN == 'true' && env.E2E_PAUSED == 'true'
+        run: echo "End-to-end tests are paused during the security review (E2E_PAUSED in ci.yml)."
       - name: No affected end-to-end specs
-        if: env.RUN == 'true' && env.SPECS == ''
-        run: echo "Nothing this change touches has an end-to-end spec."
+        if: env.RUN == 'true' && env.SPECS == '' && env.E2E_PAUSED != 'true'
+        run: echo "Nothing this change touches has an integration spec."
 
       # Launch what a user would actually download.
       #
@@ -173,3 +257,21 @@ jobs:
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  # macOS runners queue longest on GitHub, so macOS starts last, and only when
+  # Windows and Linux have both passed: a slow macOS queue no longer holds back
+  # the other two results, and a failure elsewhere spends no macOS minutes. Same steps as the job above (YAML anchors).
+  # The job is still named "macOS", so the required check is unchanged.
+  build-macos:
+    name: ${{ matrix.name }}
+    needs: [changes, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            wrap: ''
+    runs-on: ${{ matrix.os }}
+    env: *build-env
+    steps: *build-steps

@@ -4,26 +4,13 @@
 // pane. It made `cls` look broken: the shell cleared the screen, but the erased
 // output was still in the buffer and came straight back on the next attach.
 //
-// The logic mirrors appendHistory in src/main/main.ts. It is duplicated rather
-// than imported because main.ts pulls in electron and node-pty, neither of which
-// loads outside an Electron process — and the rule this encodes is small enough
-// that a copy is cheaper than the plumbing to share it.
+// Exercise the production helper without loading Electron or node-pty.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 const LIMIT = 200 * 1024;
-const CLEARS_SCREEN = /\x1b\[[23]J|\x1bc/g;
-
-function appendHistory(history, data) {
-  let next = history + data;
-  CLEARS_SCREEN.lastIndex = 0;
-  let cut = -1;
-  for (let m = CLEARS_SCREEN.exec(next); m; m = CLEARS_SCREEN.exec(next)) cut = m.index;
-  if (cut >= 0) next = next.slice(cut);
-  return next.length > LIMIT ? next.slice(-LIMIT) : next;
-}
+const bundle = await build({ entryPoints: ['src/main/terminal-history.ts'], bundle: true, format: 'esm', write: false });
+const { appendHistory } = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 
 const ESC = '\x1b';
 let checks = 0;
@@ -74,8 +61,10 @@ check('a bare [2J without the escape is not a clear', () => {
 });
 
 check('the buffer stays within its limit', () => {
-  const h = appendHistory('', 'x'.repeat(LIMIT + 5_000));
-  assert.equal(h.length, LIMIT);
+  const full = 'x'.repeat(LIMIT - 6) + 'newest';
+  assert.equal(appendHistory('', full), full, 'exactly at the cap is retained');
+  assert.equal(appendHistory('o', full), full, 'one over discards the oldest output');
+  assert.equal(appendHistory('old'.repeat(LIMIT), full), full, 'large output keeps the newest output');
 });
 
 check('a clear resets the size, so the limit is not hit sooner', () => {
@@ -84,13 +73,12 @@ check('a clear resets the size, so the limit is not hit sooner', () => {
   assert.ok(h.length < 100, 'a clear should shrink the buffer, not leave it full');
 });
 
-// The copy above has to stay in step with the original.
-const main = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'main.ts'), 'utf-8');
-check('main.ts still uses the sequences this file tests', () => {
-  assert.match(main, /CLEARS_SCREEN\s*=\s*\/\\x1b\\\[\[23\]J\|\\x1bc\/g/,
-    'the clear-sequence pattern in main.ts changed — update this test with it');
-  assert.match(main, /TERMINAL_HISTORY_LIMIT\s*=\s*200 \* 1024/,
-    'the history limit in main.ts changed — update this test with it');
+check('clear sequences split across chunks still cut the replay', () => {
+  for (const clear of [`${ESC}[2J`, `${ESC}[3J`, `${ESC}c`]) {
+    for (let split = 1; split < clear.length; split++) {
+      assert.equal(appendHistory(appendHistory('stale', clear.slice(0, split)), clear.slice(split) + 'fresh'), clear + 'fresh');
+    }
+  }
 });
 
 console.log(`\nterminal-history: ${checks} checks passed`);

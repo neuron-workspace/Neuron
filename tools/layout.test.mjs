@@ -195,6 +195,12 @@ const stacked = resolveLayout({
 const third = { pluginId: 'q', view: { id: 'b' } };
 assert.equal(terminalVisible([other, term, third], stacked), false);
 assert.deepEqual(terminalTogglePatch([other, term, third], stacked), { rightPanel: true, activePanels: { 'right:0': 'q:b', 'right:1': TERMINAL_PANEL_KEY } });
+// Showing for a Run button or automation: selects the terminal tab over another, never hides it.
+const { terminalShowPatch } = helpers;
+assert.deepEqual(terminalShowPatch(both, otherTab), { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+assert.deepEqual(terminalShowPatch([term], DEFAULT_LAYOUT), { bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+assert.equal(terminalShowPatch(both, shown), null, 'already shown: left alone, not toggled closed');
+assert.equal(terminalShowPatch([other], DEFAULT_LAYOUT), null, 'plugin off: nothing to show');
 
 // .neuron/layout.json: the sidebar and terminal keys, and the meaning-not-text comparison.
 const surfaces = await transform(readFileSync(join(root, 'src/renderer/surfaces/layout.ts'), 'utf8'), { loader: 'ts', format: 'esm' });
@@ -300,4 +306,97 @@ assert.equal(workspacePanelsPatch(both, { ...DEFAULT_LAYOUT, zen: true }, { side
 // End to end, from the file text.
 assert.deepEqual(workspacePanelsPatch(both, DEFAULT_LAYOUT, parseWorkspacePanels(json({ sidebar: 'closed', terminal: { state: 'open', position: 'top' } }))),
   { sidebar: false, bottomPanel: true, activePanels: { 'bottom:0': TERMINAL_PANEL_KEY } });
+// --- Module 8: .neuron/layout.json, presets and drift, saved-layout limits ---------
+{
+  const { readableLayout } = surfaceHelpers;
+  const tree = (children) => json({ direction: 'horizontal', children });
+  // A children tree is what renders the shell: groups nest, panels keep their keys.
+  const shell = parseLayout(tree([
+    { size: 25, panel: { type: 'tree' } },
+    { size: 75, group: { direction: 'vertical', children: [{ size: 70, panel: { type: 'editor' } }, { size: 30, panel: { type: 'graph', scope: 'folder', extra: 1 } }] } },
+  ]));
+  assert.equal(shell.direction, 'horizontal');
+  assert.deepEqual(shell.children.map((c) => c.panel?.type ?? 'group'), ['tree', 'group']);
+  assert.deepEqual(shell.children[1].group.children[1].panel, { type: 'graph', scope: 'folder', extra: 1 }, 'unknown panel keys are carried, not trusted');
+  assert.equal(hasLayoutTree(tree([{ size: 100, panel: { type: 'editor' } }])), true);
+  // Unknown top-level keys beside the tree are ignored.
+  assert.deepEqual(parseLayout(json({ direction: 'vertical', theme: 'dark', zen: true, children: [{ size: 100, panel: { type: 'editor' } }] })),
+    { direction: 'vertical', theme: 'dark', zen: true, children: [{ size: 100, panel: { type: 'editor' } }] });
+  // Not a tree: a wrong direction or no children array renders nothing.
+  for (const bad of [{ direction: 'diagonal', children: [] }, { direction: 'vertical', children: {} }, { direction: 'vertical' }, [], 'x']) {
+    assert.equal(parseLayout(json(bad)), null, 'not a tree: ' + json(bad));
+  }
+  // Legacy inline terminals are stripped, nested too, and a group left empty goes with them.
+  const legacy = parseLayout(tree([
+    { size: 60, panel: { type: 'editor' } },
+    { size: 40, group: { direction: 'vertical', children: [{ size: 100, panel: { type: 'terminal' } }] } },
+    { size: 10, panel: { type: 'terminal', shell: 'bash' } },
+  ]));
+  assert.deepEqual(legacy.children, [{ size: 60, panel: { type: 'editor' } }]);
+  assert.equal(parseLayout(tree([{ size: 100, panel: { type: 'terminal' } }])), null, 'only a terminal: nothing to show');
+  // Invalid JSON and an empty file: no tree (the layout view shows its notice), no
+  // window settings (the window keeps the default layout), and never readable.
+  for (const text of ['', '   \n', '{', '{"direction": "vertical", "children": [', 'sidebar: closed']) {
+    assert.equal(parseLayout(text), null, 'no tree: ' + JSON.stringify(text));
+    assert.deepEqual(parseWorkspacePanels(text), {});
+    assert.equal(readableLayout(text), false, 'not readable: ' + JSON.stringify(text));
+    assert.deepEqual(resolveLayout(parseWorkspacePanels(text)), DEFAULT_LAYOUT);
+  }
+  // Readable: the short and long settings forms, and a valid tree; not a broken tree or a non-object.
+  assert.equal(readableLayout(json({ sidebar: 'closed' })), true);
+  assert.equal(readableLayout(json({ sidebar: { state: 'open', position: 'right' }, terminal: 'closed' })), true);
+  assert.equal(readableLayout(json({ unknown: 1 })), true, 'unknown keys are ignored, not an error');
+  assert.equal(readableLayout(tree([{ size: 100, panel: { type: 'editor' } }])), true);
+  assert.equal(readableLayout(json({ direction: 'sideways', children: [] })), false);
+  assert.equal(readableLayout(tree([{ size: 100, panel: { type: 'terminal' } }])), false);
+  assert.equal(readableLayout('[]'), false);
+  assert.equal(readableLayout('null'), false);
+
+  // Zen is never restored, from any shape it was stored in.
+  for (const zen of [true, 'true', 1]) assert.equal(resolveLayout({ ...DEFAULT_LAYOUT, zen }).zen, false);
+  assert.equal(resolveLayout(JSON.parse(JSON.stringify({ ...DEFAULT_LAYOUT, zen: true, sidebar: false }))).sidebar, false, 'the rest of a zen session is kept');
+  // Panel keys naming prototype parts are rejected, in panels and in selected tabs.
+  const evil = JSON.parse('{"panels":{"__proto__:x":{"dock":"left","order":0},"p:constructor":{"dock":"left","order":0},"prototype:p":{"dock":"left","order":0},"ok:p":{"dock":"left","order":0}},"activePanels":{"left:0":"__proto__:x","right:0":"p:prototype","bottom:0":"ok:p"}}');
+  const safe = resolveLayout(evil);
+  assert.deepEqual(Object.keys(safe.panels), ['ok:p']);
+  assert.deepEqual(safe.activePanels, { 'bottom:0': 'ok:p' });
+  assert.equal({}.dock, undefined, 'Object.prototype untouched');
+
+  // Presets and drift: a seed layout matches itself; moving a panel drifts; moving it back does not.
+  const writing = SEED_LAYOUTS[0].layout;
+  assert.equal(sameLayout(writing, resolveLayout(JSON.parse(JSON.stringify(writing)))), true);
+  const drifted = movePanel(panels, writing, 'p:a', 'left', 0);
+  assert.equal(sameLayout(writing, drifted), false, 'a panel moved to another dock');
+  assert.equal(sameLayout(SEED_LAYOUTS[1].layout, SEED_LAYOUTS[0].layout), false, 'the seeds differ from each other');
+  const reordered = movePanel(panels, writing, 'p:b', 'bottom', 0);
+  assert.equal(sameLayout(writing, reordered), false, 'a panel reordered in its dock');
+  const split = movePanel(panels, writing, 'p:d', 'right', undefined, 'new-after');
+  assert.equal(sameLayout(writing, split), false, 'a panel split into its own group');
+  assert.equal(sameLayout(split, movePanel(panels, split, 'p:d', 'right', undefined, 0)), false);
+  assert.equal(sameLayout(writing, { ...writing, rightPanel: true }), false, 'a dock opened');
+  // What is not the arrangement does not drift: zen, the selected tab, and panel sizes
+  // (kept by the resizable panels themselves, never in the layout).
+  assert.equal(sameLayout(writing, { ...writing, zen: true, activePanels: { 'bottom:0': 'p:b' } }), true);
+  assert.equal(sameLayout(writing, resolveLayout({ ...writing, sizes: { left: 30 }, panelSizes: [20, 80] })), true);
+  // Key order in the stored file does not count either.
+  const reversed = Object.fromEntries(Object.entries(drifted).reverse());
+  assert.equal(sameLayout(drifted, resolveLayout(JSON.parse(JSON.stringify(reversed)))), true);
+
+  // Twenty saved layouts at most; names up to forty characters, trimmed, unique without case.
+  const { MAX_SAVED_LAYOUTS, MAX_LAYOUT_NAME } = helpers;
+  assert.equal(MAX_SAVED_LAYOUTS, 20);
+  assert.equal(MAX_LAYOUT_NAME, 40);
+  const twenty = Array.from({ length: 20 }, (_, i) => ({ id: 'l' + i, name: 'Layout ' + i, layout: {} }));
+  assert.equal(resolveSavedLayouts(twenty).length, 20);
+  assert.deepEqual(resolveSavedLayouts([...twenty, { id: 'extra', name: 'Extra', layout: {} }]).map((l) => l.id), twenty.map((l) => l.id), 'the 21st is dropped');
+  // Junk before the limit does not use up a place.
+  assert.equal(resolveSavedLayouts([null, { id: '', name: 'x' }, ...twenty]).length, 20);
+  const forty = 'x'.repeat(40);
+  assert.equal(layoutNameError(forty, []), null, 'exactly forty is allowed');
+  assert.match(layoutNameError(forty + 'y', []), /40 characters/);
+  assert.equal(layoutNameError('  ' + forty + '  ', []), null, 'surrounding space does not count');
+  assert.deepEqual(resolveSavedLayouts([{ id: 'a', name: forty, layout: {} }, { id: 'b', name: forty + 'y', layout: {} }]).map((l) => l.id), ['a']);
+  assert.equal(layoutNameError('Layout 3', resolveSavedLayouts(twenty)), 'That name is already used.');
+}
+
 console.log('layout: all checks passed');

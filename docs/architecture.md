@@ -32,7 +32,7 @@ A repository is an ordinary folder. Neuron scans `.md`, `.mdx`, `.html`, `.db`, 
 
 ## Terminal and automations
 
-The main process spawns interactive PTYs with `node-pty` (`terminal:spawn/write/resize/kill`, streamed over `terminal:data`); the renderer renders them with xterm.js (`components/XtermTerminal.tsx`). node-pty ships ABI-stable N-API prebuilds, so packaging sets `npmRebuild: false` and unpacks it from the asar. Automations are named command sequences stored in settings and run one-shot through the existing `terminal:run` bridge.
+The main process spawns interactive PTYs with `node-pty` (`terminal:spawn/write/resize/kill`, streamed over `terminal:data`); the renderer renders them with xterm.js (`components/XtermTerminal.tsx`). node-pty ships ABI-stable N-API prebuilds, so packaging sets `npmRebuild: false` and unpacks it from the asar. Automations are named command sequences stored in settings and run in the visible workspace terminal through `lib/terminal-bus.ts`, the same path a `<Run>` button uses; there is no hidden `child_process` runner.
 
 ## Settings
 

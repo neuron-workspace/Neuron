@@ -9,8 +9,9 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
+import { readSafeSync, writeSafeAtomicSync, unlinkSafeSync } from '../safe-fs';
 import { SessionManager, ViewSession, sha256 } from './sessions';
-import { policyAllows, resolveInWorkspace } from './pathPolicy';
+import { compileGlob, policyAllows, resolveInWorkspace } from './pathPolicy';
 import { validateVariablesFile, VariableDef } from './manifest';
 import {
   esc, interpolate, wrapDocument, prepareFullDocument, errorFragment,
@@ -20,15 +21,16 @@ import {
 import { NEURON_VIEW_CSS } from './theme';
 import { NEURON_VIEW_JS } from './neuronJs';
 import { capturePreImage } from '../journal';
+import { MAX_DOC_BYTES, MAX_STYLE_BYTES, MAX_FRAGMENT_BYTES, readTrusted } from './trust';
 
 export const API_VERSION = 1;
+
+/** A workspace file the view was not trusted with, or one changed since (7B). */
+const UNTRUSTED_MESSAGE = 'This file changed since you trusted this view, so it does not run. Reopen the view to review it.';
 
 // Resource ceilings: a broken or hostile view degrades, it never freezes Neuron.
 const MAX_BODY_BYTES = 1024 * 1024;        // request body
 const MAX_READ_BYTES = 2 * 1024 * 1024;    // single file read
-const MAX_DOC_BYTES = 2 * 1024 * 1024;     // view document
-const MAX_STYLE_BYTES = 256 * 1024;        // one custom stylesheet
-const MAX_FRAGMENT_BYTES = 128 * 1024;     // one fragment template
 const MAX_LIST_ENTRIES = 500;              // directory listing
 const MAX_WALK_ENTRIES = 20000;            // filesystem walk budget
 const MAX_SEARCH_RESULTS = 50;
@@ -134,12 +136,7 @@ function parseBody(req: http.IncomingMessage, body: Buffer): Record<string, unkn
 
 // --- workspace helpers -------------------------------------------------------
 
-function atomicWrite(fullPath: string, content: string): void {
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  const tmp = `${fullPath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, content, 'utf-8');
-  fs.renameSync(tmp, fullPath);
-}
+const atomicWrite = writeSafeAtomicSync;
 
 /** Recursive workspace walk (posix rel paths), skipping dot-entries except .neuron. */
 function walkFiles(root: string, subdir: string): string[] {
@@ -151,6 +148,7 @@ function walkFiles(root: string, subdir: string): string[] {
     for (const entry of entries) {
       if (++visited > MAX_WALK_ENTRIES) return;
       if (entry.name.startsWith('.') && entry.name !== '.neuron') continue;
+      if (entry.name.endsWith('.tmp')) continue;
       const childRel = rel ? `${rel}/${entry.name}` : entry.name;
       const childFull = path.join(dir, entry.name);
       if (entry.isSymbolicLink()) continue; // symlinks are never followed
@@ -167,7 +165,7 @@ function loadVariables(root: string): { vars: Record<string, VariableDef>; error
   const file = path.join(root, '.neuron', 'variables.json');
   if (!fs.existsSync(file)) return { vars: {}, errors: [] };
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const parsed = JSON.parse(readSafeSync(root, file).toString('utf-8'));
     const result = validateVariablesFile(parsed);
     return result.ok ? { vars: result.value!, errors: [] } : { vars: {}, errors: result.errors };
   } catch {
@@ -239,11 +237,21 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       return;
     }
 
-    // Document bootstrap: /views/{sid}/document?boot={one-time-token}
+    // Views load directly from this HTTP origin in webviews, not opaque-origin
+    // frames. Electron's process sandbox does not change their web origin;
+    // neuron.js and htmx POST here directly, so Origin: null has no valid use.
+    const reqOrigin = req.headers.origin;
+    if (reqOrigin !== undefined && reqOrigin !== origin) {
+      fail({ req, res, requestId }, 403, 'bad_origin', 'Rejected.');
+      return;
+    }
+
+    // Bootstrap once; reloads authenticate with this view's partition cookie.
     const docMatch = url.pathname.match(/^\/views\/([\w-]+)\/document$/);
     if (docMatch && req.method === 'GET') {
-      const session = sessions.consumeBoot(docMatch[1], url.searchParams.get('boot'));
-      if (!session) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument('This view session is no longer valid. Reload the tab.')); return; }
+      const session = sessions.consumeBoot(docMatch[1], url.searchParams.get('boot'))
+        ?? sessions.byCookie(parseCookies(req)['nv']);
+      if (!session || session.id !== docMatch[1]) { send(res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument('This view session is no longer valid. Reload the tab.')); return; }
       serveDocument({ req, res, url, session, requestId });
       return;
     }
@@ -252,13 +260,6 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const session = sessions.byCookie(parseCookies(req)['nv']);
     if (!session) { fail({ req, res, requestId }, 401, 'unauthorized', 'Missing or invalid view session.'); return; }
     if (!sessions.allowRequest(session)) { fail({ req, res, requestId }, 429, 'rate_limited', 'Too many requests from this view.'); return; }
-
-    // Cross-origin hardening: browsers set Origin on non-GET; when present it must be us.
-    const reqOrigin = req.headers.origin;
-    if (reqOrigin && reqOrigin !== origin && reqOrigin !== 'null') {
-      fail({ req, res, requestId }, 403, 'bad_origin', 'Rejected.');
-      return;
-    }
 
     const ctx: Ctx = { req, res, url, session, requestId };
 
@@ -301,7 +302,13 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       send(ctx.res, 413, { 'Content-Type': 'text/html; charset=utf-8' }, '<!doctype html><p>View document exceeds the 2 MB limit.</p>');
       return;
     }
-    let body = fs.readFileSync(resolved.full, 'utf-8');
+    // Only the exact version that was trusted runs, reloads included.
+    const trusted = readTrusted(session.trusted, session.root, session.viewPath, MAX_DOC_BYTES);
+    if (!trusted) {
+      send(ctx.res, 403, { 'Content-Type': 'text/html; charset=utf-8' }, errorDocument(UNTRUSTED_MESSAGE));
+      return;
+    }
+    let body = trusted.toString('utf-8');
     // Safe template substitution: {{ variables.x }} in the document, escaped,
     // key lookup only. Requires the variables.read capability.
     if (session.caps.has('variables.read')) {
@@ -341,9 +348,12 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     }
     const styleMatch = asset.match(/^styles\/([A-Za-z0-9 _.-]+\.css)$/);
     if (styleMatch) {
-      const file = path.join(ctx.session.root, '.neuron', 'styles', styleMatch[1]);
-      if (!fs.existsSync(file) || fs.statSync(file).size > MAX_STYLE_BYTES) { fail(ctx, 404, 'not_found', 'Stylesheet not found or too large.'); return; }
-      const css = fs.readFileSync(file, 'utf-8');
+      const rel = `.neuron/styles/${styleMatch[1]}`;
+      const file = resolveInWorkspace(ctx.session.root, rel);
+      if (!file || !fs.existsSync(file.full) || fs.statSync(file.full).size > MAX_STYLE_BYTES) { fail(ctx, 404, 'not_found', 'Stylesheet not found or too large.'); return; }
+      const bytes = readTrusted(ctx.session.trusted, ctx.session.root, rel, MAX_STYLE_BYTES);
+      if (!bytes) { fail(ctx, 403, 'untrusted', UNTRUSTED_MESSAGE); return; }
+      const css = bytes.toString('utf-8');
       // Custom CSS must stay local: no remote imports or remote url() fetches.
       if (/@import\b/i.test(css) || /url\(\s*['"]?\s*(https?:|\/\/)/i.test(css)) {
         fail(ctx, 422, 'unsafe_css', `Stylesheet "${styleMatch[1]}" uses @import or remote URLs, which are blocked.`);
@@ -437,7 +447,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const file = path.join(ctx.session.root, '.neuron', 'variables.json');
     let doc: { version: number; variables: Record<string, unknown> };
     try {
-      doc = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : { version: 1, variables: {} };
+      doc = fs.existsSync(file) ? JSON.parse(readSafeSync(ctx.session.root, file).toString('utf-8')) : { version: 1, variables: {} };
     } catch { fail(ctx, 500, 'config_invalid', 'variables.json is not valid JSON.'); return; }
     const { vars, errors } = loadVariables(ctx.session.root);
     if (errors.length) { fail(ctx, 500, 'config_invalid', `Invalid .neuron/variables.json: ${errors[0]}`); return; }
@@ -453,7 +463,8 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!checked.ok) { fail(ctx, 400, 'type_mismatch', `Value does not match declared type "${def.type}".`); return; }
 
     doc.variables[key] = { ...(doc.variables[key] as Record<string, unknown>), value };
-    atomicWrite(file, JSON.stringify(doc, null, 2));
+    capturePreImage(ctx.session.root, file, 'overwrite');
+    atomicWrite(ctx.session.root, file, JSON.stringify(doc, null, 2));
     // htmx callers get a small confirmation to swap into a live region; others get JSON.
     if (isHx(ctx.req)) send(ctx.res, 200, { 'Content-Type': 'text/html; charset=utf-8' }, `<p class="neuron-empty">Saved — now “${esc(String(value))}”.</p>`);
     else sendJson(ctx.res, 200, { key, value });
@@ -464,8 +475,9 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     const dirResolved = resolveInWorkspace(ctx.session.root, ctx.url.searchParams.get('dir') ?? '', { allowRootDir: true });
     if (!dirResolved) { fail(ctx, 400, 'invalid_path', 'Invalid "dir" parameter.'); return; }
     const glob = ctx.url.searchParams.get('glob');
+    if (glob && glob.length > 512) { fail(ctx, 400, 'invalid_glob', 'The "glob" parameter exceeds 512 characters.'); return; }
     const limit = Math.min(MAX_LIST_ENTRIES, Math.max(1, Number(ctx.url.searchParams.get('limit')) || MAX_LIST_ENTRIES));
-    const globRe = glob ? (() => { try { return new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/(?<!\.)\*/g, '[^/]*')}$`, 'i'); } catch { return null; } })() : null;
+    const globRe = glob ? compileGlob(glob) : null;
 
     const rows: FileRow[] = [];
     for (const rel of walkFiles(ctx.session.root, dirResolved.rel)) {
@@ -486,7 +498,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!resolved) return;
     if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'File not found.'); return; }
     if (fs.statSync(resolved.full).size > MAX_READ_BYTES) { fail(ctx, 413, 'too_large', 'File exceeds the 2 MB read limit.'); return; }
-    const content = fs.readFileSync(resolved.full, 'utf-8');
+    const content = readSafeSync(ctx.session.root, resolved.full, MAX_READ_BYTES).toString('utf-8');
     sendJson(ctx.res, 200, { path: resolved.rel, content, hash: sha256(content) });
   }
 
@@ -501,11 +513,11 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!fs.existsSync(resolved.full)) { fail(ctx, 404, 'not_found', 'File does not exist — use POST /api/v1/files to create it.'); return; }
     // Optimistic concurrency: refuse to clobber an edit made elsewhere.
     if (typeof body.baseHash === 'string') {
-      const current = sha256(fs.readFileSync(resolved.full, 'utf-8'));
+      const current = sha256(readSafeSync(ctx.session.root, resolved.full, MAX_READ_BYTES).toString('utf-8'));
       if (current !== body.baseHash) { fail(ctx, 409, 'conflict', 'The file changed since it was read. Re-fetch and retry.'); return; }
     }
     capturePreImage(ctx.session.root, resolved.full, 'overwrite');
-    atomicWrite(resolved.full, body.content);
+    atomicWrite(ctx.session.root, resolved.full, body.content);
     sendJson(ctx.res, 200, { path: resolved.rel, hash: sha256(body.content) });
   }
 
@@ -519,7 +531,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!resolved) return;
     if (fs.existsSync(resolved.full)) { fail(ctx, 409, 'exists', 'A file already exists at that path.'); return; }
     const content = typeof body.content === 'string' ? body.content : '';
-    atomicWrite(resolved.full, content);
+    atomicWrite(ctx.session.root, resolved.full, content);
     sendJson(ctx.res, 201, { path: resolved.rel, hash: sha256(content) });
   }
 
@@ -529,7 +541,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
     if (!resolved) return;
     if (!fs.existsSync(resolved.full) || !fs.statSync(resolved.full).isFile()) { fail(ctx, 404, 'not_found', 'File not found.'); return; }
     capturePreImage(ctx.session.root, resolved.full, 'delete');
-    fs.unlinkSync(resolved.full);
+    unlinkSafeSync(ctx.session.root, resolved.full);
     sendJson(ctx.res, 200, { path: resolved.rel, deleted: true });
   }
 
@@ -549,7 +561,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const full = path.join(ctx.session.root, rel.split('/').join(path.sep));
       try {
         if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue;
-        const content = fs.readFileSync(full, 'utf-8');
+        const content = readSafeSync(ctx.session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8');
         const idx = content.toLowerCase().indexOf(needle);
         if (idx < 0) continue;
         const snippet = content.slice(Math.max(0, idx - 40), idx + query.length + 60).replace(/\s+/g, ' ').trim();
@@ -573,7 +585,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const full = path.join(ctx.session.root, rel.split('/').join(path.sep));
       try {
         if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue;
-        const content = fs.readFileSync(full, 'utf-8');
+        const content = readSafeSync(ctx.session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8');
         const tags = noteTags(content);
         if (tag && !tags.includes(tag)) continue;
         rows.push({ path: rel, title: noteTitle(rel, content), tags, modified: fs.statSync(full).mtime.toISOString() });
@@ -591,7 +603,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       const full = path.join(ctx.session.root, rel.split('/').join(path.sep));
       try {
         if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue;
-        for (const t of noteTags(fs.readFileSync(full, 'utf-8'))) tags.add(t);
+        for (const t of noteTags(readSafeSync(ctx.session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8'))) tags.add(t);
       } catch { /* skip */ }
     }
     const sorted = [...tags].sort();
@@ -630,7 +642,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
 
     let doc: Record<string, unknown>;
     try {
-      const parsed = JSON.parse(fs.readFileSync(resolved.full, 'utf-8'));
+      const parsed = JSON.parse(readSafeSync(ctx.session.root, resolved.full, MAX_READ_BYTES).toString('utf-8'));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
       doc = parsed as Record<string, unknown>;
     } catch {
@@ -703,10 +715,15 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
   function apiFragment(ctx: Ctx, name: string): void {
     // Fragments resolve by sanitized id inside .neuron/fragments only — the
     // name can never become a filesystem path.
-    const file = path.join(ctx.session.root, '.neuron', 'fragments', `${name}.html`);
+    const rel = `.neuron/fragments/${name}.html`;
+    const file = resolveInWorkspace(ctx.session.root, rel);
     let template: string | null = null;
-    if (fs.existsSync(file) && fs.statSync(file).size <= MAX_FRAGMENT_BYTES) {
-      template = fs.readFileSync(file, 'utf-8');
+    if (file && fs.existsSync(file.full) && fs.statSync(file.full).size <= MAX_FRAGMENT_BYTES) {
+      // htmx runs scripts in a swapped fragment: it is code, so only the
+      // trusted version is served.
+      const bytes = readTrusted(ctx.session.trusted, ctx.session.root, rel, MAX_FRAGMENT_BYTES);
+      if (!bytes) { fail(ctx, 403, 'untrusted', UNTRUSTED_MESSAGE); return; }
+      template = bytes.toString('utf-8');
     } else if (name === 'workspace-summary') {
       if (!requireCap(ctx, 'notes.read') || !requireCap(ctx, 'tags.read')) return;
       template = builtinWorkspaceSummary(ctx.session);
@@ -733,7 +750,7 @@ export function createViewServer(sessions: SessionManager, htmxJsPath: string): 
       notes++;
       try {
         const full = path.join(session.root, rel.split('/').join(path.sep));
-        if (fs.statSync(full).size <= MAX_SEARCH_FILE_BYTES) for (const t of noteTags(fs.readFileSync(full, 'utf-8'))) tags.add(t);
+        if (fs.statSync(full).size <= MAX_SEARCH_FILE_BYTES) for (const t of noteTags(readSafeSync(session.root, full, MAX_SEARCH_FILE_BYTES).toString('utf-8'))) tags.add(t);
       } catch { /* skip */ }
     }
     return `<div class="neuron-metric-label">${esc(path.basename(session.root))}</div>` +

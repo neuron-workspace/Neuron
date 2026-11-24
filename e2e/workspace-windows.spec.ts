@@ -1,10 +1,12 @@
-import { test, expect, openSettings, openWorkspaceSettings, setPluginEnabled } from './fixtures';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { test, expect, keychain, openSettings, openWorkspaceSettings, setPluginEnabled } from './fixtures';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 
 type Api = { electronAPI: any };
 const api = (page: Page, run: string) => page.evaluate(`(async () => { const api = window.electronAPI; return ${run}; })()`);
+/** Reads one setting, passing the key as a value rather than as code. */
+const getSetting = (page: Page, key: string) => page.evaluate((k) => (window as unknown as Api).electronAPI.settings.get(k), key);
 
 /** A second workspace beside the test's own, with one note that exists nowhere else. */
 function otherWorkspace(workspace: string): string {
@@ -109,7 +111,7 @@ test('a plugin switched on and off in Workspace settings adds and removes its pa
   await dialog.getByPlaceholder('Search plugins').fill('Daily Notes');
   const toggle = dialog.getByRole('switch', { name: 'Enable Daily Notes' });
   await toggle.check();
-  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
+  await expect.poll(() => getSetting(page, pluginsKey(workspace)).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
   await page.keyboard.press('Escape');
   await expect(daily).toBeVisible();
   const again = await openWorkspaceSettings(page, 'plugins');
@@ -118,7 +120,7 @@ test('a plugin switched on and off in Workspace settings adds and removes its pa
   await page.keyboard.press('Escape');
   await expect(daily).toHaveCount(0);
   // Kept per workspace, and the old global record is not written.
-  await expect.poll(() => api(page, `api.settings.get(${JSON.stringify(pluginsKey(workspace))})`).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(false);
+  await expect.poll(() => getSetting(page, pluginsKey(workspace)).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(false);
   expect(await api(page, 'api.settings.get("plugins")')).toBeNull();
 });
 
@@ -139,10 +141,16 @@ test('the Terminal switched on in one workspace stays off in another', async ({ 
   await expect(page.getByRole('complementary', { name: 'Bottom plugin peek' }).getByRole('button', { name: 'Terminal', exact: true })).toBeVisible();
   // The other workspace's window did not follow.
   await expect(offIn(second)).toBeVisible();
-  expect(await api(second, `api.settings.get(${JSON.stringify(pluginsKey(other))})`).then((s: any) => s?.enabled?.terminal)).toBe(false);
+  expect(await getSetting(second, pluginsKey(other)).then((s: any) => s?.enabled?.terminal)).toBe(false);
 });
 
 test('Settings shows Connectors and no plugin switches; a saved key is never shown again', async ({ app, page }) => {
+  // Saving needs a real keychain, and Neuron refuses without one (that refusal
+  // is tested in secrets.spec.ts). Only Linux can lack one; anywhere else an
+  // unusable keychain is a bug, so the test runs and fails.
+  const store = await keychain(app);
+  test.skip(process.platform === 'linux' && !store.usable,
+    `No usable system keychain on this Linux machine (${store.backend}, encryption ${store.available ? 'available' : 'unavailable'}), so Neuron rightly will not save a key.`);
   const settings = await openSettings(app, page, 'connectors');
   await expect(settings.getByRole('heading', { name: 'Connectors', level: 1 })).toBeVisible();
   await expect(settings.getByRole('switch')).toHaveCount(0);
@@ -156,7 +164,14 @@ test('Settings shows Connectors and no plugin switches; a saved key is never sho
   await claude.getByRole('button', { name: 'Set up Claude' }).click();
   await claude.getByLabel('Anthropic API key').fill('sk-ant-e2e-WRITE-ONLY');
   await claude.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(claude).toContainText('Connected');
+  // D43.5: a saved key is Configured; Connected only after a call with it succeeds.
+  await expect(claude).toContainText('Configured');
+  await expect(claude).not.toContainText('Connected');
+  // On disk it is only ever the keychain's ciphertext.
+  const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+  const onDisk = () => readFileSync(join(userData, 'neuron-settings.json'), 'utf8');
+  expect(onDisk()).not.toContain('WRITE-ONLY');
+  expect(JSON.parse(onDisk()).__secrets.anthropic.apiKey).toEqual({ v: 1, enc: expect.any(String) });
   // Write-only: the key is nowhere in the page, not even in a field's value.
   const leaked = () => settings.evaluate(() => document.documentElement.outerHTML.includes('WRITE-ONLY')
     || [...document.querySelectorAll('input')].some((i) => i.value.includes('WRITE-ONLY')));
@@ -174,6 +189,26 @@ test('Settings shows Connectors and no plugin switches; a saved key is never sho
   await claude.getByRole('button', { name: 'Disconnect Claude' }).click();
   await expect(claude).toContainText('Not set up');
   await expect(dialog.locator('[data-plugin-row="ai-claude"]')).toContainText('Set up Claude in Settings');
+  // Disconnect clears it from the file, not just from the page.
+  expect(JSON.parse(onDisk()).__secrets.anthropic).not.toHaveProperty('apiKey');
+  expect(await api(settings, 'api.settings.hasSecret("anthropic", "apiKey")')).toBe(false);
+});
+
+test('a plugin switched on in one workspace is off in another', async ({ app, page, workspace }) => {
+  const other = otherWorkspace(workspace);
+  const second = await nextWindow(app, () => page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.switch(dir), other));
+  // Daily Notes is off by default; switch it on in the first workspace only.
+  await setPluginEnabled(app, page, 'Daily Notes', true);
+  await expect.poll(() => getSetting(page, pluginsKey(workspace)).then((s: any) => s?.enabled?.['daily-calendar'])).toBe(true);
+  const dialog = await openWorkspaceSettings(second, 'plugins');
+  await dialog.getByPlaceholder('Search plugins').fill('Daily Notes');
+  await expect(dialog.getByRole('switch', { name: 'Enable Daily Notes' })).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(await getSetting(second, pluginsKey(other)).then((s: any) => s?.enabled?.['daily-calendar'])).not.toBe(true);
+  // And its panel is not offered there.
+  await second.getByRole('button', { name: 'Show panel', exact: true }).click();
+  await expect(second.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Graph', exact: true })).toBeVisible();
+  await expect(second.locator('[data-dock-group^="right:"]').getByRole('button', { name: 'Daily', exact: true })).toHaveCount(0);
 });
 
 test('a plugin whose connector is not set up offers to set it up, in Settings at Connectors', async ({ app, page }) => {
@@ -249,17 +284,200 @@ test('Settings opened from a window with no workspace still opens, with no opene
 });
 
 test('removing the current workspace from Settings shows welcome without reloading', async ({ app, page, workspace }) => {
+  // Only this workspace is known (startup adds the checkout's demo in development).
+  await knowWorkspaces(app, [workspace]);
   const settings = await openSettings(app, page, 'workspaces');
   const row = settings.locator('[data-workspace-row]').filter({ hasText: workspace });
   await row.getByRole('button', { name: /More actions for/ }).click();
   await settings.getByRole('menuitem', { name: 'Remove from list' }).click();
   await row.getByRole('button', { name: 'Remove', exact: true }).click();
   expect(await api(page, 'api.repository.getCurrent()')).toBeNull();
-  await expect(page.getByRole('heading', { name: 'Welcome to Neuron', level: 1 })).toBeVisible();
-  const main = page.getByRole('heading', { name: 'Welcome to Neuron' }).locator('..');
-  await expect(main.getByRole('button')).toHaveCount(2);
-  await expect(main.getByRole('button', { name: /Open existing folder/ })).toBeFocused();
-  await expect(main.getByRole('button', { name: /Create new workspace/ })).toBeVisible();
+  const welcome = page.locator('[data-welcome-page]');
+  await expect(welcome.getByRole('heading', { name: 'Neuron', exact: true, level: 1 })).toBeVisible();
+  // Nothing known: no workspace column, and the start stays centred with focus on Create.
+  await expect(welcome.getByRole('navigation', { name: 'Workspaces' })).toHaveCount(0);
+  await expect(welcome.getByRole('button')).toHaveCount(3);
+  await expect(actionButton(page, 'Create')).toBeFocused();
+  await expect(actionButton(page, 'Open')).toBeVisible();
+  await expect(actionButton(page, 'Browse')).toBeVisible();
+});
+
+/**
+ * Set the workspaces Neuron knows, most recent first, as the settings file
+ * holds them; main reads it on every request. Written from inside the main
+ * process, in one synchronous step: written from here, it raced the app's own
+ * settings writes and was lost now and then.
+ */
+async function knowWorkspaces(app: ElectronApplication, recent: string[]) {
+  // After the first window has read its own list, so nothing read before this
+  // write lands after it.
+  await expect(app.windows()[0].locator('.note-row').first()).toBeVisible();
+  await app.evaluate(({ app: electronApp }, dirs) => {
+    const fs = process.mainModule!.require('node:fs') as typeof import('node:fs');
+    const file = `${electronApp.getPath('userData')}/neuron-settings.json`;
+    const settings = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    settings.repositories.recent = dirs;
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+  }, recent);
+}
+
+/** Forget this window's own workspace, which leaves it on the welcome page. */
+async function toWelcome(page: Page, workspace: string) {
+  await page.evaluate((dir) => (window as unknown as Api).electronAPI.repository.remove(dir), workspace);
+  await expect(page.locator('[data-welcome-page]')).toBeVisible();
+}
+
+/** What a window does when it comes forward: ask for the list again. */
+const refocus = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event('focus')));
+
+const welcomeRows = (page: Page) => page.getByRole('navigation', { name: 'Workspaces' }).locator('[data-workspace-row]');
+const actionButton = (page: Page, action: 'Create' | 'Open' | 'Browse') =>
+  page.locator(`[data-welcome-action="${action}"]`).getByRole('button', { name: new RegExp(`^${action}\\b`) });
+
+/** Answer the next native folder pickers with `pick` (or cancel), and record their titles. */
+async function stubFolderPicker(app: ElectronApplication, pick: string | null = null) {
+  await app.evaluate(({ dialog }, chosen) => {
+    const store = globalThis as unknown as { __pickerTitles: string[] };
+    store.__pickerTitles = [];
+    dialog.showOpenDialog = (async (...args: unknown[]) => {
+      const options = (args.length > 1 ? args[1] : args[0]) as { title?: string };
+      store.__pickerTitles.push(options.title ?? '');
+      return chosen ? { canceled: false, filePaths: [chosen] } : { canceled: true, filePaths: [] };
+    }) as typeof dialog.showOpenDialog;
+  }, pick);
+}
+const pickerTitles = (app: ElectronApplication) => app.evaluate(() => (globalThis as unknown as { __pickerTitles: string[] }).__pickerTitles);
+
+test('the welcome page lists every known workspace, most recent first, and opens one', async ({ app, page, workspace }) => {
+  const other = otherWorkspace(workspace);
+  const third = join(workspace, '..', 'third-workspace');
+  mkdirSync(third);
+  await knowWorkspaces(app, [workspace, other, third]);
+  await toWelcome(page, workspace);
+
+  const rows = welcomeRows(page);
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('other-workspace');
+  await expect(rows.nth(1)).toContainText('third-workspace');
+  // The full path is the row's tooltip; the visible one may be shortened in the middle.
+  await expect(rows.nth(0).getByRole('button').first()).toHaveAttribute('title', other);
+  await expect(rows.nth(0).getByRole('button', { name: 'Workspace actions' })).toHaveCount(1);
+
+  // Focus starts on the first workspace; the arrow keys move through the list.
+  const first = rows.nth(0).getByRole('button').first();
+  const second = rows.nth(1).getByRole('button').first();
+  await expect(first).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(second).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(first).toBeFocused();
+
+  // Enter opens it, in this empty window.
+  await page.keyboard.press('Enter');
+  await expect.poll(() => api(page, 'api.repository.getCurrent()').then((r: any) => r?.path)).toBe(other);
+  await expect(page.locator('[data-welcome-page]')).toHaveCount(0);
+  expect(app.windows()).toHaveLength(1);
+});
+
+test('a workspace whose folder is gone stays listed as "Folder not found", says so when opened, and comes back', async ({ app, page, workspace }) => {
+  const other = otherWorkspace(workspace);
+  const away = `${other}-away`;
+  await knowWorkspaces(app, [workspace, other]);
+  await toWelcome(page, workspace);
+  const row = welcomeRows(page).filter({ hasText: 'other-workspace' });
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText('Folder not found');
+
+  // The drive is unplugged, say.
+  renameSync(other, away);
+  await refocus(page);
+  await expect(row).toContainText('Folder not found');
+  await row.getByRole('button').first().click();
+  await expect(page.getByRole('alert')).toContainText('Folder not found');
+  await expect(page.locator('[data-welcome-page]')).toBeVisible();
+  await expect(row).toBeVisible();
+  await page.getByRole('alert').getByRole('button', { name: 'Dismiss' }).click();
+
+  // Settings › Workspaces marks it too, offers to remove it, and says so when it is opened.
+  const settings = await openSettings(app, page, 'workspaces');
+  const listed = settings.locator('[data-workspace-row]').filter({ hasText: other });
+  await expect(listed).toContainText('Folder not found');
+  await expect(listed.getByRole('button', { name: 'Remove from list' })).toBeVisible();
+  await listed.getByRole('button', { name: 'other-workspace', exact: true }).click();
+  await expect(settings.getByRole('alert')).toContainText('Folder not found');
+  expect(app.windows()).toHaveLength(2);
+
+  // Plugged back in: both lists show it as an ordinary workspace again.
+  renameSync(away, other);
+  await refocus(page);
+  await refocus(settings);
+  await expect(row).not.toContainText('Folder not found');
+  await expect(listed).not.toContainText('Folder not found');
+  await expect(listed.getByRole('button', { name: 'Open', exact: true })).toBeVisible();
+  await row.getByRole('button').first().click();
+  await expect.poll(() => api(page, 'api.repository.getCurrent()').then((r: any) => r?.path)).toBe(other);
+});
+
+test('the welcome page\'s three actions start their flows', async ({ app, page, workspace }) => {
+  await knowWorkspaces(app, [workspace]);
+  await toWelcome(page, workspace);
+  for (const [title, line] of [
+    ['Create new workspace', 'Start an empty folder for new notes.'],
+    ['Open folder as workspace', 'Use a folder of notes you already have.'],
+    ['New workspace from a template', 'Start from one of Neuron\'s templates.'],
+  ]) {
+    const row = page.locator('[data-welcome-action]').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+    await expect(row).toContainText(line);
+  }
+
+  await stubFolderPicker(app);
+  await actionButton(page, 'Create').click();
+  await expect.poll(() => pickerTitles(app)).toEqual(['Create or choose a workspace folder']);
+  await actionButton(page, 'Open').click();
+  await expect.poll(() => pickerTitles(app)).toEqual(['Create or choose a workspace folder', 'Open a workspace folder']);
+
+  // Browse is the switcher's template picker.
+  await actionButton(page, 'Browse').click();
+  const templates = page.getByRole('dialog', { name: 'New workspace from template' });
+  await expect(templates).toBeVisible();
+  await templates.getByRole('button').filter({ hasNotText: /^Close$/ }).first().click();
+  await expect.poll(() => pickerTitles(app).then((titles) => titles[2] ?? '')).toMatch(/^Where should the .+ workspace go\?$/);
+  // Dismissing the folder picker keeps the dialog open (R1), with no error.
+  await expect(templates).toBeVisible();
+  await expect(templates.getByRole('alert')).toHaveCount(0);
+  await templates.getByRole('button', { name: 'Close' }).click();
+  await expect(templates).toHaveCount(0);
+
+  // Open with a folder chosen: this empty window shows it.
+  const other = otherWorkspace(workspace);
+  await stubFolderPicker(app, other);
+  await actionButton(page, 'Open').click();
+  await expect.poll(() => api(page, 'api.repository.getCurrent()').then((r: any) => r?.path)).toBe(other);
+});
+
+test('Settings › Workspaces shows one row for a folder known in two spellings', async ({ app, page, workspace }) => {
+  test.skip(process.platform !== 'win32', 'Windows folders match case-insensitively; on Linux two spellings that differ in case are two folders.');
+  const other = otherWorkspace(workspace);
+  // Recent holds another spelling of the folder this window shows.
+  await knowWorkspaces(app, [`${workspace.toUpperCase()}\\`, other]);
+  const settings = await openSettings(app, page, 'workspaces');
+  const rows = settings.locator('[data-workspace-row]');
+  await expect(rows).toHaveCount(2);
+  // That one row is the opener's: its window is on screen.
+  await expect(rows.getByRole('button', { name: 'Show window' })).toHaveCount(1);
+  await expect(rows.filter({ hasText: other }).getByRole('button', { name: 'Open', exact: true })).toBeVisible();
+});
+
+test('a workspace renamed under another spelling of its folder keeps the name', async ({ app, page, workspace }) => {
+  const caseless = process.platform === 'win32' || process.platform === 'darwin';
+  const spelling = `${caseless ? workspace.toUpperCase() : workspace}${sep}`;
+  const settings = await openSettings(app, page, 'workspaces');
+  expect((await settings.evaluate((dir) => (window as unknown as Api).electronAPI.repository.setName(dir, 'Field notes'), spelling)).success).toBe(true);
+  // The window showing the folder hears of it, and asks by its own spelling.
+  await expect(page.locator('.titlebar').getByRole('button', { name: /Field notes/ })).toBeVisible();
+  expect((await api(page, 'api.repository.getCurrent()') as { name: string }).name).toBe('Field notes');
+  await refocus(settings);
+  await expect(settings.locator('[data-workspace-row]').filter({ hasText: workspace })).toContainText('Field notes');
 });
 
 test('the Workspaces section lists the current workspace and has no Open or Create buttons', async ({ app, page, workspace }) => {

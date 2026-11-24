@@ -32,10 +32,15 @@ export const DEFAULT_BINDINGS: Bindings = Object.fromEntries(KEY_ACTIONS.map((a)
 // fixed string — a shortcut label reading Ctrl on a Mac is worse than none.
 
 /** Build a normalized chord from a keyboard event, or null for modifier-only presses. */
-export function eventToChord(e: KeyboardEvent): string | null {
+export function eventToChord(e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>): string | null {
   // Shift turns ` into ~ on a US keyboard, which would make a shift+` chord
   // impossible to match; the physical key is the stable name for it.
-  const key = e.shiftKey && e.code === 'Backquote' ? '`' : e.key;
+  // On macOS Option+letter types a symbol (Option+Z is "Ω", Option+E a dead
+  // accent), so an alt+<letter> chord would never match by `key`. With Option
+  // held, a letter key is named by its physical position instead. Everything
+  // else, and every other platform, still goes by `key`.
+  const optionLetter = isMac && e.altKey ? /^Key([A-Z])$/.exec(e.code ?? '') : null;
+  const key = optionLetter ? optionLetter[1] : e.shiftKey && e.code === 'Backquote' ? '`' : e.key;
   if (['Control', 'Meta', 'Alt', 'Shift', 'Dead'].includes(key)) return null;
   const parts: string[] = [];
   if (e.ctrlKey || e.metaKey) parts.push('mod');

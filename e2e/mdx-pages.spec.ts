@@ -1,6 +1,6 @@
 import { test, expect, openNote } from './fixtures';
 import type { Page } from '@playwright/test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Pages built in MDX: full width, columns, and the data blocks (Stat, Chart,
@@ -129,6 +129,7 @@ test('keyboard moves the first column to the end and keeps focus on it', async (
   expect(read(workspace, name)).toBe(movedPage());
   await page.getByRole('button', { name: 'Reading', exact: true }).first().click();
   await expect(handles).toHaveCount(0);
+  await expect(page.getByRole('separator', { name: /Resize columns/ })).toHaveCount(0);
 });
 
 test('pointer moves the first column to the end with an insertion line', async ({ page, workspace }, testInfo) => {
@@ -166,16 +167,36 @@ test('a live Stat follows the database when it changes on disk', async ({ page, 
     '<Stat label="Hours" source="pages.db" table="tasks" sum="hours" />', '',
     '<Stat label="Broken" source="pages.db" table="tasks" where="owner = me" />', '',
     '<Stat label="Missing" source="nowhere.db" table="tasks" />',
+    '<Chart type="bar" source="pages.db" table="tasks" group="status" count />',
   ]);
   const value = (label: string) => page.locator('.mdx-stat', { hasText: label });
   await expect(value('Done').locator('[data-stat-value]')).toHaveText('1');
   await expect(value('Hours').locator('[data-stat-value]')).toHaveText('10');
+  await expect(page.locator('[data-chart="bar"]').getByRole('img')).toHaveAttribute('aria-label', /Todo 1, Doing 1, Done 1/);
   await expect(value('Broken').locator('[data-stat-error]')).toHaveText('No column named "owner".');
   await expect(value('Missing').locator('[data-stat-error]')).toHaveText('No file at nowhere.db.');
 
   writeFileSync(join(workspace, 'pages.db'), database(ROWS.map((row) => (row.id === 'r1' ? { ...row, values: { ...row.values, status: 'done', hours: 4 } } : row))));
   await expect(value('Done').locator('[data-stat-value]')).toHaveText('2');
   await expect(value('Hours').locator('[data-stat-value]')).toHaveText('12');
+  await expect(page.locator('[data-chart="bar"]').getByRole('img')).toHaveAttribute('aria-label', /Todo 0, Doing 1, Done 2/);
+});
+
+test('a Stat and Chart follow an uppercase CSV changed on disk', async ({ page, workspace }) => {
+  writeFileSync(join(workspace, 'metrics.CSV'), 'Team,Hours\nRed,2\nBlue,3\n');
+  mkdirSync(join(workspace, '.neuron', 'tables'), { recursive: true });
+  writeFileSync(join(workspace, '.neuron', 'tables', 'metrics.CSV.json'), JSON.stringify({ columns: { Hours: { type: 'number' } } }));
+  await open(page, workspace, 'pages-csv-watch.mdx', [
+    '<Stat label="Hours" source="metrics.CSV" sum="Hours" />',
+    '<Chart type="bar" source="metrics.CSV" group="Team" sum="Hours" />',
+  ]);
+  await expect(page.locator('[data-stat-value]')).toHaveText('5');
+  const chart = page.locator('[data-chart="bar"]');
+  await expect(chart.getByRole('img')).toHaveAttribute('aria-label', /Blue 3, Red 2/);
+  writeFileSync(join(workspace, 'metrics.CSV'), 'Team,Hours\nRed,8\nBlue,3\nGreen,4\n');
+  await expect(page.locator('[data-stat-value]')).toHaveText('15', { timeout: 15_000 });
+  await expect(chart.getByRole('img')).toHaveAttribute('aria-label', /Red 8, Green 4, Blue 3/);
+  await expect(chart.locator('[data-bar]')).toHaveCount(3);
 });
 
 test('pie and bar charts draw one mark per group', async ({ page, workspace }) => {
@@ -207,9 +228,14 @@ test('a form adds a row to a database and to a managed CSV', async ({ page, work
     '<Form title="New task" source="pages.db" table="tasks" fields="title, status, done" submit="Add task" />', '',
     '<Form title="New person" source="people.csv" submit="Add person" />', '',
     '<Form title="Loose" source="loose.csv" />',
+    '<Stat label="Task count" source="pages.db" table="tasks" count />',
+    '<Stat label="Person count" source="people.csv" count />',
   ]);
 
   const task = page.locator('.mdx-form', { hasText: 'New task' });
+  const count = (label: string) => page.locator('.mdx-stat', { hasText: label }).locator('[data-stat-value]');
+  await expect(count('Task count')).toHaveText('3');
+  await expect(count('Person count')).toHaveText('1');
   // The title column is required: nothing is written without it.
   await task.getByRole('button', { name: 'Add task' }).click();
   await expect(task.getByRole('alert')).toHaveText('Task is required.');
@@ -221,6 +247,7 @@ test('a form adds a row to a database and to a managed CSV', async ({ page, work
   const added = db(workspace).at(-1)!;
   expect(added.values).toEqual({ title: 'Plan the launch', status: 'doing', done: false });
   expect(db(workspace)).toHaveLength(4);
+  await expect(count('Task count')).toHaveText('4');
   await expect(task.getByRole('status')).toHaveCount(0, { timeout: 6000 });
 
   const person = page.locator('.mdx-form', { hasText: 'New person' });
@@ -229,6 +256,7 @@ test('a form adds a row to a database and to a managed CSV', async ({ page, work
   await person.getByRole('button', { name: 'Add person' }).click();
   await expect(person.getByRole('status')).toHaveText('Added.');
   expect(read(workspace, 'people.csv')).toBe('name,age\nAda,36\nLin,41\n');
+  await expect(count('Person count')).toHaveText('2');
 
   const loose = page.locator('.mdx-form', { hasText: 'Loose' });
   await expect(loose).toContainText('Convert this CSV to a Neuron table to add rows.');
@@ -249,7 +277,68 @@ test('an editable DbView ticks a task on disk; a plain one stays read-only', asy
   await expect(page.locator('[data-db-embed-mode="table"]:not([data-db-embed-editable])').getByRole('checkbox').first()).toBeDisabled();
 });
 
+// R1: an embedded table gets the external-change bar the table surface has.
+// Saves are blocked (as a read-only file blocks them) so the edit is not on
+// disk when another program changes the file.
+function blockSaves(workspace: string, file: string) {
+  const win = process.platform === 'win32';
+  if (win) chmodSync(file, 0o444); else chmodSync(workspace, 0o555);
+  return () => (win ? chmodSync(file, 0o644) : chmodSync(workspace, 0o755));
+}
+async function embeddedConflict(page: Page, workspace: string) {
+  await open(page, workspace, 'pages-embed-conflict.mdx', ['<DbView source="pages.db" table="tasks" editable />']);
+  const embed = page.locator('[data-db-embed-editable]');
+  const cell = embed.getByRole('textbox', { name: 'Task: Review' });
+  await expect(cell).toBeVisible();
+  const file = join(workspace, 'pages.db');
+  const unblock = blockSaves(workspace, file);
+  await page.waitForTimeout(600);
+  try {
+    await cell.fill('Edited here');
+    await cell.blur();
+    await expect(embed.getByRole('alert').filter({ hasText: "Couldn't save pages:" })).toBeVisible({ timeout: 10_000 });
+  } finally {
+    unblock();
+  }
+  expect(read(workspace, 'pages.db')).not.toContain('Edited here');
+  writeFileSync(file, database(ROWS.map((row) => (row.id === 'r1' ? { ...row, values: { ...row.values, title: 'Changed outside' } } : row))));
+  const bar = embed.locator('[data-external-change="pages.db"]');
+  await expect(bar).toContainText('pages.db changed outside Neuron.', { timeout: 10_000 });
+  // The local edit stays until the user chooses, and nothing is written meanwhile.
+  await expect(embed.getByRole('textbox', { name: 'Task: Edited here' })).toHaveValue('Edited here');
+  await page.waitForTimeout(800);
+  expect(read(workspace, 'pages.db')).toContain('Changed outside');
+  return { embed, bar };
+}
+
+test('an embedded table changed on disk while an edit is not saved asks; Keep my version writes ours (R1)', async ({ page, workspace }) => {
+  const { bar } = await embeddedConflict(page, workspace);
+  await bar.getByRole('button', { name: 'Keep my version' }).click();
+  await expect(bar).toHaveCount(0);
+  await expect.poll(() => {
+    const titles = db(workspace).map((row) => row.values.title);
+    return titles.includes('Edited here') && !titles.includes('Changed outside');
+  }).toBe(true);
+});
+
+test('an embedded table changed on disk: Use the file on disk drops the edit and shows the outside version (R1)', async ({ page, workspace }) => {
+  const { embed, bar } = await embeddedConflict(page, workspace);
+  await bar.getByRole('button', { name: 'Use the file on disk' }).click();
+  await expect(bar).toHaveCount(0);
+  await expect(embed.getByRole('textbox', { name: 'Task: Changed outside' })).toHaveValue('Changed outside');
+  await expect(embed.getByRole('textbox', { name: 'Task: Review' })).toHaveValue('Review');
+  expect(db(workspace).map((row) => row.values.title)).toEqual(['Changed outside', 'Review', 'Ship']);
+  // Editing goes on from the outside version.
+  // The cell's name follows its saved value, so blur by moving focus, not by a
+  // second locator that only matches once the edit has been committed.
+  await embed.getByRole('textbox', { name: 'Task: Ship' }).fill('Shipped');
+  await page.keyboard.press('Tab');
+  await expect.poll(() => db(workspace).map((row) => row.values.title)).toEqual(['Changed outside', 'Review', 'Shipped']);
+});
+
 test('typing / on an empty line in Live inserts a Chart block', async ({ page, workspace }) => {
+  // This path sorts before both the bundled Planner.db and pages.db.
+  writeFileSync(join(workspace, '000-first.db'), database(ROWS));
   await open(page, workspace, 'pages-insert.mdx', ['# Insert', '', 'Some text.']);
   await page.getByRole('button', { name: 'Live', exact: true }).first().click();
   const line = page.locator('article.preview-prose p', { hasText: 'Some text.' });
@@ -264,9 +353,64 @@ test('typing / on an empty line in Live inserts a Chart block', async ({ page, w
   await expect(menu.getByRole('option')).toHaveCount(1);
   await page.keyboard.press('Enter');
   await expect(menu).toHaveCount(0);
-  await expect.poll(() => read(workspace, 'pages-insert.mdx')).toMatch(/\nSome text\.\n<Chart type="bar" source="[^"]+\.db" table="[^"]+" group="[^"]*" count \/>/);
+  await expect.poll(() => read(workspace, 'pages-insert.mdx')).toContain('<Chart type="bar" source="000-first.db" table="tasks" group="status" count />');
   // The new block opens for editing.
   await expect(page.locator('.live-block-editor')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('[data-chart="bar"]')).toBeVisible();
+});
+
+test('Escape closes Insert and returns focus to its empty line', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-insert-escape.mdx', ['# Insert', '', 'Some text.']);
+  await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+  await page.locator('article.preview-prose p', { hasText: 'Some text.' }).click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('/');
+  await expect(page.locator('[data-insert-menu]')).toBeVisible();
+  await page.keyboard.type('cha');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-insert-menu]')).toHaveCount(0);
+  await expect(page.locator('[data-live-line]:focus')).toHaveCount(1);
+  await page.keyboard.type('Still editing');
+  await page.keyboard.press('Tab');
+  await expect.poll(() => read(workspace, 'pages-insert-escape.mdx')).toContain('Still editing');
+  expect(read(workspace, 'pages-insert-escape.mdx')).not.toContain('<Chart');
+});
+
+test.describe('Insert without a database', () => {
+  test.use({ prepareWorkspace: async ({}, use) => use(dir => {
+    writeFileSync(join(dir, 'blank.mdx'), '# Insert\n\nSome text.\n');
+  }) });
+  test('the inserted block puts the cursor inside source=""', async ({ page, workspace }) => {
+    await openNote(page, 'blank.mdx');
+    await page.getByRole('button', { name: 'Live', exact: true }).first().click();
+    await page.locator('article.preview-prose p', { hasText: 'Some text.' }).click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('/');
+    await expect(page.getByRole('combobox', { name: 'Insert a block' })).toBeFocused();
+    await page.keyboard.type('stat');
+    await page.keyboard.press('Enter');
+    const editor = page.locator('.live-block-editor .cm-content');
+    await expect(editor).toBeFocused();
+    await expect(editor).toContainText('source=""');
+    // Typing verifies both the caret position and focus.
+    await page.keyboard.type('chosen.CSV');
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+    await expect.poll(() => read(workspace, 'blank.mdx')).toContain('<Stat label="Rows" source="chosen.CSV" count />');
+  });
+});
+
+test('a Form keeps the required title even when fields omits it', async ({ page, workspace }) => {
+  await open(page, workspace, 'pages-required-title.mdx', ['<Form source="pages.db" table="tasks" fields="status" />']);
+  const form = page.locator('[data-form]');
+  await expect(form.getByLabel('Task')).toHaveAttribute('aria-required', 'true');
+  await form.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(form.getByRole('alert')).toHaveText('Task is required.');
+  expect(db(workspace)).toHaveLength(3);
+  await form.getByLabel('Task').fill('Title included');
+  await form.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(form.getByRole('status')).toHaveText('Added.');
+  expect(db(workspace).at(-1)!.values.title).toBe('Title included');
 });

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 // The switcher used to show the open workspace twice -- on its button and again
 // under "Recent" -- and the same folder once per spelling it was opened with.
-test('the workspace switcher lists each folder once and not the open one', async ({ page, workspace }) => {
+test('the workspace switcher lists each folder once and not the open one', async ({ app, page, workspace }) => {
   const a = join(workspace, '..', 'one', 'notes');
   const b = join(workspace, '..', 'two', 'notes');
   mkdirSync(a, { recursive: true });
@@ -12,10 +12,15 @@ test('the workspace switcher lists each folder once and not the open one', async
   const sameAsCurrent = process.platform === 'win32' ? `${workspace.toUpperCase()}\\` : `${workspace}/`;
 
   await expect(page.locator('.note-row').first()).toBeVisible();
-  await page.evaluate(async ({ workspace, recent }) => {
-    const api = (window as unknown as { electronAPI: any }).electronAPI;
-    await api.settings.set('repositories', { current: workspace, recent });
-  }, { workspace, recent: [workspace, sameAsCurrent, a, b, a] });
+  // `repositories` is main's own key (P0-2): the renderer cannot write it, so
+  // the file is written from inside main, in one synchronous step.
+  await app.evaluate(({ app: electronApp }, repositories) => {
+    const fs = process.mainModule!.require('node:fs') as typeof import('node:fs');
+    const file = `${electronApp.getPath('userData')}/neuron-settings.json`;
+    const settings = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    settings.repositories = repositories;
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+  }, { current: workspace, recent: [workspace, sameAsCurrent, a, b, a] });
   await page.reload();
   await expect(page.locator('.note-row').first()).toBeVisible();
 

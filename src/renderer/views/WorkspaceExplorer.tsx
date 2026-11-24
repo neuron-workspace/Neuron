@@ -9,6 +9,9 @@ import { noteTags } from '../lib/note-tags';
 import { Segmented } from '../components/ui/segmented';
 import MDXPreview from '../components/MDXPreview';
 import OtherFileIcon from '../components/OtherFileIcon';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../components/ui/context-menu';
+import { dragPath, dropOnFolder } from '../components/Sidebar';
+import type { FileAction } from '../components/FileActionDialog';
 
 const NONE: string[] = [];
 const KIND_LABELS: Record<string, string> = { image: 'Image', video: 'Video', audio: 'Audio', text: 'Text file' };
@@ -32,6 +35,10 @@ interface WorkspaceExplorerProps {
   onCreateFolder: (path: string) => Promise<boolean>;
   recents: RecentEntry[];
   onClearRecents: () => void;
+  /** Rename (F2) or Move to… an item. */
+  onFileAction?: (action: FileAction) => void;
+  /** An item dropped onto a folder. */
+  onMoveInto?: (path: string, folder: string) => void;
 }
 
 type Item = { path: string; name: string; kind: 'folder' | 'file'; extension: string; other?: boolean };
@@ -62,7 +69,7 @@ function ItemIcon({ item, thumbnail = false }: { item: Item; thumbnail?: boolean
 }
 
 export default function WorkspaceExplorer({ repositoryName, paths: notePaths, otherFiles = NONE, fileInfo, skipped = 0, truncated = false, onReveal,
-  folders, notesData, folder, onNavigate, onOpenFile, onOpenToSide, onCreateNote, onCreateFolder, recents, onClearRecents }: WorkspaceExplorerProps) {
+  folders, notesData, folder, onNavigate, onOpenFile, onOpenToSide, onCreateNote, onCreateFolder, recents, onClearRecents, onFileAction, onMoveInto }: WorkspaceExplorerProps) {
   const paths = React.useMemo(() => otherFiles.length ? [...notePaths, ...otherFiles] : notePaths, [notePaths, otherFiles]);
   const others = React.useMemo(() => new Set(otherFiles), [otherFiles]);
   const toItems = React.useCallback((listing: ReturnType<typeof listFolder>): Item[] => [
@@ -160,6 +167,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
     const columns = view === 'grid' ? Math.max(1, Math.floor(((itemsArea.current?.clientWidth ?? 132) + 4) / 136)) : 1;
     switch (event.key) {
       case 'Enter': open(item); break;
+      case 'F2': if (!onFileAction || item.other) return; onFileAction({ kind: 'rename', path: item.path, folder: item.kind === 'folder' }); break;
       case 'Backspace': if (folder) navigate(parentFolder(folder)); break;
       case 'ArrowDown': next = Math.min(items.length - 1, index + columns); break;
       case 'ArrowUp': next = Math.max(0, index - columns); break;
@@ -171,7 +179,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
     }
     event.preventDefault();
     event.stopPropagation();
-    if (event.key !== 'Enter' && event.key !== 'Backspace' && items[next]) {
+    if (event.key !== 'Enter' && event.key !== 'Backspace' && event.key !== 'F2' && items[next]) {
       select(items[next]); optionRefs.current.get(items[next].path)?.scrollIntoView({ block: 'nearest' });
     }
   };
@@ -206,6 +214,16 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
       else setError('Could not create this item. Try again.');
     } finally { committing.current = false; setBusy(false); }
   };
+  // Rename and Move to… on an item's context menu. Other files are only listed.
+  const withMenu = (item: Item, node: React.ReactElement) => !onFileAction || item.other ? node : (
+    <ContextMenu key={item.path}>
+      <ContextMenuTrigger asChild>{node}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => onFileAction({ kind: 'rename', path: item.path, folder: item.kind === 'folder' })}>Rename<span className="ml-auto pl-4 text-[10px] text-[var(--ink-muted)]">F2</span></ContextMenuItem>
+        <ContextMenuItem onSelect={() => onFileAction({ kind: 'move', path: item.path, folder: item.kind === 'folder' })}>Move to…</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
   const createButtons = <>
     <span className="explorer-split">
       <button type="button" className="explorer-action interactive" disabled={busy} onClick={() => startCreate('file')}><FilePlus2 />New file</button>
@@ -258,7 +276,9 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
             </form>}
             <div ref={listbox} role="listbox" aria-label={folder ? 'Contents of ' + previewFolderName(folder) : 'Workspace contents'} className="explorer-listbox"
               tabIndex={items.length ? undefined : 0} onKeyDown={event => { if (event.key === 'Backspace' && folder) { event.preventDefault(); navigate(parentFolder(folder)); } }}>
-              {items.map((item, index) => <div key={item.path} role="option" aria-label={item.name} aria-selected={selected?.path === item.path}
+              {items.map((item, index) => withMenu(item, <div key={item.path} role="option" aria-label={item.name} aria-selected={selected?.path === item.path}
+                {...(onMoveInto && !item.other ? dragPath(item.path, item.kind === 'folder') : {})}
+                {...(item.kind === 'folder' ? dropOnFolder(item.path, onMoveInto) : {})}
                 ref={node => { if (node) optionRefs.current.set(item.path, node); else optionRefs.current.delete(item.path); }}
                 tabIndex={selected ? (selected.path === item.path ? 0 : -1) : index === 0 ? 0 : -1}
                 data-folder={item.kind === 'folder' ? item.path : undefined} data-file={item.kind === 'file' && !item.other ? item.path : undefined}
@@ -269,7 +289,7 @@ export default function WorkspaceExplorer({ repositoryName, paths: notePaths, ot
                 <span className="explorer-item-name">{item.name}</span>
                 <span className="explorer-item-detail">{detail(item)}</span>
                 {item.kind === 'file' && isNote(item.path) && <span className="explorer-word-count">{words.get(item.path) ?? 0} words</span>}
-              </div>)}
+              </div>))}
             </div>
           </div>
           {!items.length && !draft && <div className="explorer-empty"><p>This folder is empty.</p><div className="explorer-tools">{createButtons}</div></div>}
