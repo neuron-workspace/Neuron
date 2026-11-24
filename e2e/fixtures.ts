@@ -116,9 +116,24 @@ export const test = base.extend<AppFixture>({
     );
 
     const background = process.env.NEURON_E2E_VISIBLE !== '1';
+    const linuxCi = !!process.env.CI && process.platform === 'linux';
     launchTiming.startedAt = performance.now();
     const app = await electron.launch({
       args: [
+        // A real keychain on the Linux runner, which has no desktop session and
+        // so no Secret Service of its own: Chromium would fall back to its
+        // plain-text store there, and Neuron (by design) refuses to keep a key
+        // in that. ci.yml starts an unlocked gnome-keyring on a session bus
+        // before the e2e steps, and this preload points Electron at it.
+        //
+        // Not `--password-store=gnome-libsecret` on the command line: Playwright's
+        // own preload appends `--password-store=basic` after the command line is
+        // read, and the later value wins, so the app never saw the keychain and
+        // the key tests skipped. linux-keychain.cjs runs after that preload and
+        // sets the switch back. It selects a real backend -- nothing here fakes
+        // encryption -- and is off everywhere else, where Chromium's own choice
+        // is the one users get. Preload flags go before the app's script.
+        ...(linuxCi ? ['-r', join(repoRoot, 'e2e', 'linux-keychain.cjs')] : []),
         join(repoRoot, 'dist', 'main', 'main.js'),
         `--user-data-dir=${userData}`,
         // Software WebGL, but only where there is no hardware to use.
@@ -146,14 +161,6 @@ export const test = base.extend<AppFixture>({
           || (process.env.CI && process.platform !== 'win32')
           ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
           : []),
-        // A real keychain on the Linux runner, which has no desktop session and
-        // so no Secret Service of its own: Chromium would fall back to its
-        // plain-text store there, and Neuron (by design) refuses to keep a key
-        // in that. ci.yml starts an unlocked gnome-keyring on a session bus
-        // before the e2e steps; this points Electron at it. It selects a real
-        // backend -- nothing here fakes encryption -- and is off everywhere
-        // else, where Chromium's own choice is the one users get.
-        ...(process.env.CI && process.platform === 'linux' ? ['--password-store=gnome-libsecret'] : []),
         // Windows marks an off-screen window as occluded and Chromium then stops
         // painting it, which would stall every test waiting on a frame.
         ...(background ? ['--disable-features=CalculateNativeWinOcclusion'] : []),
@@ -316,19 +323,32 @@ export async function setPluginEnabled(_app: ElectronApplication, page: Page, na
  * A Radix menu closes on a `pointerdown` that reaches `document` from outside
  * its own React tree (DismissableLayer listens there). So dispatch exactly
  * that, on `document.body`: outside the menu, outside the React root, and
- * independent of hit-testing and window placement. Then wait for the menu to
- * report it has closed, so a failure here says "the dismiss did not happen"
- * rather than surfacing later as a menu that is still in the DOM.
+ * independent of hit-testing and window placement, followed by the matching
+ * `pointerup` so nothing listening for a press (react-resizable-panels starts
+ * tracking one on any pointerdown at the body) is left mid-press.
+ *
+ * Pressed again until the menu reports it has closed. One press was not always
+ * enough on the Linux runner: two right-click menus stayed open after it while
+ * the same press closed the same kind of menu in editor-groups.spec.ts, and
+ * Windows never reproduced it. DismissableLayer can swallow exactly one outside
+ * press in two ways: it starts listening a tick after the menu mounts, and it
+ * counts the first document pointerdown after any press that went through the
+ * menu's own React tree as "inside" (that is how it learns such a press ended).
+ * A second press is still an outside press, so this closes only a menu that a
+ * user's second click would close, and a menu that never closes still fails
+ * here, saying the dismiss did not happen rather than surfacing later.
  */
 export async function closeMenuByClickingOutside(page: Page) {
   const open = page.locator('[role="menu"][data-state="open"]');
   await expect(open).toHaveCount(1);
-  await page.evaluate(() => {
-    document.body.dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1,
-    }));
-  });
-  await expect(open).toHaveCount(0);
+  await expect(async () => {
+    await page.evaluate(() => {
+      const press = { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', isPrimary: true, button: 0 };
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { ...press, buttons: 1 }));
+      document.body.dispatchEvent(new PointerEvent('pointerup', { ...press, buttons: 0 }));
+    });
+    await expect(open).toHaveCount(0, { timeout: 1_000 });
+  }, 'the open menu should close on a press outside it').toPass({ timeout: 10_000 });
 }
 
 /**

@@ -167,7 +167,8 @@ jobs:
       # when there is none. The Linux runner has no desktop session, so no
       # Secret Service, and the key tests would see that refusal. Give the job a
       # real keychain: a session bus with an unlocked gnome-keyring on it.
-      # e2e/fixtures.ts points Electron at it with --password-store.
+      # e2e/fixtures.ts points Electron at it (e2e/linux-keychain.cjs sets
+      # --password-store after Playwright's own preload, which sets it to basic).
       - name: Start a keychain for the end-to-end tests
         if: env.RUN == 'true' && runner.os == 'Linux'
         run: |
