@@ -442,6 +442,10 @@ test('the welcome page\'s three actions start their flows', async ({ app, page, 
   await expect(templates).toBeVisible();
   await templates.getByRole('button').filter({ hasNotText: /^Close$/ }).first().click();
   await expect.poll(() => pickerTitles(app).then((titles) => titles[2] ?? '')).toMatch(/^Where should the .+ workspace go\?$/);
+  // Dismissing the folder picker keeps the dialog open (R1), with no error.
+  await expect(templates).toBeVisible();
+  await expect(templates.getByRole('alert')).toHaveCount(0);
+  await templates.getByRole('button', { name: 'Close' }).click();
   await expect(templates).toHaveCount(0);
 
   // Open with a folder chosen: this empty window shows it.

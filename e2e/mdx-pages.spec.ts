@@ -329,8 +329,10 @@ test('an embedded table changed on disk: Use the file on disk drops the edit and
   await expect(embed.getByRole('textbox', { name: 'Task: Review' })).toHaveValue('Review');
   expect(db(workspace).map((row) => row.values.title)).toEqual(['Changed outside', 'Review', 'Ship']);
   // Editing goes on from the outside version.
+  // The cell's name follows its saved value, so blur by moving focus, not by a
+  // second locator that only matches once the edit has been committed.
   await embed.getByRole('textbox', { name: 'Task: Ship' }).fill('Shipped');
-  await embed.getByRole('textbox', { name: 'Task: Shipped' }).blur();
+  await page.keyboard.press('Tab');
   await expect.poll(() => db(workspace).map((row) => row.values.title)).toEqual(['Changed outside', 'Review', 'Shipped']);
 });
 
