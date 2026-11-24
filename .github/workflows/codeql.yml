@@ -7,9 +7,8 @@ name: CodeQL
 # Dependabot (.github/dependabot.yml) keeps both up to date.
 
 on:
-  push:
-    branches: [dev, main]
-  pull_request:
+  # Pushes and pull requests run it from ci.yml, before the platform jobs.
+  workflow_call:
   schedule:
     # Weekly, Monday 03:17 UTC: new queries find old code.
     - cron: '17 3 * * 1'

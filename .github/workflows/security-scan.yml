@@ -13,7 +13,8 @@ name: Security scan
 # downloaded tools to an exact version; Gitleaks also to its checksum.
 
 on:
-  pull_request:
+  # Pull requests and pushes run it from ci.yml, before the platform jobs.
+  workflow_call:
   schedule:
     # Weekly, Monday 04:23 UTC: new advisories appear for unchanged code.
     - cron: '23 4 * * 1'

@@ -81,9 +81,25 @@ jobs:
             echo "specs=$(printf '%s\n' "$changed" | node tools/affected-e2e.mjs)" >> "$GITHUB_OUTPUT"
           fi
 
+  # Security checks go first. Windows and Linux start only when both pass, so a
+  # failing scan costs no platform minutes.
+  static-analysis:
+    name: Static analysis
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+  security:
+    name: Security
+    uses: ./.github/workflows/security-scan.yml
+    permissions:
+      contents: read
+
   build:
     name: ${{ matrix.name }}
-    needs: changes
+    needs: [changes, static-analysis, security]
     # One platform is not cross-platform testing. Neuron leans on node-pty, a
     # filesystem watcher, spawned processes, keyboard chords, path handling and
     # Electron window behaviour -- every one of which diverges between Windows,
@@ -220,14 +236,13 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # macOS runners queue longest on GitHub, so macOS starts only once Windows and
-  # Linux have finished (passed or failed): a slow macOS queue no longer holds
-  # back the other two results. Same steps as the job above (YAML anchors).
+  # macOS runners queue longest on GitHub, so macOS starts last, and only when
+  # Windows and Linux have both passed: a slow macOS queue no longer holds back
+  # the other two results, and a failure elsewhere spends no macOS minutes. Same steps as the job above (YAML anchors).
   # The job is still named "macOS", so the required check is unchanged.
   build-macos:
     name: ${{ matrix.name }}
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:

@@ -113,8 +113,13 @@ check('CI keeps the three required platform names and pushes on test', () => {
   // macOS runs last (its runners queue longest), with the same env and steps.
   const mac = ci.jobs['build-macos'];
   assert.deepEqual(mac.strategy.matrix.include.map(p => p.name), ['macOS']);
+  // macOS only after Windows and Linux pass (no `if`, so the default success()).
   assert.deepEqual(mac.needs, ['changes', 'build']);
-  assert.match(mac.if, /!cancelled\(\)/);
+  assert.equal(mac.if, undefined);
+  // Windows and Linux only after the security checks pass.
+  assert.deepEqual(ci.jobs.build.needs, ['changes', 'static-analysis', 'security']);
+  assert.equal(ci.jobs['static-analysis'].uses, './.github/workflows/codeql.yml');
+  assert.equal(ci.jobs.security.uses, './.github/workflows/security-scan.yml');
   assert.deepEqual(mac.steps, ci.jobs.build.steps);
   assert.deepEqual(mac.env, ci.jobs.build.env);
   assert.deepEqual(ci.on.push.branches, ['main', 'test', 'dev']);
