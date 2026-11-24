@@ -622,7 +622,7 @@ html[data-theme='light'] .neuron-logo {
 .cnv-md-list li { margin: 0.1rem 0; }
 .cnv-md-code { font-family: var(--font-mono, monospace); font-size: 0.85em; background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 0.05rem 0.25rem; border-radius: 4px; }
 .cnv-md-pre { font-family: var(--font-mono, monospace); font-size: 0.78rem; background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 6px; padding: 0.4rem 0.5rem; margin: 0.2rem 0; overflow-x: auto; white-space: pre; }
-.cnv-md-quote { border-left: 2px solid var(--divider); padding-left: 0.5rem; color: var(--ink-secondary); margin: 0.15rem 0; }
+.cnv-md-quote { border-left: 1px solid var(--divider); padding-left: 0.5rem; color: var(--ink-secondary); margin: 0.15rem 0; }
 
 /* Edge targets while a panel or the sidebar is dragged. Opaque, so a label
    never sits on top of file names, and above the floating graph (an overlay)
