@@ -1,7 +1,7 @@
 # Neuron production-readiness roadmap
 
-Reconciled: 2026-11-24 · Code baseline: `972208d` (v0.5.0), plus the
-adversarial/crash tests and bounded fixes in this change.
+Reconciled: 2026-11-24 · Code baseline: `25bfb75` (v0.5.0, after #94 and #95), plus
+the adversarial/crash tests and bounded fixes in this change.
 Original inventory: 2026-07-11, `6b88bab`.
 
 This is a dated implementation inventory and rationale for remaining work,
@@ -11,9 +11,9 @@ implementation exists, not that every platform was exercised here.
 the proposed implementation is absent, even where its design exists.
 
 Evidence comes from local code, `git log --oneline -60` and the description of
-neuron-workspace/Neuron#94. This includes module-review batches
-(`543327e` through `37733ac`), the security sweep (`9b1c0f7`), Sync Phase 0
-(`3d32885`, `071392f`) and reliability fixes (`001fc0a`). Electron/E2E execution
+neuron-workspace/Neuron#94, which was squash-merged as `3a5917b`: the
+module-review batches, the security sweep, Sync Phase 0 and the reliability
+fixes all land there, so "#94" below means that commit. Electron/E2E execution
 was outside this reconciliation; coverage below is not a claim of fresh runs.
 
 Companion docs: `docs/plans/json-canvas-enhancements.md`, `docs/htmx-views.md`,
@@ -25,21 +25,21 @@ Companion docs: `docs/plans/json-canvas-enhancements.md`, `docs/htmx-views.md`,
 
 | Area | Location / evidence | State |
 | --- | --- | --- |
-| Main / preload | `src/main/main.ts`, `preload.ts`, `navigation.ts`; `543327e`, `9b1c0f7` | **Done** for current windows, IPC, watcher, PTY and proxy services, sender/argument checks and Electron 45.4.1. |
-| HTMX platform | `src/main/htmx/*`; `78a4937`; `tools/htmx-adversarial.test.mjs` | **Done** for plain `.html` views: capabilities, paths, boot/session tokens, content-bound trust, CSP and limits. |
+| Main / preload | `src/main/main.ts`, `preload.ts`, `navigation.ts`; #94 | **Done** for current windows, IPC, watcher, PTY and proxy services, sender/argument checks and Electron 45.4.1. |
+| HTMX platform | `src/main/htmx/*`; #94; `tools/htmx-adversarial.test.mjs` | **Done** for plain `.html` views: capabilities, paths, boot/session tokens, content-bound trust, CSP and limits. |
 | Shell / surface registry | `App.tsx`, `Workbench.tsx`, `EditorGroup.tsx`, `surfaces/index.ts` | **Partly done**: groups and docks exist; html/db/canvas/mmd/mermaid/csv surfaces and general file-kind routing exist; no recursive split tree. |
 | Canvas | `src/renderer/canvas/*`, `tools/canvas-model.test.mjs` | **Done** for current model, history and style extension; enhancements remain in the canvas plan. |
-| DB / CSV | `surfaces/DbSurface.tsx`, `components/db/*`, `lib/db.ts`, `lib/csv.ts`; `bd47f97`, `506cd9e` | **Done** for current multi-table DB, CSV and row windowing; Node and Electron specs exist. |
+| DB / CSV | `surfaces/DbSurface.tsx`, `components/db/*`, `lib/db.ts`, `lib/csv.ts`; `bd47f97`, #94 | **Done** for current multi-table DB, CSV and row windowing; Node and Electron specs exist. |
 | Markdown / MDX / Live | `MDXPreview.tsx`, `LiveEditing.tsx`, `InsertMenu.tsx`, `lib/sanitize-html.ts` | **Partly done**: sanitized rendering, explicit components and Live editing; constrained parser, not arbitrary MDX compilation. |
 | Frontmatter / source editor | `lib/frontmatter/*`, `components/properties/*`, `Editor.tsx` | **Done** for current round-trip properties and CodeMirror source editing. |
 | Commands / shortcuts | `lib/palette-commands.ts`, `lib/keybindings.ts`, `App.tsx` | **Partly done**: configurable chords and palette data; no unified scoped registry or versioned multi-binding schema. |
 | Layout | `lib/layout.ts`, `lib/tabs.ts`, `LayoutSwitcher.tsx` | **Partly done**: docks, saved arrangements, up to four editor groups in one direction; no recursive tree. |
 | Plugins | `plugins/host.tsx`, `plugins/builtin/*`, `docs/architecture/plugin-sandbox.md` | **Partly done**: built-ins are trusted renderer code; custom HTML uses the view sandbox. Folder-app plugins were removed. |
-| Search / graph | `lib/search.ts`, `lib/use-text-search.ts`, `lib/knowledge-graph.ts`; `7330b41` | **Partly done**: search UI, lazy text reads and incremental in-memory link graph; no persistent metadata-index service. |
-| Settings / secrets | `src/main/settings-file.ts`, `settings-schema.ts`, `secret-storage.ts`; `071392f` | **Done** for current validation/migration, damaged-file preservation, keychain storage and plugin-free Settings window. |
+| Search / graph | `lib/search.ts`, `lib/use-text-search.ts`, `lib/knowledge-graph.ts`; #94 | **Partly done**: search UI, lazy text reads and incremental in-memory link graph; no persistent metadata-index service. |
+| Settings / secrets | `src/main/settings-file.ts`, `settings-schema.ts`, `secret-storage.ts`; #94 | **Done** for current validation/migration, damaged-file preservation, keychain storage and plugin-free Settings window. |
 | Theme / design system | `lib/theme.ts`, `components/ui/*`, `index.css`, `tools/contrast.test.mjs` | **Partly done**: tokens, controls and contrast checks; whole-app adoption/accessibility incomplete. |
 | Governance | `LICENSE`, `NOTICE`, `.github/CODE_OF_CONDUCT.md`, issue/PR templates | **Done** for these artifacts; license is Apache-2.0, not MIT. |
-| CI / tests | `.github/workflows/ci.yml`, `security-scan.yml`, `codeql.yml`, `package.json`, `e2e/*` | **Done** for gate wiring. E2E resumed in `f62c3c3`; security gates precede Windows/Linux, then macOS (`972208d`). |
+| CI / tests | `.github/workflows/ci.yml`, `security-scan.yml`, `codeql.yml`, `package.json`, `e2e/*` | **Done** for gate wiring. Since #94, E2E runs and security gates precede Windows/Linux, then macOS. |
 
 ### Architectural debt remaining
 
@@ -76,13 +76,13 @@ named scope, not a claim that the entire subsystem has no remaining work.
 
 | Feature | State | Evidence / remaining scope | Priority / Milestone |
 | --- | --- | --- | --- |
-| Workspace open / switch / windows | Done | `workspace-windows.ts`, `recentRepos.ts`; `c78ff51`; missing-workspace Remove in `001fc0a` | Existing |
-| File / folder operations | Partly done | `workspace-rename.ts`, `FileActionDialog.tsx`; rename/move/link rewrites exist, folder deletion refused (`543327e`) | P1 / M4 |
+| Workspace open / switch / windows | Done | `workspace-windows.ts`, `recentRepos.ts`, missing-workspace Remove; #94 | Existing |
+| File / folder operations | Partly done | `workspace-rename.ts`, `FileActionDialog.tsx`; rename/move/link rewrites exist, folder deletion refused (#94) | P1 / M4 |
 | Preview tabs / bounded editor groups | Done | `lib/tabs.ts`, `EditorGroup.tsx`, `e2e/editor-groups.spec.ts` | Existing |
 | Recursive split tree / complete saved sessions | Not started | Flat `GroupsState`; `SavedLayout` stores arrangements only | P1 / M2 |
 | Source / split / reading / Live modes | Done | `EditorGroup.tsx`, `MDXPreview.tsx`, `LiveEditing.tsx` | Existing |
 | Markdown / constrained MDX components | Partly done | Sanitizer, explicit page components, `tools/mdx-security.test.mjs`; not a general compiler | P1 / M6 |
-| Internal links / rename safety | Done | `lib/wikilinks.ts`, `lib/link-rewrite.ts`, `workspace-rename.ts`; `7b0795d` | Existing |
+| Internal links / rename safety | Done | `lib/wikilinks.ts`, `lib/link-rewrite.ts`, `workspace-rename.ts`; #94 | Existing |
 | Backlinks / unlinked mentions | Not started | Graph references exist; no dedicated panel in `plugins/builtin/*` | P2 / M3 |
 | Outgoing links / outline / hover preview | Not started | No corresponding panel in `components/*` or `plugins/builtin/*` | P2 / M3 |
 | Tags / properties | Done | `Sidebar.tsx`, `lib/note-tags.ts`, `lib/frontmatter/*` | Existing |
@@ -97,7 +97,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
 | Daily notes / templates | Partly done | `plugins/builtin/daily-calendar.tsx`, `templates.ts`, `WorkspaceTemplatesDialog.tsx`; no general note-template expansion engine | P2 / M7 |
 | Recovery history | Done | `journal.ts`, `plugins/builtin/version-history.tsx`, `e2e/version-history.spec.ts` | Existing / M4 |
 | Note composer (split / merge) | Not started | Canvas-to-note conversion is not a general composer/link-update transaction | P2 / M4 |
-| Outside changes / crash recovery | Partly done | `001fc0a`, `save-file.ts`, `FileNotices.tsx`, crash tests; limitations below | P0 / M4 |
+| Outside changes / crash recovery | Partly done | #94, `save-file.ts`, `FileNotices.tsx`, crash tests; limitations below | P0 / M4 |
 | General import / export | Not started | Opening files and Chrome-cookie import are not a note conversion pipeline | P2 / M7 |
 | Public CLI | Not started | `workspace-argv.ts` opens workspaces, not a public command/service CLI | P3 / M6 |
 | Custom extension sandbox | Partly done | HTML sandbox exists; built-ins remain trusted, no native third-party isolation | P1 / M6 |
@@ -136,7 +136,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
 
 - **Done:** drag/reorder/split editor groups, preview tabs, movable dock groups,
   saved shell arrangements and shared document writers (`lib/tabs.ts`,
-  `lib/layout.ts`, `App.tsx`, `6b4ecc5`).
+  `lib/layout.ts`, `App.tsx`, #94).
 - **Not started:** recursive mixed-orientation tree, stable layout-node IDs,
   geometric focus navigation, complete saved editor sessions, missing-file
   placeholders and versioned tree migrations. Current `removeMissingAll`
@@ -151,7 +151,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
 
 - **Done:** alias/path/heading/block-aware wiki-link resolution, Live completion,
   rename/move rewrites, workspace graph and a local graph around the active
-  note with a depth setting (`7b0795d`, `7330b41`, `lib/wikilinks.ts`,
+  note with a depth setting (#94, `lib/wikilinks.ts`,
   `components/wiki-completion.tsx`, `KnowledgeGraph.local` in
   `lib/knowledge-graph.ts`, used by `SigmaGraph.tsx`).
 - **Partly done:** palette file selection and in-memory reference index.
@@ -166,7 +166,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
   userData, outside the workspace. `.neuron/journal` is ordinary workspace data;
   the actual recovery store has no view API route.
 - **Done:** queued nonblocking saves, temp fsync, retries, handle checks and
-  outside-change checks before replacement (`3d32885`, `001fc0a`, `save-file.ts`,
+  outside-change checks before replacement (#94, `save-file.ts`,
   `safe-fs.ts`). Watcher quiet periods and embedded-table conflict notices exist
   (`workspace-watcher.ts`, `FileNotices.tsx`).
 - **Done:** disk/write errors, rename races, byte preservation and interruption
@@ -187,7 +187,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
 
 - **Done:** structured search/filter/ranking helpers, UI, bounded lazy text
   reads, stale-result cancellation and change refresh (`lib/search.ts`,
-  `lib/use-text-search.ts`, `7330b41`).
+  `lib/use-text-search.ts`, #94).
 - **Done:** scale/graph benchmark tools and large-table row windowing
   (`tools/scale-benchmark.mjs`, `graph-benchmark.mjs`, `lib/row-window.ts`).
 - **Not started:** persistent SQLite metadata index/API described in
@@ -205,7 +205,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
   refused (400) instead of being persisted or failing with a 500.
 - **Done:** constrained MDX/sanitization and malicious-content tests
   (`tools/mdx-security.test.mjs`, `sanitize-html.test.mjs`).
-- **Done:** security sweep, Electron 45 and scanners (`9b1c0f7`,
+- **Done:** security sweep, Electron 45 and scanners (#94,
   `security-scan.yml`, `codeql.yml`). Controls are not proof of no vulnerabilities.
 - **Partly done:** extension isolation. HTML replaces removed folder apps;
   first-party plugins and terminal remain trusted. Slash insertion exists in
@@ -250,7 +250,7 @@ named scope, not a claim that the entire subsystem has no remaining work.
 
 - **Done (Phase 0):** guarded durable saves, required unattended capture,
   separate retention budget, conflict copies/trash deletes, settings validation
-  and migration, portable paths and plugin-free Settings (`3d32885`, `071392f`,
+  and migration, portable paths and plugin-free Settings (#94,
   `journal.ts`, `portable-path.ts`, `settings-schema.ts`).
 - **Not started (transport):** utility-process sync, encrypted manifests/chunks,
   key lifecycle, selective sync and local-folder/cloud/P2P/server backends.
@@ -266,10 +266,10 @@ named scope, not a claim that the entire subsystem has no remaining work.
 | R1 | Stored XSS / rendered content | Partly done | `sanitize-html.ts`, `mdx-security.test.mjs`, `csp.test.mjs` | New render paths need tests. The reliability batch's “R1” save race is a separate use of this label. |
 | R2 | View token/capability escalation | Done for current controls/tests | `htmx-adversarial.test.mjs`, `htmx-views.test.mjs`, `e2e/view-trust.spec.ts` | Node server tests cannot certify Electron sandbox behavior. |
 | R3 | Trusted plugin / PTY execution | Partly done | `plugins/host.tsx`, `main.ts`, `docs/architecture/plugin-sandbox.md` | Built-ins remain privileged; PTY runs a real shell. |
-| R4 | Save/watch/crash data loss | Partly done | `001fc0a`, `save-file.ts`, `journal.ts`, `crash-recovery.test.mjs` | Typing fallback, empty conflict reservations, orphan temps and accepted path race; see M4. |
+| R4 | Save/watch/crash data loss | Partly done | #94, `save-file.ts`, `journal.ts`, `crash-recovery.test.mjs` | Typing fallback, empty conflict reservations, orphan temps and accepted path race; see M4. |
 | R5 | Unsigned artifact/update trust | Partly done | `updater.ts`, `release.yml` | Checksums/provenance and signing wiring exist; signing credentials/results require separate evidence. |
 | R6 | Settings/layout corruption | Partly done | `settings-file.ts`, `settings-schema.ts`, `lib/layout.ts` and tests | Settings preservation/migration exist; future tree layout needs its own migration. |
-| R7 | CI without regression gates | Done for wiring | `ci.yml`, `972208d`, `f62c3c3` | Docs-only skips/affected E2E are intentional; runtime results must pass. |
+| R7 | CI without regression gates | Done for wiring | `ci.yml`, #94 | Docs-only skips/affected E2E are intentional; runtime results must pass. |
 | R8 | Prototype keys / pathological JSON/YAML | Partly done | Frontmatter validation, `settings-schema.test.mjs`, bounded view-body validation and adversarial tests | Targeted cases are not comprehensive parser fuzzing. |
 
 ---
