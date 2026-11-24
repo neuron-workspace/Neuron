@@ -198,6 +198,37 @@ they drifted: the identity was filled in on one side and still a
 `REPLACE.WITH...` placeholder on the other, and the appx built happily with
 placeholders in its manifest. If you change packaging, change `package.json`.
 
+### Electron Fuses
+
+`build.electronFuses` in `package.json` flips switches compiled into the
+Electron binary. electron-builder writes them after packing and before
+signing, on every platform, so the signature covers them. Read them back
+from a build with `npx @electron/fuses read --app <executable>`.
+
+| Fuse | Set to | Why |
+| --- | --- | --- |
+| `enableNodeOptionsEnvironmentVariable` | off | `NODE_OPTIONS` would let any local process inject code into the main process |
+| `enableNodeCliInspectArguments` | off | `--inspect` would attach a debugger to the main process |
+| `onlyLoadAppFromAsar` | on | App code loads from `app.asar` only, never from a loose `app/` folder |
+| `enableEmbeddedAsarIntegrityValidation` | on | The `app.asar` header hash is checked at startup (Windows and macOS; Linux has no support for it) |
+| `enableCookieEncryption` | on | Cookies on disk, including Chrome sign-ins imported into the in-app browser, are encrypted with the OS key |
+| `runAsNode` | default (on) | node-pty's Windows terminal kill calls `child_process.fork()`, which throws with this fuse off |
+| `grantFileProtocolExtraPrivileges` | default (on) | The renderer loads from `app.asar` through `file://`, which fails with this fuse off |
+
+`tools/fuses.test.mjs` (in `npm test`) pins these values. Pass it an
+executable to check a build: `node tools/fuses.test.mjs "release/test/win-unpacked/Neuron Test.exe"`.
+
+Cookie encryption is one-way. Cookies saved before it was enabled still read,
+and new ones are stored encrypted. Turning the fuse off again would leave the
+store unreadable.
+
+With the inspector fused off, Playwright's `_electron.launch` cannot drive a
+packaged build: it attaches through `--inspect`. The packaged smoke test
+starts the executable with Chromium's `--remote-debugging-port` instead,
+which no fuse controls, and attaches to the renderer over the DevTools
+protocol. The e2e suite runs the unpackaged Electron from `node_modules`,
+which has no fuses flipped, so it is unaffected.
+
 The package version must be plain numeric (`0.4.3`), with no prerelease
 suffix. This is why the version is `0.4.3` rather than `0.4.3-beta.1`; the
 GitHub release can still be marked as a prerelease independently.

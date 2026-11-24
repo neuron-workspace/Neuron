@@ -109,7 +109,7 @@ Generated output is written to `dist/` and `release/`; both directories are clea
 - Plugin credentials and settings are stored in Electron's local user-data directory.
 - The renderer runs with context isolation enabled and Node integration disabled.
 
-Review [the architecture](docs/architecture.md) for process boundaries and [the security policy](.github/SECURITY.md) for vulnerability reporting.
+Review [the architecture](docs/architecture.md) for process boundaries, [the security review](docs/security/SECURITY_AUDIT_REPORT.md) for verified controls and known residual risks, and [the security policy](.github/SECURITY.md) for vulnerability reporting.
 
 ## Documentation
 
@@ -119,6 +119,7 @@ Review [the architecture](docs/architecture.md) for process boundaries and [the 
 | [Architecture](docs/architecture.md) | Electron processes, storage, editor, rendering, and plugin boundaries |
 | [Plugin API](docs/plugin-api.md) | Manifests, panels, commands, runtime capabilities, and examples |
 | [Distribution](docs/distribution.md) | GitHub Actions, Releases, Pages, signing, and release checklist |
+| [Security review](docs/security/SECURITY_AUDIT_REPORT.md) | Verified controls, known residual risks, Electron Fuses, threat model, and IPC matrix |
 | [Product brief](docs/product.md) | Audience, goals, constraints, and product principles |
 | [Design system](docs/design-system.md) | Visual tokens, components, motion, and accessibility |
 | [Troubleshooting](docs/troubleshooting.md) | Common development, packaging, and release problems |
