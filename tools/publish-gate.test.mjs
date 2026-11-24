@@ -109,7 +109,14 @@ check('Store redelivery is guarded and downloads the retained artifact', () => {
 });
 
 check('CI keeps the three required platform names and pushes on test', () => {
-  assert.deepEqual(ci.jobs.build.strategy.matrix.include.map(p => p.name), ['Windows', 'macOS', 'Linux']);
+  assert.deepEqual(ci.jobs.build.strategy.matrix.include.map(p => p.name), ['Windows', 'Linux']);
+  // macOS runs last (its runners queue longest), with the same env and steps.
+  const mac = ci.jobs['build-macos'];
+  assert.deepEqual(mac.strategy.matrix.include.map(p => p.name), ['macOS']);
+  assert.deepEqual(mac.needs, ['changes', 'build']);
+  assert.match(mac.if, /!cancelled\(\)/);
+  assert.deepEqual(mac.steps, ci.jobs.build.steps);
+  assert.deepEqual(mac.env, ci.jobs.build.env);
   assert.deepEqual(ci.on.push.branches, ['main', 'test', 'dev']);
   assert.equal(ci.jobs.changes.name, 'Detect changes');
   for (const output of ['code', 'scope', 'specs']) assert.ok(ci.jobs.changes.outputs[output]);
