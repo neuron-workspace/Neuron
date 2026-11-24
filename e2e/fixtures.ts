@@ -27,11 +27,55 @@ export interface AppFixture {
   page: Page;
   workspace: string;
   prepareWorkspace: ((directory: string) => void | Promise<void>) | null;
+  /** Extra Chromium switches for this test's app, e.g. `--disable-gpu` to see the app without WebGL. */
+  launchArgs: string[];
   launchTiming: { startedAt: number };
+}
+
+/** The GPU state is logged once per worker, not once per test. */
+let gpuLogged = false;
+
+/**
+ * Software WebGL, but only where there is no hardware to use.
+ *
+ * The graph renders through Sigma, which needs a WebGL context. CI's Linux
+ * runner has a display (xvfb) but no GPU, and the macOS runner is a VM with no
+ * GPU either, so `new Sigma(...)` threw there and the app showed its "needs
+ * WebGL" message -- the graph tests failed on both while passing on the Windows
+ * machine they were written on.
+ *
+ * Not forced on a developer machine, and not on Windows CI either -- that runner
+ * already has a working GL path, which is why the graph tests passed there while
+ * both others failed. Turning it on anyway bought nothing and cost four minutes
+ * a run, and the palette race in T-012 started losing inside the wider window.
+ *
+ * SwiftShader draws the same pixels on a different schedule, so it goes only
+ * where there is no alternative. Supplying a GPU that a runner lacks is a
+ * different thing from changing how the app renders for everyone who works on
+ * it, and none of this reaches the shipped app: these are test-launch switches.
+ *
+ * Two SwiftShader modes. `swiftshader` stands SwiftShader in for the whole GPU,
+ * which is what Linux has always used. On the macOS runner that stopped giving
+ * WebGL with Electron 45 (Chromium 156) though the same three switches worked on
+ * Electron 42, so macOS uses `swiftshader-webgl`: Chromium's documented opt-in
+ * for software WebGL alone, the replacement for the automatic fallback it
+ * removed (docs/gpu/swiftshader.md). Both need `--enable-unsafe-swiftshader`.
+ *
+ * `NEURON_SOFTWARE_GL=1` forces the platform's mode anywhere, and
+ * `NEURON_SOFTWARE_GL=webgl` forces `swiftshader-webgl`, which is how a runner's
+ * failure is reproduced on a Windows desktop in a minute rather than a
+ * ten-minute push and wait.
+ */
+function softwareGlArgs(): string[] {
+  const forced = process.env.NEURON_SOFTWARE_GL;
+  if (!forced && !(process.env.CI && process.platform !== 'win32')) return [];
+  const angle = forced === 'webgl' || process.platform === 'darwin' ? 'swiftshader-webgl' : 'swiftshader';
+  return ['--use-gl=angle', `--use-angle=${angle}`, '--enable-unsafe-swiftshader'];
 }
 
 export const test = base.extend<AppFixture>({
   prepareWorkspace: [null, { option: true }],
+  launchArgs: [[], { option: true }],
   launchTiming: async ({}, use) => { await use({ startedAt: 0 }); },
   workspace: async ({ prepareWorkspace }, use) => {
     // Sweep ONCE per run, not per test. Teardown deletes nothing (below), so
@@ -105,7 +149,7 @@ export const test = base.extend<AppFixture>({
     } catch { /* the sweep collects it */ }
   },
 
-  app: async ({ workspace, launchTiming }, use) => {
+  app: async ({ workspace, launchTiming, launchArgs }, use) => {
     // Pre-seed settings so the app opens our copy instead of running its
     // first-launch demo-repo discovery, which would reach the real one.
     const userData = join(workspace, '..', 'userData');
@@ -117,6 +161,9 @@ export const test = base.extend<AppFixture>({
 
     const background = process.env.NEURON_E2E_VISIBLE !== '1';
     const linuxCi = !!process.env.CI && process.platform === 'linux';
+    // A test that takes the GPU away is testing the app without WebGL; giving
+    // it SwiftShader back would test nothing.
+    const softwareGl = launchArgs.includes('--disable-gpu') ? [] : softwareGlArgs();
     launchTiming.startedAt = performance.now();
     const app = await electron.launch({
       args: [
@@ -136,31 +183,11 @@ export const test = base.extend<AppFixture>({
         ...(linuxCi ? ['-r', join(repoRoot, 'e2e', 'linux-keychain.cjs')] : []),
         join(repoRoot, 'dist', 'main', 'main.js'),
         `--user-data-dir=${userData}`,
-        // Software WebGL, but only where there is no hardware to use.
-        //
-        // The graph renders through Sigma, which needs a WebGL context. CI's
-        // Linux runner has a display (xvfb) but no GPU, and the macOS runner is
-        // no better, so `new Sigma(...)` threw there and the app fell back to
-        // its "WebGL is unavailable" state -- seven graph tests failed on both
-        // while passing on the Windows machine they were written on.
-        //
-        // Not forced on a developer machine, and not on Windows CI either --
-        // that runner already has a working GL path, which is why the graph
-        // tests passed there while both others failed. Turning it on anyway
-        // bought nothing and cost four minutes a run, and the palette race in
-        // T-012 started losing inside the wider window.
-        //
-        // SwiftShader draws the same pixels on a different schedule, so it goes
-        // only where there is no alternative. Supplying a GPU that a runner
-        // lacks is a different thing from changing how the app renders for
-        // everyone who works on it.
-        // `NEURON_SOFTWARE_GL=1` forces it anywhere, which is how the Linux
-        // failure was reproduced and fixed on a Windows desktop in a minute
-        // rather than a ten-minute push and wait.
-        ...(process.env.NEURON_SOFTWARE_GL === '1'
-          || (process.env.CI && process.platform !== 'win32')
-          ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-          : []),
+        // Software WebGL where a runner has no GPU; see softwareGlArgs. GPU
+        // switches are not among those Playwright's preload appends, so these
+        // reach Chromium as given (the GPU log below says what it made of them).
+        ...softwareGl,
+        ...launchArgs,
         // Windows marks an off-screen window as occluded and Chromium then stops
         // painting it, which would stall every test waiting on a frame.
         ...(background ? ['--disable-features=CalculateNativeWinOcclusion'] : []),
@@ -184,6 +211,29 @@ export const test = base.extend<AppFixture>({
       store.__openExternal = [];
       shell.openExternal = async (url: string) => { store.__openExternal!.push(url); };
     });
+
+    // Say once which GL this run has, where it chose software GL: a runner
+    // without WebGL fails every graph test with the same "needs WebGL" message,
+    // and this line says whether the switches arrived and what Chromium did
+    // with them, without another push to find out.
+    if (!gpuLogged && softwareGl.length) {
+      gpuLogged = true;
+      const switches = await app.evaluate(({ app: electronApp }) => ({
+        useGl: electronApp.commandLine.getSwitchValue('use-gl'),
+        useAngle: electronApp.commandLine.getSwitchValue('use-angle'),
+        unsafeSwiftShader: electronApp.commandLine.hasSwitch('enable-unsafe-swiftshader'),
+      }));
+      // Asked of the page, not of getGPUFeatureStatus(): with swiftshader-webgl
+      // that reports webgl "disabled_off" while the page draws WebGL fine.
+      const first = await app.firstWindow();
+      await first.waitForLoadState('domcontentloaded', { timeout: 90_000 });
+      const webgl = await first.evaluate(() => {
+        const gl = document.createElement('canvas').getContext('webgl2');
+        const info = gl?.getExtension('WEBGL_debug_renderer_info');
+        return gl ? (info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'available') : 'unavailable';
+      }).catch((error: unknown) => `not checked: ${String(error)}`);
+      console.log(`[gpu] ${JSON.stringify({ ...switches, webgl })}`);
+    }
 
     await use(app);
 

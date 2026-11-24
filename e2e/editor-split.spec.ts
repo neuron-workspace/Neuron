@@ -82,10 +82,21 @@ test('the same note in two groups stays in step, and a tab splits right from its
 
 // Split shows source and preview side by side from 1100 CSS pixels (App.tsx `wide`).
 // Set in window pixels, so the CSS width is checked against that line, not for equality.
+//
+// A window cannot always be as wide as asked. macOS keeps a window inside its
+// screen, and the macOS runner's screen is 1024 by 768: a 1320 window there came
+// out 1024 wide (mdx-pages' 1500 by 1000 screenshot is 1024 by 677), so the app
+// rightly showed the narrow Source/Preview switch and the wide checks failed. The
+// line is in CSS pixels, so the window takes what the screen allows and the zoom
+// makes up the rest: the page is `width` CSS pixels wide either way.
 async function setWindowWidth(app: ElectronApplication, page: Page, width: number) {
-  await app.evaluate(({ BrowserWindow }, w) => {
+  await app.evaluate(({ BrowserWindow, screen }, w) => {
     const win = BrowserWindow.getAllWindows().find((candidate) => !candidate.webContents.getURL().includes('window=settings'));
-    win?.setContentSize(w, 820);
+    if (!win) return;
+    const area = screen.getDisplayMatching(win.getBounds()).workAreaSize;
+    const fits = Math.min(w, area.width);
+    win.webContents.setZoomFactor(fits / w);
+    win.setContentSize(fits, Math.min(820, area.height));
   }, width);
   await expect.poll(() => page.evaluate(() => window.innerWidth >= 1100)).toBe(width >= 1100);
 }

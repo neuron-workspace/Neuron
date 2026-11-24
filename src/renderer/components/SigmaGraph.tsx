@@ -19,6 +19,16 @@ const readColors = () => {
   return { accent: get('--accent'), ink: get('--ink'), label: get('--ink-secondary'), muted: get('--ink-muted'), faint: get('--surface-hover'), edge: fade(get('--ink-muted'), 0.55) };
 };
 
+/** Whether this renderer can make a WebGL context at all, which Sigma needs. */
+const webglAvailable = () => {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(canvas.getContext('webgl2') ?? canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+};
+
 export default function SigmaGraph(props: GraphCanvasProps) {
   const host = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -39,6 +49,8 @@ export default function SigmaGraph(props: GraphCanvasProps) {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
+  // Set when the renderer itself could not be made; the graph cannot be shown.
+  const [unavailable, setUnavailable] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const hovered = useRef<string | null>(null);
   const relatedNodes = useRef(new Set<string>());
@@ -134,7 +146,13 @@ export default function SigmaGraph(props: GraphCanvasProps) {
       },
     });
     } catch {
-      setError('Connections could not start. WebGL is unavailable.');
+      // Sigma draws only through WebGL. A computer without it (no GPU and no
+      // software fallback, which Chromium no longer turns on by itself) cannot
+      // show the graph at all, so say that plainly in its place instead of an
+      // empty canvas and a hint that links will appear. Everything else here
+      // already stands down while `renderer` is null.
+      host.current.replaceChildren();
+      setUnavailable(webglAvailable() ? 'The graph could not start.' : "The graph needs WebGL, which isn't available on this computer.");
       return;
     }
     renderer.current = sigma;
@@ -276,8 +294,9 @@ export default function SigmaGraph(props: GraphCanvasProps) {
       {matches.slice(0, 30).map(id => <button key={id} className="block w-full truncate rounded p-1 text-left hover:bg-[var(--surface-hover)]" aria-label={`Open ${model.current.graph.getNodeAttribute(id, 'label')}`} onClick={() => { latest.current.onSelectNote(id); focus(id); setSearching(false); setQuery(''); }}>{model.current.graph.getNodeAttribute(id, 'label')}</button>)}
       {!matches.length && <p role="status">No matching notes.</p>}
     </div>}
-    {emptyAround && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">Open a note to see what it links to.</p>}
-    {!emptyAround && !model.current.graph.order && key && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">{props.emptyHint ?? 'Add notes and links to see connections.'}</p>}
+    {unavailable && <p role="alert" data-graph-unavailable className="pointer-events-none absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-xs text-[var(--ink-muted)]">{unavailable}</p>}
+    {!unavailable && emptyAround && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">Open a note to see what it links to.</p>}
+    {!unavailable && !emptyAround && !model.current.graph.order && key && <p className="pointer-events-none absolute inset-x-4 top-1/2 text-center text-xs text-[var(--ink-muted)]">{props.emptyHint ?? 'Add notes and links to see connections.'}</p>}
     {error && <p role="alert" className="absolute bottom-2 inset-x-2 bg-[var(--surface)] text-xs">{error}</p>}
     <dialog ref={dialog} aria-label="Connection settings" className="m-auto w-[320px] max-w-[90vw] max-h-[85vh] flex-col overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-0 text-xs text-[var(--ink)] backdrop:bg-black/40 open:flex">
       <div className="shrink-0 px-4 pb-1 pt-4"><strong className="flex items-center gap-2"><Share2 className="h-4 w-4 shrink-0 text-[var(--ink-muted)]" aria-hidden="true" />Connections</strong></div>
