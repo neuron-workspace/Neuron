@@ -108,9 +108,9 @@ jobs:
       RUN: ${{ needs.changes.outputs.code }}
       SCOPE: ${{ needs.changes.outputs.scope }}
       SPECS: ${{ needs.changes.outputs.specs }}
-      # End-to-end tests are paused during the security review (owner decision,
-      # 2026-11-24). Set to 'false' to run them again.
-      E2E_PAUSED: 'true'
+      # Set to 'true' to pause end-to-end tests (they were paused during the
+      # 2026-11 security review and resumed once Sync Phase 0 was done).
+      E2E_PAUSED: 'false'
     steps: &build-steps
       - name: Skip for a documentation-only change
         if: env.RUN != 'true'
