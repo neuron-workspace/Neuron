@@ -12,10 +12,16 @@ async function openTerminal(app: ElectronApplication, page: Page) {
 async function dragToRight(page: Page, source: Locator) {
   const box = await source.boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  const cx = box!.x + box!.width / 2;
+  const cy = box!.y + box!.height / 2;
+  // Start the drag towards the middle of the window: a tab in the bottom dock
+  // sits near the window's edge, and on Linux (X11) a pointer that leaves the
+  // window stops sending moves, so the drag never starts.
+  const [vw, vh] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+  await page.mouse.move(cx, cy);
   await page.mouse.down();
   try {
-    await page.mouse.move(box!.x + box!.width / 2 + 15, box!.y + box!.height / 2 + 15, { steps: 5 });
+    await page.mouse.move(cx + (cx < vw / 2 ? 15 : -15), cy + (cy < vh / 2 ? 15 : -15), { steps: 5 });
     const zone = page.locator('[data-dock-zone="right"]');
     await expect(zone).toHaveAttribute('data-visible', 'true');
     // The right-hand band of the workbench is the right dock's target. The slot
@@ -75,10 +81,16 @@ async function dragToDock(page: Page, source: Locator, dock: 'left' | 'right' | 
   await page.waitForTimeout(400);
   const box = await source.boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  const cx = box!.x + box!.width / 2;
+  const cy = box!.y + box!.height / 2;
+  // Start the drag towards the middle of the window: a tab in the bottom dock
+  // sits near the window's edge, and on Linux (X11) a pointer that leaves the
+  // window stops sending moves, so the drag never starts.
+  const [vw, vh] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+  await page.mouse.move(cx, cy);
   await page.mouse.down();
   try {
-    await page.mouse.move(box!.x + box!.width / 2 + 15, box!.y + box!.height / 2 + 15, { steps: 5 });
+    await page.mouse.move(cx + (cx < vw / 2 ? 15 : -15), cy + (cy < vh / 2 ? 15 : -15), { steps: 5 });
     const zone = page.locator(`[data-dock-zone="${dock}"]`);
     await expect(zone).toHaveAttribute('data-visible', 'true');
     const area = await page.locator('[data-dragging]').boundingBox();
