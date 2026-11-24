@@ -1,0 +1,96 @@
+{
+  "note": "cdc key = crypto_kdf(keys.json workspaceKey, id 4, \"nsyncv1_\"). Input = XChaCha20 keystream under BLAKE2b-256(\"cdc-input-5mib\"), 5 MiB; then the same with byte 0x5a inserted at 2.5 MiB.",
+  "cdcKey": "89caeaca322de06316238497cd506714a1f913c1dadd95ab39ad2152de3253e7",
+  "gearTableHash": "a9f9bce69db1e69ca0d1ee98eefe30b9d2bc60c21712d28298d1ea3a0b263c95",
+  "gearTableFirst8": [
+    2864774698,
+    1777927094,
+    2987989274,
+    3998837611,
+    3608346974,
+    4033726352,
+    4107412094,
+    2735998461
+  ],
+  "inputLength": 5242880,
+  "inputHash": "6b8c674d1010e161aacebf129103351ab1ec7b7716d8e5dc4f8e636194ad071f",
+  "insertOffset": 2621440,
+  "insertByte": 90,
+  "boundaries": [
+    [
+      0,
+      526636
+    ],
+    [
+      526636,
+      616504
+    ],
+    [
+      1143140,
+      695330
+    ],
+    [
+      1838470,
+      339756
+    ],
+    [
+      2178226,
+      361039
+    ],
+    [
+      2539265,
+      662456
+    ],
+    [
+      3201721,
+      686511
+    ],
+    [
+      3888232,
+      716862
+    ],
+    [
+      4605094,
+      637786
+    ]
+  ],
+  "insertedBoundaries": [
+    [
+      0,
+      526636
+    ],
+    [
+      526636,
+      616504
+    ],
+    [
+      1143140,
+      695330
+    ],
+    [
+      1838470,
+      339756
+    ],
+    [
+      2178226,
+      361039
+    ],
+    [
+      2539265,
+      662457
+    ],
+    [
+      3201722,
+      686511
+    ],
+    [
+      3888233,
+      716862
+    ],
+    [
+      4605095,
+      637786
+    ]
+  ],
+  "changedChunks": 1
+}

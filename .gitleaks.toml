@@ -1,0 +1,10 @@
+# Gitleaks: every default rule, plus one exemption.
+[extend]
+useDefault = true
+
+# Known-answer vectors for the sync format (docs/sync/format-v1.md). The keys in
+# them are fixed, public test values that the tests derive or check byte for byte;
+# no real key is ever written there.
+[[allowlists]]
+description = "sync format v1 test vectors"
+paths = ['''^tools[/\\]fixtures[/\\]sync-v1[/\\][^/\\]+\.json$''']

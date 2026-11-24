@@ -455,6 +455,11 @@ electron-builder can reach from `dependencies`. `zod` is a peer dependency of
 the AI SDK, npm hoists peers to the root, so it resolved everywhere except in
 the thing users download.
 
+WASM runtime dependencies: `sql.js` reads `sql-wasm.wasm` from a file path,
+so that file is in `asarUnpack`. `libsodium-wrappers-sumo` (pinned 0.8.4, sync
+crypto, D40) inlines its WASM in the JavaScript, so it loads from inside
+`app.asar` and needs no unpack rule.
+
 Three layers now, cheapest first. Each catches something the one above it
 cannot:
 
