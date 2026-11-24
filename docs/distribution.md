@@ -6,8 +6,9 @@ GitHub Pages cannot execute or install an Electron application. It hosts the pub
 
 Features merge into `dev`, then move through `test` to `main`. Beta tags
 (`vX.Y.Z-beta.N`) are cut on `test`; stable tags (`vX.Y.Z`) are cut on `main`.
-CI on `dev` runs affected e2e specs without packaged smoke; `test` and `main`
-run all e2e specs and packaged smoke on Windows, macOS and Linux.
+CI on `dev` runs only the integration e2e specs of the affected features
+(`e2e/integration`), without packaged smoke; `test` and `main` run the full
+e2e suite and packaged smoke on Windows, macOS and Linux.
 
 To redeliver an existing stable release without rebuilding, open Actions →
 *Microsoft Store* or *Publish to package managers* → Run workflow, select

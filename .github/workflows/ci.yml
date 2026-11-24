@@ -9,14 +9,22 @@ permissions:
   contents: read
 
 jobs:
-  # Code moves dev -> test -> main.
+  # Code moves dev -> test -> main (D44).
   #
-  # - test and main (pushes, and pull requests into them): everything, on all
-  #   three platforms.
-  # - dev: typecheck, unit tests and build on all three platforms. Only the
-  #   e2e specs for the changed area run (tools/affected-e2e.mjs), and there is
-  #   no packaged smoke test. A change to shared code still runs every spec.
+  # - test and main (pushes, and pull requests into them): the full suite on
+  #   all three platforms -- every e2e spec, detailed and integration alike
+  #   (`npm run test:e2e`), and the packaged smoke test.
+  # - dev (pushes, and pull requests into it): typecheck, unit tests and build
+  #   on all three platforms, plus only the integration specs
+  #   (e2e/integration/<feature>.spec.ts) for the features the change touches,
+  #   chosen by tools/affected-e2e.mjs. Shared or unmapped code runs every
+  #   integration spec, never the detailed ones, and there is no packaged smoke
+  #   test. A failure the full suite finds at dev -> test is fixed on a branch
+  #   into dev.
   # - A documentation-only pull request skips every step.
+  #
+  # The `specs` output says which: `full` (the full suite), `all` (every
+  # integration spec), a list of integration specs, or empty (none).
   #
   # This is not `paths-ignore`: Windows, macOS and Linux are required checks,
   # and a workflow that never starts never reports them, so the pull request
@@ -51,16 +59,20 @@ jobs:
         run: |
           scope=affected
           if { [ "$EVENT" = push ] && { [ "$REF" = refs/heads/main ] || [ "$REF" = refs/heads/test ]; }; } ||
-             { [ "$EVENT" = pull_request ] && { [ "$BASE_REF" = main ] || [ "$BASE_REF" = test ]; }; } ||
-             { [ "$EVENT" = push ] && [ "$REF" = refs/heads/dev ] && [[ "$BEFORE" =~ ^0+$ ]]; }; then
+             { [ "$EVENT" = pull_request ] && { [ "$BASE_REF" = main ] || [ "$BASE_REF" = test ]; }; }; then
             scope=full
           fi
           changed=
+          unknown=
           if [ "$EVENT" = pull_request ]; then
             changed=$(git diff --name-only "$BASE...$HEAD")
           elif [ "$scope" = affected ]; then
-            # A force-push can leave BEFORE unreachable; test everything then.
-            changed=$(git diff --name-only "$BEFORE..$AFTER") || scope=full
+            # The first push of the branch has no BEFORE, and a force-push can
+            # leave it unreachable: nothing says what changed, so run every
+            # integration spec (still not the full suite, which is for test and main).
+            if [[ "$BEFORE" =~ ^0+$ ]]; then unknown=1
+            else changed=$(git diff --name-only "$BEFORE..$AFTER") || unknown=1
+            fi
           fi
           echo "$changed"
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
@@ -76,6 +88,8 @@ jobs:
             echo code=true >> "$GITHUB_OUTPUT"
           fi
           if [ "$scope" = full ]; then
+            echo specs=full >> "$GITHUB_OUTPUT"
+          elif [ -n "$unknown" ]; then
             echo specs=all >> "$GITHUB_OUTPUT"
           else
             echo "specs=$(printf '%s\n' "$changed" | node tools/affected-e2e.mjs)" >> "$GITHUB_OUTPUT"
@@ -200,14 +214,21 @@ jobs:
           });
           EOF
           timeout 90 xvfb-run --auto-servernum npx electron "$RUNNER_TEMP/keychain-probe.cjs" --no-sandbox --password-store=gnome-libsecret --enable-logging=stderr --vmodule='*os_crypt*=2,*key_storage*=2,*libsecret*=2' > "$RUNNER_TEMP/keychain-probe.log" 2>&1 && echo "electron exit: 0" || echo "electron exit: $?"; tail -n 80 "$RUNNER_TEMP/keychain-probe.log"
-      - name: Run Electron end-to-end tests
-        if: env.RUN == 'true' && env.SPECS == 'all' && env.E2E_PAUSED != 'true'
+      # test and main: the full suite, detailed specs and integration specs.
+      - name: Run the full end-to-end suite
+        if: env.RUN == 'true' && env.SPECS == 'full' && env.E2E_PAUSED != 'true'
         run: ${{ matrix.wrap }} npm run test:e2e
-      - name: Run affected Electron end-to-end tests
-        if: env.RUN == 'true' && env.SPECS != 'all' && env.SPECS != '' && env.E2E_PAUSED != 'true'
+      # dev, shared or unmapped code: every integration spec, never the detailed ones.
+      - name: Run all integration end-to-end tests
+        if: env.RUN == 'true' && env.SPECS == 'all' && env.E2E_PAUSED != 'true'
+        shell: bash
+        run: npm run build:main && ${{ matrix.wrap }} npm run test:e2e:integration
+      # dev: the integration specs of the features the change touches.
+      - name: Run affected integration end-to-end tests
+        if: env.RUN == 'true' && env.SPECS != 'full' && env.SPECS != 'all' && env.SPECS != '' && env.E2E_PAUSED != 'true'
         shell: bash
         run: |
-          echo "Affected specs: $SPECS"
+          echo "Affected integration specs: $SPECS"
           read -r -a specs <<< "$SPECS"
           npm run build:main && ${{ matrix.wrap }} npx playwright test "${specs[@]}"
       - name: End-to-end tests paused
@@ -215,7 +236,7 @@ jobs:
         run: echo "End-to-end tests are paused during the security review (E2E_PAUSED in ci.yml)."
       - name: No affected end-to-end specs
         if: env.RUN == 'true' && env.SPECS == '' && env.E2E_PAUSED != 'true'
-        run: echo "Nothing this change touches has an end-to-end spec."
+        run: echo "Nothing this change touches has an integration spec."
 
       # Launch what a user would actually download.
       #

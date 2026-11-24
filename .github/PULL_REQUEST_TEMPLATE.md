@@ -24,7 +24,7 @@ Operating system:
 - [ ] `npm run typecheck`
 - [ ] `npm test`
 - [ ] `npm run build`
-- [ ] `npm run test:e2e` (needs a desktop session; on headless Linux use `xvfb-run --auto-servernum npm run test:e2e`). Playwright summary line:
+- [ ] The integration spec of each feature this touches, `npx playwright test e2e/integration/<feature>.spec.ts` (or `npm run test:e2e:integration` for shared code; the full `npm run test:e2e` only for `dev` → `test`). Needs a desktop session; on headless Linux prefix `xvfb-run --auto-servernum`. Playwright summary line:
 - [ ] New or changed tests fail without this change, or no tests changed.
 
 <!-- The desktop scenarios you exercised by hand: -->
