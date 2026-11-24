@@ -50,17 +50,54 @@ interface Snapshot {
 }
 
 /**
- * The paths to check, from the root down to the file. The root is the
- * workspace as given or its real path: callers hold either (resolveInside is
- * lexical, resolveInWorkspace is real), and both name the same folder.
+ * Where the file names the workspace root. Callers hold the root as given or
+ * its real path (resolveInside is lexical, resolveInWorkspace is real), and a
+ * file may also reach the root through another spelling of a folder above it:
+ * macOS /var is a link to /private/var, and Windows temp folders are often
+ * 8.3 names (RUNNER~1). Links and aliases above the root are legitimate; the
+ * shallowest ancestor of the file whose real path is the real root is taken,
+ * so every segment below the root is still checked (and a link is refused).
  */
-function segmentsOf(root: string, realRoot: string, file: string): string[] {
-  const base = inside(root, file) ? root : inside(realRoot, file) ? realRoot : refusal();
+function baseCandidates(root: string, realRoot: string, file: string): { base?: string; ancestors: string[] } {
+  if (inside(root, file)) return { base: root, ancestors: [] };
+  if (inside(realRoot, file)) return { base: realRoot, ancestors: [] };
+  const ancestors: string[] = [];
+  for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+    ancestors.unshift(dir);
+    if (path.dirname(dir) === dir) return { ancestors };
+  }
+}
+const isRealRoot = (realRoot: string, real: string) => path.relative(realRoot, real) === '';
+
+/** The paths to check, from the root down to the file. */
+function segmentsOf(base: string, file: string): string[] {
   const rel = path.relative(base, file);
-  if (hasUnsafeSegment(rel)) refusal();
+  if (hasUnsafeSegment(rel) || hasGitSegment(rel)) refusal();
   const list = [base];
   for (const part of rel.split(path.sep).filter(Boolean)) list.push(path.join(list[list.length - 1], part));
   return list;
+}
+
+function segmentsOfSync(root: string, realRoot: string, file: string): string[] {
+  const { base, ancestors } = baseCandidates(root, realRoot, file);
+  if (base) return segmentsOf(base, file);
+  for (const dir of ancestors) {
+    let real: string;
+    try { real = fs.realpathSync.native(dir); } catch { continue; }
+    if (isRealRoot(realRoot, real)) return segmentsOf(dir, file);
+  }
+  return refusal();
+}
+
+async function segmentsOfAsync(root: string, realRoot: string, file: string): Promise<string[]> {
+  const { base, ancestors } = baseCandidates(root, realRoot, file);
+  if (base) return segmentsOf(base, file);
+  for (const dir of ancestors) {
+    let real: string;
+    try { real = await fs.promises.realpath(dir); } catch { continue; }
+    if (isRealRoot(realRoot, real)) return segmentsOf(dir, file);
+  }
+  return refusal();
 }
 
 /**
@@ -76,7 +113,7 @@ function snapshotSync(root: string, file: string, missing: boolean): Snapshot {
   root = path.resolve(root);
   file = path.resolve(file);
   const realRoot = fs.realpathSync.native(root);
-  const list = segmentsOf(root, realRoot, file);
+  const list = segmentsOfSync(root, realRoot, file);
   const chain = new Map<string, fs.BigIntStats>();
   for (let i = 0; i < list.length; i++) {
     let stat: fs.BigIntStats;
@@ -97,7 +134,7 @@ async function snapshot(root: string, file: string, missing: boolean): Promise<S
   root = path.resolve(root);
   file = path.resolve(file);
   const realRoot = await fs.promises.realpath(root);
-  const list = segmentsOf(root, realRoot, file);
+  const list = await segmentsOfAsync(root, realRoot, file);
   const chain = new Map<string, fs.BigIntStats>();
   for (let i = 0; i < list.length; i++) {
     let stat: fs.BigIntStats;

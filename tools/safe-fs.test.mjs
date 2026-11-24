@@ -3,6 +3,7 @@ import { build } from 'esbuild';
 import * as fs from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { execSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 const { outputFiles } = await build({ stdin: { contents: `
   export * from './src/main/safe-fs';
@@ -16,6 +17,22 @@ const { outputFiles } = await build({ stdin: { contents: `
 `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'esm', write: false });
 const m = await import('data:text/javascript;base64,' + Buffer.from(outputFiles[0].text).toString('base64'));
 const scratch = fs.mkdtempSync(path.join(tmpdir(), 'neuron-safe-fs-'));
+const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+// The core cases also run with the workspace under a linked ancestor (as
+// macOS /var -> /private/var) and, on Windows, an 8.3-named ancestor (as
+// C:\Users\RUNNER~1): the path as given is not the real path, and callers pass
+// either spelling. Links above the workspace are legitimate; links in it are not.
+const realArea = path.join(scratch, 'area');
+fs.mkdirSync(realArea);
+fs.symlinkSync(realArea, path.join(scratch, 'via-link'), linkType);
+const areas = [['', scratch], [' [linked ancestor]', path.join(scratch, 'via-link')]];
+if (process.platform === 'win32') {
+  const short = execSync(`for %I in ("${realArea}") do @echo %~sI`, { encoding: 'utf8' }).trim();
+  if (short !== realArea && fs.existsSync(short)) areas.push([' [8.3 ancestor]', short]);
+  else console.log('  skip 8.3 ancestor cases: this volume has no 8.3 short names');
+}
+let area = scratch;
+const canonical = (p) => { try { return fs.realpathSync.native(p); } catch { return p; } };
 let sequence = 0, checks = 0, failures = 0;
 async function check(name, fn) {
   try { await fn(); checks++; console.log(`  ok  ${name}`); }
@@ -23,13 +40,17 @@ async function check(name, fn) {
   finally { m.setSafeFsTestHook(); }
 }
 function fixture() {
-  const base = path.join(scratch, String(sequence++));
+  const base = path.join(area, String(sequence++));
   const root = path.join(base, 'workspace'), outside = path.join(base, 'outside'), folder = path.join(root, 'folder');
   fs.mkdirSync(folder, { recursive: true }); fs.mkdirSync(outside);
   const file = path.join(folder, 'note.md');
   fs.writeFileSync(file, 'original'); fs.writeFileSync(path.join(outside, 'note.md'), 'outside secret');
   const journal = new m.WriteJournal(path.join(base, 'userData'), { reportError: () => {} });
-  return { root, outside, folder, file, base, journal };
+  // Callers hand safe-fs the lexical path (resolveInside) or the real one
+  // (resolveInWorkspace, the journal), so a race hook must match both.
+  const realFolder = canonical(folder);
+  const contains = (p) => p.startsWith(folder + path.sep) || (canonical(path.dirname(p)) + path.sep).startsWith(realFolder + path.sep);
+  return { root, outside, folder, file, base, journal, contains };
 }
 async function useHandle(root, file, mode = 'read') {
   const handle = await m.openSafe(root, file, mode);
@@ -38,7 +59,7 @@ async function useHandle(root, file, mode = 'read') {
     else await handle.readFile();
   } finally { await handle.close(); }
 }
-function swap(f, phase, match = (file) => file.startsWith(f.folder + path.sep)) {
+function swap(f, phase, match = f.contains) {
   let hit = false;
   m.setSafeFsTestHook((at, file) => {
     if (hit || at !== phase || !match(file)) return;
@@ -48,7 +69,7 @@ function swap(f, phase, match = (file) => file.startsWith(f.folder + path.sep)) 
     const relocate = process.platform === 'win32' && phase === 'after-open';
     if (relocate) fs.renameSync(file, held);
     fs.renameSync(f.folder, `${f.folder}-original`);
-    fs.symlinkSync(f.outside, f.folder, process.platform === 'win32' ? 'junction' : 'dir');
+    fs.symlinkSync(f.outside, f.folder, linkType);
     if (relocate) fs.renameSync(held, path.join(`${f.folder}-original`, path.basename(file)));
     hit = true;
   });
@@ -59,143 +80,154 @@ function swap(f, phase, match = (file) => file.startsWith(f.folder + path.sep)) 
   };
 }
 try {
-  for (const phase of ['before-open', 'after-open']) {
-    await check(`async read refuses parent swap ${phase}`, async () => {
-      const f = fixture(), verify = swap(f, phase);
-      await assert.rejects(useHandle(f.root, f.file), /Unsafe/); verify();
-    });
-    await check(`sync read refuses parent swap ${phase}`, () => {
-      const f = fixture(), verify = swap(f, phase);
-      assert.throws(() => m.readSafeSync(f.root, f.file), /Unsafe/); verify();
-    });
-    await check(`handle write refuses parent swap ${phase}`, async () => {
-      const f = fixture(), verify = swap(f, phase);
-      await assert.rejects(useHandle(f.root, f.file, 'write'), /Unsafe/); verify();
-      assert.equal(fs.readFileSync(path.join(`${f.folder}-original`, 'note.md'), 'utf8'), 'original');
-    });
-  }
-  await check('unlink refuses a parent junction (a dir symlink off Windows) swapped before its final re-check', () => {
-    const f = fixture(), verify = swap(f, 'before-path-check');
-    assert.throws(() => m.unlinkSafeSync(f.root, f.file), /Unsafe/); verify();
-  });
-  if (process.platform !== 'win32') console.log('  skip Windows junction case: junctions exist only on Windows (the case above ran with a POSIX dir symlink)');
+  if (process.platform !== 'win32') console.log('  skip Windows junction case: junctions exist only on Windows (the unlink case ran with a POSIX dir symlink)');
   // A file symlink: on Windows this needs Developer Mode or admin, so it is
   // tried and skipped (with the reason) only when the OS refuses to create one.
   let fileLinks = true;
   try { const probe = path.join(scratch, 'probe-link'); fs.symlinkSync(path.join(scratch, 'nowhere'), probe, 'file'); fs.unlinkSync(probe); }
   catch (error) { if (error.code !== 'EPERM') throw error; fileLinks = false; }
   if (!fileLinks) console.log('  skip final-file symlink swap: this Windows account may not create symlinks (EPERM)');
-  else for (const phase of ['before-open', 'after-open']) for (const mode of ['read', 'write']) {
-    await check(`final-file symlink swap ${phase} (${mode})`, async () => {
+  for (const [tag, where] of areas) {
+    area = where;
+    for (const phase of ['before-open', 'after-open']) {
+      await check(`async read refuses parent swap ${phase}${tag}`, async () => {
+        const f = fixture(), verify = swap(f, phase);
+        await assert.rejects(useHandle(f.root, f.file), /Unsafe/); verify();
+      });
+      await check(`sync read refuses parent swap ${phase}${tag}`, () => {
+        const f = fixture(), verify = swap(f, phase);
+        assert.throws(() => m.readSafeSync(f.root, f.file), /Unsafe/); verify();
+      });
+      await check(`handle write refuses parent swap ${phase}${tag}`, async () => {
+        const f = fixture(), verify = swap(f, phase);
+        await assert.rejects(useHandle(f.root, f.file, 'write'), /Unsafe/); verify();
+        assert.equal(fs.readFileSync(path.join(`${f.folder}-original`, 'note.md'), 'utf8'), 'original');
+      });
+    }
+    await check(`unlink refuses a parent junction (a dir symlink off Windows) swapped before its final re-check${tag}`, () => {
+      const f = fixture(), verify = swap(f, 'before-path-check');
+      assert.throws(() => m.unlinkSafeSync(f.root, f.file), /Unsafe/); verify();
+    });
+    if (fileLinks) for (const phase of ['before-open', 'after-open']) for (const mode of ['read', 'write']) {
+      await check(`final-file symlink swap ${phase} (${mode})${tag}`, async () => {
+        const f = fixture(); let hit = false;
+        m.setSafeFsTestHook((at, file) => {
+          if (hit || at !== phase || file !== f.file) return;
+          hit = true; fs.renameSync(file, `${file}.old`); fs.symlinkSync(path.join(f.outside, 'note.md'), file, 'file');
+        });
+        await assert.rejects(useHandle(f.root, f.file, mode), /Unsafe|ELOOP/);
+        assert.ok(hit); assert.equal(fs.readFileSync(path.join(f.outside, 'note.md'), 'utf8'), 'outside secret');
+      });
+    }
+    await check(`a workspace opened through a link still works (root link is pinned, not refused)${tag}`, async () => {
+      const f = fixture();
+      const linked = path.join(f.base, 'linked-workspace');
+      fs.symlinkSync(f.root, linked, linkType);
+      const lexical = path.join(linked, 'folder', 'note.md');
+      // Lexical paths under the link (resolveInside), the workspace as created
+      // (under any alias above it) and real paths (resolveInWorkspace) all resolve.
+      assert.equal(m.readSafeSync(linked, lexical).toString(), 'original');
+      assert.equal(m.readSafeSync(linked, f.file).toString(), 'original');
+      assert.equal(m.readSafeSync(linked, canonical(f.file)).toString(), 'original');
+      const handle = await m.openSafe(linked, lexical); await handle.close();
+      await m.writeAtomically(lexical, 'saved', `${lexical}.tmp`, { root: linked });
+      assert.equal(fs.readFileSync(f.file, 'utf8'), 'saved');
+      const capture = f.journal.capturePreImage(linked, lexical, 'overwrite');
+      assert.equal(capture.status, 'captured');
+      fs.writeFileSync(f.file, 'later');
+      assert.equal(f.journal.restore(linked, capture.entry.id).success, true);
+      assert.equal(fs.readFileSync(f.file, 'utf8'), 'saved');
+      // A link inside the workspace is still refused, whichever spelling of the root is used.
+      fs.symlinkSync(f.folder, path.join(f.root, 'inner-link'), linkType);
+      for (const r of [linked, f.root, canonical(f.root)]) {
+        assert.throws(() => m.readSafeSync(r, path.join(r, 'inner-link', 'note.md')), /Unsafe/);
+      }
+      // Retargeting the root link between check and use is still refused.
+      let hit = false;
+      m.setSafeFsTestHook((at) => {
+        if (hit || at !== 'after-open') return;
+        hit = true;
+        fs.rmSync(linked, { recursive: false, force: true }); fs.mkdirSync(path.join(f.outside, 'folder'));
+        fs.writeFileSync(path.join(f.outside, 'folder', 'note.md'), 'outside secret');
+        fs.symlinkSync(f.outside, linked, linkType);
+      });
+      assert.throws(() => m.readSafeSync(linked, lexical), /Unsafe/); assert.ok(hit);
+    });
+    await check(`same-path inode replacement is refused even without a link${tag}`, async () => {
+      const f = fixture();
+      m.setSafeFsTestHook((at, file) => { if (at === 'after-open') { fs.renameSync(file, `${file}.old`); fs.writeFileSync(file, 'replacement'); } });
+      await assert.rejects(useHandle(f.root, f.file), /Unsafe/);
+    });
+    await check(`rename rechecks source and destination before path use${tag}`, async () => {
+      const f = fixture(), verify = swap(f, 'before-path-check');
+      await assert.rejects(m.renameSafe(f.root, f.file, path.join(f.folder, 'renamed.md')), /Unsafe/); verify();
+    });
+    await check(`atomic rename refuses a swapped final target${tag}`, async () => {
       const f = fixture(); let hit = false;
       m.setSafeFsTestHook((at, file) => {
-        if (hit || at !== phase || file !== f.file) return;
-        hit = true; fs.renameSync(file, `${file}.old`); fs.symlinkSync(path.join(f.outside, 'note.md'), file, 'file');
+        if (at === 'before-path-check' && file === f.file) {
+          hit = true; fs.renameSync(file, `${file}.old`); fs.symlinkSync(f.outside, file, linkType);
+        }
       });
-      await assert.rejects(useHandle(f.root, f.file, mode), /Unsafe|ELOOP/);
+      await assert.rejects(m.writeAtomically(f.file, 'incoming', `${f.file}.tmp`, { root: f.root }), /Unsafe/);
       assert.ok(hit); assert.equal(fs.readFileSync(path.join(f.outside, 'note.md'), 'utf8'), 'outside secret');
     });
+    await check(`accepted post-check rename window reports destination verification failure${tag}`, async () => {
+      const f = fixture();
+      const source = path.join(f.root, 'source.md'); fs.writeFileSync(source, 'incoming');
+      // THE ACCEPTED WINDOW (P0-1 reviewer decision; see the ponytail comment at
+      // the top of src/main/safe-fs.ts). Node's rename takes paths, so a parent
+      // swapped for a junction AFTER the final re-check is followed and the file
+      // lands outside. This is not prevented and not undone through the link;
+      // the test asserts only that the post-rename verification reports it.
+      swap(f, 'after-path-check');
+      await assert.rejects(m.renameSafe(f.root, source, path.join(f.folder, 'renamed.md')), /destination verification FAILED/);
+    });
+    await check(`media handler refuses a swap before streaming any bytes${tag}`, async () => {
+      const f = fixture(); fs.renameSync(f.file, path.join(f.folder, 'image.png'));
+      const verify = swap(f, 'after-open');
+      const result = await m.respondWithFile(new Request('neuron-file://w/1/token/folder%2Fimage.png'), () => ({ repo: f.root, token: 'token' }));
+      assert.equal(result.status, 403); assert.equal(await result.text(), ''); verify();
+    });
+    await check(`readTrusted refuses a swap even when outside bytes have the trusted hash${tag}`, () => {
+      const f = fixture(); fs.writeFileSync(f.file, 'outside secret');
+      const trusted = new Map([['folder/note.md', m.sha256Bytes(Buffer.from('outside secret'))]]);
+      const verify = swap(f, 'after-open');
+      assert.equal(m.readTrusted(trusted, f.root, 'folder/note.md', 100), null); verify();
+    });
+    await check(`journal capture refuses a swapped parent${tag}`, () => {
+      const f = fixture(), verify = swap(f, 'after-open');
+      assert.equal(f.journal.capturePreImage(f.root, f.file, 'overwrite').status, 'failed'); verify();
+      assert.deepEqual(f.journal.list(f.root), []);
+    });
+    await check(`journal restore refuses a swapped parent before its temp write${tag}`, () => {
+      const f = fixture();
+      const capture = f.journal.capturePreImage(f.root, f.file, 'overwrite');
+      const verify = swap(f, 'before-open');
+      assert.equal(f.journal.restore(f.root, capture.entry.id).success, false); verify();
+    });
+    for (const operation of ['read', 'update', 'delete']) await check(`htmx file ${operation} refuses a parent swap${tag}`, async () => {
+      const f = fixture();
+      const sessions = new m.SessionManager();
+      const session = sessions.create({ root: f.root, name: 'test', theme: 'dark', viewPath: 'view.html', trusted: new Map(),
+        caps: new Set(['workspace.files.read', 'workspace.files.write', 'workspace.files.delete']),
+        readPolicy: [m.compileGlob('**')], writePolicy: [m.compileGlob('**')] });
+      const server = await m.createViewServer(sessions, 'unused');
+      m.configureWriteJournal(path.join(f.base, 'userData'), { reportError: () => {} });
+      const verify = swap(f, operation === 'delete' ? 'before-path-check' : operation === 'update' ? 'before-open' : 'after-open',
+        (file) => f.contains(file) && (operation !== 'update' || file.endsWith('.tmp')));
+      try {
+        const response = await fetch(`${server.origin}/api/v1/${operation === 'delete' ? 'files' : 'files/content'}?path=folder%2Fnote.md`, {
+          method: operation === 'read' ? 'GET' : operation === 'update' ? 'PUT' : 'DELETE',
+          headers: { cookie: `nv=${session.id}:${session.cookieToken}`, 'content-type': 'application/json' },
+          ...(operation === 'update' ? { body: JSON.stringify({ path: 'folder/note.md', content: 'incoming' }) } : {}),
+        });
+        assert.ok(response.status >= 400, `got ${response.status}`);
+        assert.ok(!(await response.text()).includes('outside secret')); verify();
+      } finally { server.close(); }
+    });
   }
-  await check('a workspace opened through a link still works (root link is pinned, not refused)', async () => {
-    const f = fixture();
-    const linked = path.join(f.base, 'linked-workspace');
-    fs.symlinkSync(f.root, linked, process.platform === 'win32' ? 'junction' : 'dir');
-    const lexical = path.join(linked, 'folder', 'note.md');
-    // Lexical paths under the link (resolveInside) and real paths (resolveInWorkspace) both resolve.
-    assert.equal(m.readSafeSync(linked, lexical).toString(), 'original');
-    assert.equal(m.readSafeSync(linked, f.file).toString(), 'original');
-    const handle = await m.openSafe(linked, lexical); await handle.close();
-    await m.writeAtomically(lexical, 'saved', `${lexical}.tmp`, { root: linked });
-    assert.equal(fs.readFileSync(f.file, 'utf8'), 'saved');
-    const capture = f.journal.capturePreImage(linked, lexical, 'overwrite');
-    assert.equal(capture.status, 'captured');
-    fs.writeFileSync(f.file, 'later');
-    assert.equal(f.journal.restore(linked, capture.entry.id).success, true);
-    assert.equal(fs.readFileSync(f.file, 'utf8'), 'saved');
-    // Retargeting the root link between check and use is still refused.
-    let hit = false;
-    m.setSafeFsTestHook((at) => {
-      if (hit || at !== 'after-open') return;
-      hit = true;
-      fs.rmSync(linked, { recursive: false, force: true }); fs.mkdirSync(path.join(f.outside, 'folder'));
-      fs.writeFileSync(path.join(f.outside, 'folder', 'note.md'), 'outside secret');
-      fs.symlinkSync(f.outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
-    });
-    assert.throws(() => m.readSafeSync(linked, lexical), /Unsafe/); assert.ok(hit);
-  });
-  await check('same-path inode replacement is refused even without a link', async () => {
-    const f = fixture();
-    m.setSafeFsTestHook((at, file) => { if (at === 'after-open') { fs.renameSync(file, `${file}.old`); fs.writeFileSync(file, 'replacement'); } });
-    await assert.rejects(useHandle(f.root, f.file), /Unsafe/);
-  });
-  await check('rename rechecks source and destination before path use', async () => {
-    const f = fixture(), verify = swap(f, 'before-path-check');
-    await assert.rejects(m.renameSafe(f.root, f.file, path.join(f.folder, 'renamed.md')), /Unsafe/); verify();
-  });
-  await check('atomic rename refuses a swapped final target', async () => {
-    const f = fixture(); let hit = false;
-    m.setSafeFsTestHook((at, file) => {
-      if (at === 'before-path-check' && file === f.file) {
-        hit = true; fs.renameSync(file, `${file}.old`); fs.symlinkSync(f.outside, file, process.platform === 'win32' ? 'junction' : 'dir');
-      }
-    });
-    await assert.rejects(m.writeAtomically(f.file, 'incoming', `${f.file}.tmp`, { root: f.root }), /Unsafe/);
-    assert.ok(hit); assert.equal(fs.readFileSync(path.join(f.outside, 'note.md'), 'utf8'), 'outside secret');
-  });
-  await check('accepted post-check rename window reports destination verification failure', async () => {
-    const f = fixture();
-    const source = path.join(f.root, 'source.md'); fs.writeFileSync(source, 'incoming');
-    // THE ACCEPTED WINDOW (P0-1 reviewer decision; see the ponytail comment at
-    // the top of src/main/safe-fs.ts). Node's rename takes paths, so a parent
-    // swapped for a junction AFTER the final re-check is followed and the file
-    // lands outside. This is not prevented and not undone through the link;
-    // the test asserts only that the post-rename verification reports it.
-    swap(f, 'after-path-check');
-    await assert.rejects(m.renameSafe(f.root, source, path.join(f.folder, 'renamed.md')), /destination verification FAILED/);
-  });
-  await check('media handler refuses a swap before streaming any bytes', async () => {
-    const f = fixture(); fs.renameSync(f.file, path.join(f.folder, 'image.png'));
-    const verify = swap(f, 'after-open');
-    const result = await m.respondWithFile(new Request('neuron-file://w/1/token/folder%2Fimage.png'), () => ({ repo: f.root, token: 'token' }));
-    assert.equal(result.status, 403); assert.equal(await result.text(), ''); verify();
-  });
-  await check('readTrusted refuses a swap even when outside bytes have the trusted hash', () => {
-    const f = fixture(); fs.writeFileSync(f.file, 'outside secret');
-    const trusted = new Map([['folder/note.md', m.sha256Bytes(Buffer.from('outside secret'))]]);
-    const verify = swap(f, 'after-open');
-    assert.equal(m.readTrusted(trusted, f.root, 'folder/note.md', 100), null); verify();
-  });
-  await check('journal capture refuses a swapped parent', () => {
-    const f = fixture(), verify = swap(f, 'after-open');
-    assert.equal(f.journal.capturePreImage(f.root, f.file, 'overwrite').status, 'failed'); verify();
-    assert.deepEqual(f.journal.list(f.root), []);
-  });
-  await check('journal restore refuses a swapped parent before its temp write', () => {
-    const f = fixture();
-    const capture = f.journal.capturePreImage(f.root, f.file, 'overwrite');
-    const verify = swap(f, 'before-open');
-    assert.equal(f.journal.restore(f.root, capture.entry.id).success, false); verify();
-  });
-  for (const operation of ['read', 'update', 'delete']) await check(`htmx file ${operation} refuses a parent swap`, async () => {
-    const f = fixture();
-    const sessions = new m.SessionManager();
-    const session = sessions.create({ root: f.root, name: 'test', theme: 'dark', viewPath: 'view.html', trusted: new Map(),
-      caps: new Set(['workspace.files.read', 'workspace.files.write', 'workspace.files.delete']),
-      readPolicy: [m.compileGlob('**')], writePolicy: [m.compileGlob('**')] });
-    const server = await m.createViewServer(sessions, 'unused');
-    m.configureWriteJournal(path.join(f.base, 'userData'), { reportError: () => {} });
-    const verify = swap(f, operation === 'delete' ? 'before-path-check' : operation === 'update' ? 'before-open' : 'after-open',
-      (file) => file.startsWith(f.folder + path.sep) && (operation !== 'update' || file.endsWith('.tmp')));
-    try {
-      const response = await fetch(`${server.origin}/api/v1/${operation === 'delete' ? 'files' : 'files/content'}?path=folder%2Fnote.md`, {
-        method: operation === 'read' ? 'GET' : operation === 'update' ? 'PUT' : 'DELETE',
-        headers: { cookie: `nv=${session.id}:${session.cookieToken}`, 'content-type': 'application/json' },
-        ...(operation === 'update' ? { body: JSON.stringify({ path: 'folder/note.md', content: 'incoming' }) } : {}),
-      });
-      assert.ok(response.status >= 400, `got ${response.status}`);
-      assert.ok(!(await response.text()).includes('outside secret')); verify();
-    } finally { server.close(); }
-  });
+  area = scratch;
   for (const reason of ['size', 'store', 'budget']) await check(`required capture failure (${reason}) preserves original and writes conflict`, async () => {
     const f = fixture();
     const blocked = path.join(f.base, 'blocked'); fs.writeFileSync(blocked, 'not a directory');
