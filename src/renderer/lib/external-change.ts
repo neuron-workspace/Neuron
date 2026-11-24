@@ -23,3 +23,40 @@ export function decideExternalChange({ disk, pending, ours }: {
   if (!pending) return 'replace';
   return ours.includes(disk) ? 'ignore' : 'ask';
 }
+
+/**
+ * The base a save sends with its text: SHA-256 of the version the edit was
+ * based on, as UTF-8, hex -- what main's textHash gives for the same text.
+ * Main refuses the save if the file on disk has become anything else (other
+ * than this window's own previous save), so a change made outside Neuron while
+ * the save is on its way is not written over. No known version: no base, and
+ * nothing is compared.
+ */
+export async function contentHash(text: string | null | undefined): Promise<string | undefined> {
+  if (text === null || text === undefined) return undefined;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Sends each file's saves in the order they were made, each with the hash of
+ * its base. Hashing is asynchronous and need not finish in order, and main
+ * writes a file's saves in the order they arrive: without this, a quick second
+ * save could reach main first and the older text land last. `send` must make
+ * its call synchronously.
+ */
+export function createSaveSender(hash: (text: string | null | undefined) => Promise<string | undefined> = contentHash) {
+  const issued = new Map<string, Promise<void>>();
+  return function sendSave<T>(path: string, baseText: string | null | undefined, send: (base: string | undefined) => Promise<T>): Promise<T> {
+    const hashed = hash(baseText);
+    let result!: Promise<T>;
+    const turn = (issued.get(path) ?? Promise.resolve()).then(() => hashed).then((base) => { result = send(base); });
+    const tail = turn.catch(() => undefined);
+    issued.set(path, tail);
+    void tail.then(() => { if (issued.get(path) === tail) issued.delete(path); });
+    return turn.then(() => result);
+  };
+}
+
+/** The window's one sender: the editor groups and the table writers save through it alike. */
+export const sendSave = createSaveSender();

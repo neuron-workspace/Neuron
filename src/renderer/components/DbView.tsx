@@ -5,6 +5,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { boardColumns, MAX_CARDS, moveRow, parseDb, resolveView, serializeDb, updateDbTable, visibleRows, type BoardColumn, type DbFile, type DbProperty, type DbRow, type DbTable, type DbViewMode } from '../lib/db';
 import { BoardColumnHeader, CardLimitNote, Chip, columnLabel, DbCard } from './db/DbCards';
 import { SelectCell, useFileWriter } from './db/table-kit';
+import { ExternalChangeBar } from './FileNotices';
 
 // Inline embed of a .db database inside MDX, via <DbView path="@Foo.db" />.
 // It reads the referenced file over the same IPC bridge the DbSurface editor uses
@@ -81,27 +82,31 @@ export default function DbView({ path, view, table, editable = false }: DbViewPr
   const [state, setState] = useState<'loading' | 'ready' | 'missing' | 'invalid'>('loading');
   const [dragRow, setDragRow] = useState<string | null>(null);
   const [dropColumn, setDropColumn] = useState<string | null>(null);
-  const writer = useFileWriter(rel);
   const dbRef = useRef<DbFile | null>(null);
-  const ignores = useRef(writer.ignores);
-  ignores.current = writer.ignores;
+  const adopt = (next: DbFile | null) => { dbRef.current = next; setDb(next); };
+  /** Show the file's text: as read, changed on disk, or edited in another embed of it. */
+  const show = (text: string) => {
+    const parsed = parseDb(text, rel);
+    if (parsed.db) { adopt(parsed.db); setParseError(null); setState('ready'); }
+    else { adopt(null); setParseError(parsed.error); setState('invalid'); }
+  };
+  // The writer the table surface uses, one per file however many embeds show
+  // it: it follows the file on disk (our own saves coming back are not taken
+  // for a change), and an outside change to an edit not yet on disk asks
+  // (ExternalChangeBar) instead of being lost or written over.
+  const writer = useFileWriter(rel, show, { askOnConflict: true, perFile: true });
+  const loaded = useRef(writer.loaded);
+  loaded.current = writer.loaded;
 
   useEffect(() => {
     let alive = true;
-    const adopt = (next: DbFile | null) => { dbRef.current = next; setDb(next); };
-    const load = (fromWatcher: boolean) =>
-      window.electronAPI.readNote(rel).then((text) => {
-        if (!alive) return;
-        if (typeof text !== 'string' || text.startsWith('Error:')) { setState('missing'); adopt(null); setParseError(null); return; }
-        // Our own write coming back must not replace an edit made since.
-        if (fromWatcher && ignores.current(text)) return;
-        const parsed = parseDb(text, rel);
-        if (parsed.db) { adopt(parsed.db); setParseError(null); setState('ready'); }
-        else { adopt(null); setParseError(parsed.error); setState('invalid'); }
-      });
-    void load(false);
+    void window.electronAPI.readNote(rel).then((text) => {
+      if (!alive) return;
+      if (typeof text !== 'string' || text.startsWith('Error:')) { setState('missing'); adopt(null); setParseError(null); return; }
+      loaded.current(text);
+      show(text);
+    });
     const off = window.electronAPI.onNotesChanged((event, changed) => {
-      if (changed === rel && event !== 'unlink') void load(true);
       // A deleted folder arrives as one unlink for the folder itself.
       if (event === 'unlink' && (changed === rel || rel.startsWith(changed + '/'))) { setState('missing'); adopt(null); setParseError(null); }
     });
@@ -168,6 +173,9 @@ export default function DbView({ path, view, table, editable = false }: DbViewPr
   const saveError = editable && writer.saveError
     ? <div role="alert" className="mb-2 text-xs text-[var(--danger)]">Couldn't save {fileTitle}: {writer.saveError}</div>
     : null;
+  const changedOutside = editable && writer.conflict
+    ? <div className="mb-2"><ExternalChangeBar path={rel} onKeepMine={() => { void writer.keepMine(); }} onUseDisk={() => { void writer.takeDisk(); }} /></div>
+    : null;
 
   const header = (
     <div className="mb-2 flex items-center gap-1.5 font-sans text-xs font-medium text-[var(--ink-muted)]">
@@ -224,6 +232,7 @@ export default function DbView({ path, view, table, editable = false }: DbViewPr
     return (
       <div className="my-4 font-sans" data-db-embed-mode="board" data-db-embed-editable={editable || undefined} {...stop}>
         {header}
+        {changedOutside}
         {saveError}
         <div className="flex items-start gap-3 overflow-x-auto pb-2">
           {board.columns.filter((column) => column.option || column.rows.length > 0 || dragRow !== null).map((column) => (
@@ -262,6 +271,7 @@ export default function DbView({ path, view, table, editable = false }: DbViewPr
     return (
       <div className="my-4 font-sans" data-db-embed-mode="gallery" data-db-embed-editable={editable || undefined} {...stop}>
         {header}
+        {changedOutside}
         {saveError}
         <div className="grid items-start gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(220px, 100%), 1fr))' }}>
           {shown.map((row) => card(row, 'gallery'))}
@@ -291,6 +301,7 @@ export default function DbView({ path, view, table, editable = false }: DbViewPr
   return (
     <div className="my-4 font-sans" data-db-embed-mode="table" data-db-embed-editable={editable || undefined} {...stop}>
       {header}
+      {changedOutside}
       {saveError}
       <div className="overflow-x-auto rounded-md border border-[var(--divider)]">
         <table className="w-full border-collapse text-sm text-[var(--md-text)]">

@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('workspace:watch-limit', listener);
   },
   readNote: (relativePath: string) => ipcRenderer.invoke('notes:read', relativePath),
-  writeNote: (relativePath: string, content: string) => ipcRenderer.invoke('notes:write', relativePath, content),
+  // base: contentHash of the version the edit was based on (see notes:write).
+  writeNote: (relativePath: string, content: string, base?: string) => ipcRenderer.invoke('notes:write', relativePath, content, base),
   deleteNote: (relativePath: string) => ipcRenderer.invoke('notes:delete', relativePath),
   createSection: (relativePath: string) => ipcRenderer.invoke('notes:create-section', relativePath),
   renamePath: (from: string, to: string) => ipcRenderer.invoke('workspace:rename', from, to),

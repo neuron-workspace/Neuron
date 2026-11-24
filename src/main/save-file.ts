@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { openSafe, renameSafe, unlinkSafeSync, checkSafePath } from './safe-fs';
 
 // How notes:write puts text (and, for sync, bytes) on disk: through a temporary
@@ -16,8 +17,39 @@ export interface SaveFs {
 export interface SaveOptions {
   root?: string;
   noInPlaceFallback?: boolean;
+  /**
+   * Runs immediately before the file is replaced: before each rename attempt
+   * and before the in-place fallback. Throwing stops the save; the temp file
+   * is removed and the file is left as it was.
+   */
+  beforeReplace?: () => Promise<void>;
   /** Injected filesystem for unit tests. */
   io?: SaveFs;
+}
+
+/** SHA-256 of the text as UTF-8, hex. The renderer's contentHash (lib/external-change.ts) is the same. */
+export function textHash(text: string): string {
+  return createHash('sha256').update(text, 'utf-8').digest('hex');
+}
+
+/** The code of the error a save's beforeReplace throws for an outside change. */
+export const SAVE_CONFLICT = 'ESAVECONFLICT';
+export function saveConflict(): Error {
+  return Object.assign(new Error('The file changed outside Neuron.'), { code: SAVE_CONFLICT });
+}
+
+/**
+ * Whether the file changed outside Neuron while an edit was being saved.
+ * `base` is the hash of the version the edit was based on, `ownLast` the hash
+ * of this window's last save of the file: our own back-to-back saves are based
+ * on the same version, and each finds the one before it on disk. Anything else
+ * on disk is someone else's and is not written over. A file that is not there
+ * (`disk` null) is written anew, as before.
+ */
+export function isOutsideChange(disk: string | null, base: string, ownLast: string | undefined): boolean {
+  if (disk === null) return false;
+  const hash = textHash(disk);
+  return hash !== base && hash !== ownLast;
 }
 
 function nodeSaveFs(root: string): SaveFs {
@@ -67,6 +99,12 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
  * Durable: the temp file is fsynced before the rename and, on POSIX, its folder
  * after it (best effort: EINVAL/EPERM, where a folder cannot be synced, are
  * ignored). Cleanup never follows a swapped path.
+ *
+ * Checked: `beforeReplace` (notes:write's outside-change check) runs after the
+ * temp file is written and synced, just before each rename attempt. What it
+ * cannot see is a change landing in the instant between it and the rename
+ * itself, which takes names, not handles (the same residual window as
+ * safe-fs.ts).
  */
 export async function writeAtomically(fullPath: string, content: string | Buffer, tmp: string, options: SaveOptions | SaveFs = {}, delay: (ms: number) => Promise<void> = wait): Promise<void> {
   const config = 'open' in options ? { io: options } : options;
@@ -91,12 +129,15 @@ export async function writeAtomically(fullPath: string, content: string | Buffer
     created = true;
     try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
     for (let attempt = 1; ; attempt++) {
+      // Checked again on every attempt: the file may change while a rename is held.
+      await config.beforeReplace?.();
       try {
         await io.rename(tmp, fullPath);
       } catch (error) {
         if (!RENAME_RETRY_CODES.includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
         if (attempt >= RENAME_ATTEMPTS) {
           if (config.noInPlaceFallback) throw error;
+          await config.beforeReplace?.();
           await write(fullPath, false);
           return;
         }

@@ -14,7 +14,7 @@ const bundle = await build({ stdin: { contents: `
   export * from './src/main/htmx/pathPolicy';
   export { folderKey, withName } from './src/main/recentRepos';
   export { settingsSectionOf } from './src/main/workspace-windows';
-  export { createSaveQueue, saveKey, writeAtomically } from './src/main/save-file';
+  export { createSaveQueue, saveKey, writeAtomically, isOutsideChange, SAVE_CONFLICT, saveConflict, textHash } from './src/main/save-file';
   export { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './src/main/file-limits';
   export { decodeSecret, hasStoredSecret, carriesApiKey, rendererSettingsValue } from './src/main/secret-storage';
   export { checkRendererSetting } from './src/main/settings-schema';
@@ -26,7 +26,7 @@ const policy = await import('data:text/javascript;base64,' + Buffer.from(bundle.
 
 const source = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
-const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'saveQueue',
+const helpers = new Set(['entryOf', 'windowOf', 'repoOf', 'resolveInRepo', 'ownsPty', 'safeSettingsKey', 'isRecord', 'SECRETS_KEY', 'saveQueue', 'ownSaves', 'diskText',
   'storedSecret', 'readSecret', 'CONNECTOR_NAMES', 'connectorValues', 'moveEntry']);
 // Walk every nesting level. A new handler cannot silently fall outside this test.
 function registrations(ast) {
@@ -81,9 +81,10 @@ const context = vm.createContext({
   path, process, randomBytes, Object, Date: { now: () => 123 },
   Buffer,
   createSaveQueue: policy.createSaveQueue, saveKey: policy.saveKey,
+  isOutsideChange: policy.isOutsideChange, SAVE_CONFLICT: policy.SAVE_CONFLICT, saveConflict: policy.saveConflict, textHash: policy.textHash,
   NOTE_READ_LIMIT: policy.NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN: policy.TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE: policy.TOO_LARGE_TO_SAVE,
   // The real save helper over this file system, with no waits between renames.
-  writeAtomically: (fullPath, content, tmp) => policy.writeAtomically(fullPath, content, tmp, {
+  writeAtomically: (fullPath, content, tmp, options = {}) => policy.writeAtomically(fullPath, content, tmp, { beforeReplace: options.beforeReplace, io: {
     open: async (file) => ({ writeFile: async (text) => {
       writes.push({ file, content: text });
       if (failWrite || (failFallback && !file.endsWith('.tmp'))) throw new Error('write failed');
@@ -94,7 +95,7 @@ const context = vm.createContext({
       if (renameFailures-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
     },
     unlink: async (file) => { removed.push(file); },
-  }, async () => {}),
+  } }, async () => {}),
   console: { error: () => {} },
   resolveInside: policy.resolveInside,
   realpathInside: (...args) => !checkRealPaths || policy.realpathInside(...args),
@@ -161,7 +162,7 @@ const contracts = {
   'repository:remove': ['/workspace'], 'repository:reveal': ['/workspace'],
   'templates:list': [], 'templates:create': ['starter'],
   'notes:list': [], 'workspace:entries': [], 'workspace:file-base': [], 'workspace:reveal': ['note.md'],
-  'notes:read': ['note.md'], 'notes:write': ['note.md', 'content'], 'notes:delete': ['note.md'],
+  'notes:read': ['note.md'], 'notes:write': ['note.md', 'content', 'a'.repeat(64)], 'notes:delete': ['note.md'],
   'journal:list': ['note.md'], 'journal:restore': ['123-entry'], 'notes:create-section': ['folder'], 'notes:get-dir': [],
   'workspace:rename': ['note.md', 'renamed.md'], 'notes:write-links': [[{ path: 'note.md', content: '[[Linked]]' }]],
   'cookies:import-chrome': ['example.com'],
@@ -258,6 +259,7 @@ for (const [name, args] of Object.entries(contracts)) {
       if (typeof args[index] === 'object' && bad && !Array.isArray(bad) && Object.getPrototypeOf(bad) === Object.prototype) continue;
       if (bad === undefined && ['terminal:spawn', 'journal:list'].includes(name)) continue;
       if (bad === undefined && name === 'htmx-views:open' && index === 1) continue;
+      if (bad === undefined && name === 'notes:write' && index === 2) continue; // no base: nothing compared (a new file)
       const invalid = [...args]; invalid[index] = bad;
       await rejectArgs(name, invalid);
     }
@@ -268,6 +270,7 @@ for (const [name, args] of Object.entries(contracts)) {
   }
 }
 for (const name of ['window:set-overlay-colors', 'ai:complete', 'plugin:net-request', 'notes:log-error']) await rejectArgs(name, [{}]);
+for (const base of ['', 'not-a-hash', 'A'.repeat(64), 'a'.repeat(63)]) await rejectArgs('notes:write', ['note.md', 'content', base]);
 for (const bad of [NaN, Infinity, '80', null]) {
   await rejectArgs('terminal:spawn', [{ cols: bad }]);
   await rejectArgs('terminal:resize', [7, bad, 24]);
@@ -395,6 +398,53 @@ await rejectArgs('settings:set', ['htmxViewApprovals', { '/workspace::view.html'
   assert.match(await refusal('layout', { sidebar: 'yes' }), /^Invalid value for settings key "layout": sidebar: /);
   assert.match(await refusal('pluginstore:example:state', 'x'.repeat(64 * 1024)), /"pluginstore:example:state".*limit/);
   assert.equal((await handlers.get('settings:set')(event, 'layout', { sidebar: false })).success, true);
+}
+// R1: a settings write that fails is not reported as saved, and no other window
+// is told to reload it. main.ts's own writeSettings, over a disk that refuses
+// the write.
+{
+  const pick = (name) => ast.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast);
+  const { outputText: writerSource } = ts.transpileModule(`${pick('writeSettingsAtomically')}\n${pick('writeSettings')}\nglobalThis.realWriteSettings = writeSettings;`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
+  const diskWrites = [];
+  let diskFails = true;
+  const writer = vm.createContext({
+    randomBytes, console: { error: () => {} }, settingsFile: () => '/profile/neuron-settings.json', settingsReader: { canWrite: () => true },
+    fs: {
+      writeFileSync: (file, text) => { if (diskFails) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); diskWrites.push([file, text]); },
+      renameSync: () => {}, unlinkSync: () => {},
+    },
+  });
+  vm.runInContext(writerSource, writer);
+  const fake = context.writeSettings;
+  context.writeSettings = writer.realWriteSettings;
+  const sent = [];
+  const watcherFrame = {};
+  appWindows.set(4, { window: { webContents: { id: 4, mainFrame: watcherFrame, send: (...args) => sent.push(args) }, isDestroyed: () => false }, repo: '/workspace', kind: 'workspace' });
+  try {
+    for (const [key, value] of [['layout', { sidebar: true }], ['keybindings', { 'palette.open': 'Mod+K' }], ['appearance', { preset: 'paper' }], ['savedLayouts', []]]) {
+      assert.equal(policy.checkRendererSetting(key, value).ok, true, `${key}: a value its rule accepts`);
+      const result = JSON.parse(JSON.stringify(await handlers.get('settings:set')(event, key, value)));
+      assert.deepEqual(result, { success: false, error: 'Could not save the settings file.' }, `${key}: a failed write is not success`);
+    }
+    assert.deepEqual(sent, [], 'no other window is told to reload a change that was not saved');
+    assert.equal(diskWrites.length, 0);
+    // The same write on a disk that takes it: saved, and the other windows hear of it.
+    diskFails = false;
+    assert.deepEqual(JSON.parse(JSON.stringify(await handlers.get('settings:set')(event, 'layout', { sidebar: true }))), { success: true });
+    assert.equal(diskWrites.length, 1);
+    assert.deepEqual(sent, [['settings:changed', 'layout']]);
+  } finally {
+    context.writeSettings = fake;
+    appWindows.delete(4);
+  }
+  // The renderer callers that show these settings read the answer instead of assuming it.
+  const app = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+  for (const key of ['layout', 'keybindings', 'appearance']) {
+    assert.match(app, new RegExp(`settings\\.set\\('${key}', [^;]*\\.then\\(\\(result\\) => \\{[\\s\\S]{0,200}?result\\.success`), `App.tsx checks whether '${key}' was saved`);
+  }
+  assert.match(app, /Promise\.all\(\[api\.settings\.set\('savedLayouts', list\), api\.settings\.set\('activeLayoutId', active\)\]\)\.then\(\(results\) => \{\s*const failed = results\.find\(\(result\) => !result\.success\)/,
+    'a saved layout that was not saved is taken back off the list');
 }
 assert.equal((await handlers.get('settings:set-secret')(event, 'provider', 'apiKey', 'value')).success, true);
 assert.equal(settings.__secrets.provider.apiKey, 'encrypted:value');
@@ -655,6 +705,67 @@ try {
   realFs.rmSync(raceScratch, { recursive: true, force: true });
 }
 assert.equal(raceFailures, 0, 'every IPC race must be refused');
+
+// R1: a save on its way never writes over a change made outside Neuron. The
+// real handler over the real disk; the outside program writes while the save's
+// temporary file is being created (the safe-fs hook), after the first check.
+const r1 = realFs.mkdtempSync(path.join(tmpdir(), 'neuron-r1-'));
+try {
+  entry.repo = r1;
+  const note = path.join(r1, 'note.md');
+  const disk = () => realFs.readFileSync(note, 'utf8');
+  const hash = policy.textHash;
+  const write = (content, base) => handlers.get('notes:write')(event, 'note.md', content, base);
+  realFs.writeFileSync(note, 'base');
+  // Unchanged disk: written.
+  assert.deepEqual(JSON.parse(JSON.stringify(await write('first', hash('base')))), { success: true });
+  assert.equal(disk(), 'first');
+  // Our own back-to-back saves, both based on the version before them: never a conflict.
+  const results = await Promise.all([write('one', hash('first')), write('two', hash('first')), write('three', hash('first'))]);
+  assert.deepEqual(results.map((r) => r.success), [true, true, true]);
+  assert.equal(disk(), 'three');
+  // Changed outside while the save is being written: refused, the file untouched, no temp left.
+  let outside = false;
+  policy.setSafeFsTestHook((at, file) => {
+    if (!outside && at === 'before-open' && file.endsWith('.tmp')) { realFs.writeFileSync(note, 'theirs'); outside = true; }
+  });
+  const refused = await write('mine', hash('three'));
+  policy.setSafeFsTestHook();
+  assert.ok(outside, 'the outside write overlapped the save');
+  assert.deepEqual(JSON.parse(JSON.stringify(refused)), { success: false, conflict: true, error: 'This file changed outside Neuron.' });
+  assert.equal(disk(), 'theirs');
+  assert.deepEqual(realFs.readdirSync(r1), ['note.md'], 'no temporary file left');
+  // Changed outside while queued behind another save: refused too.
+  realFs.writeFileSync(note, 'three');
+  const [queuedFirst, queuedSecond] = await Promise.all([
+    write('four', hash('three')).then((result) => { realFs.writeFileSync(note, 'theirs again'); return result; }),
+    write('five', hash('three')),
+  ]);
+  assert.equal(queuedFirst.success, true);
+  assert.equal(queuedSecond.conflict, true);
+  assert.equal(disk(), 'theirs again');
+  // Keep my version: sent again based on the file as it is now, and written.
+  assert.equal((await write('mine', hash('theirs again'))).success, true);
+  assert.equal(disk(), 'mine');
+  // Another window's save is not this window's own: its text is an outside change here.
+  const otherFrame2 = {};
+  const otherSender2 = { id: 3, mainFrame: otherFrame2 };
+  appWindows.set(3, { window: { webContents: otherSender2, isDestroyed: () => false }, repo: r1, kind: 'workspace' });
+  assert.equal((await handlers.get('notes:write')({ sender: otherSender2, senderFrame: otherFrame2 }, 'note.md', 'other window', hash('mine'))).success, true);
+  assert.equal((await write('stale', hash('mine'))).conflict, true);
+  assert.equal(disk(), 'other window');
+  appWindows.delete(3);
+  // A file that is gone is written anew; no base, nothing compared.
+  realFs.rmSync(note);
+  assert.equal((await write('again', hash('mine'))).success, true);
+  assert.equal((await write('unchecked')).success, true);
+  assert.equal(disk(), 'unchecked');
+  console.log('  ok  R1 a save on its way never writes over an outside change');
+} finally {
+  policy.setSafeFsTestHook();
+  entry.repo = '/workspace';
+  realFs.rmSync(r1, { recursive: true, force: true });
+}
 
 console.log(`main-guards: ${handlers.size} handlers, ${refused} sender refusals, ${badTypes} argument/path refusals; reveal, 25 MB limit, delete, 5 save scenarios, secrets and ai:complete passed`);
 

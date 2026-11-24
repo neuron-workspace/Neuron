@@ -31,7 +31,7 @@ import { randomBytes } from 'node:crypto';
 import { fileKind, isListedFile, isUnlistedText, looksLikeText, needsSniff, SNIFF_BYTES } from './file-kinds';
 import { FILE_SCHEME, respondWithFile } from './file-protocol';
 import { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './file-limits';
-import { createSaveQueue, saveKey, writeAtomically } from './save-file';
+import { createSaveQueue, isOutsideChange, SAVE_CONFLICT, saveConflict, saveKey, textHash, writeAtomically } from './save-file';
 import { createSettingsReader } from './settings-file';
 import { checkRendererSetting } from './settings-schema';
 import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
@@ -608,7 +608,9 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
   if (!verdict.ok) return { success: false, error: verdict.error };
   const settings = readSettings();
   settings[key] = value;
-  writeSettings(settings);
+  // Not saved is not success: the caller keeps showing the change as unsaved,
+  // and no other window is told to reload it.
+  if (!writeSettings(settings)) return { success: false, error: 'Could not save the settings file.' };
   // Settings are shared by every window; the others reload what changed. Only
   // the key is sent, never the value.
   for (const [id, entry] of appWindows) {
@@ -941,8 +943,27 @@ ipcMain.handle('notes:read', async (_event, relativePath: string) => {
 });
 
 const saveQueue = createSaveQueue();
-ipcMain.handle('notes:write', async (_event, relativePath: string, content: string) => {
+// Per window and file, the hash of the text that window last saved there: its
+// own earlier save is never an outside change (see isOutsideChange).
+const ownSaves = new Map<string, string>();
+/** The file's text as notes:read gives it, or null when it is not there. */
+async function diskText(repo: string, fullPath: string): Promise<string | null> {
+  let handle: fs.promises.FileHandle;
+  try { handle = await openSafe(repo, fullPath); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    // Past the read limit it is no version the renderer had.
+    if ((await handle.stat()).size > NOTE_READ_LIMIT) throw saveConflict();
+    return await handle.readFile('utf-8');
+  } finally { await handle.close(); }
+}
+ipcMain.handle('notes:write', async (_event, relativePath: string, content: string, base?: string) => {
   if (typeof content !== 'string') return { success: false, error: 'Invalid note content.' };
+  // The hash of the version the edit was based on (contentHash in the
+  // renderer). Without one, nothing is compared: a new file, a settings file.
+  if (base !== undefined && (typeof base !== 'string' || !/^[0-9a-f]{64}$/.test(base))) return { success: false, error: 'Invalid save base.' };
   const resolved = resolveInRepo(_event, relativePath);
   if (!resolved) return { success: false, error: 'No workspace is open.' };
   const guard = textGuard(relativePath);
@@ -952,6 +973,14 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
   // In call order, one at a time per file: see createSaveQueue.
   return saveQueue(saveKey(resolved.fullPath), async () => {
     const tmp = `${resolved.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`;
+    const own = `${_event.sender.id}\n${saveKey(resolved.fullPath)}`;
+    // Changed outside Neuron while this edit was on its way (queued, or being
+    // written): refused, so the outside version is never lost without a word.
+    // The renderer shows ExternalChangeBar. Checked before journalling and
+    // again just before the file is replaced.
+    const unchanged = base === undefined ? undefined : async () => {
+      if (isOutsideChange(await diskText(resolved.repo, resolved.fullPath), base, ownSaves.get(own))) throw saveConflict();
+    };
     try {
       const size = await fs.promises.stat(resolved.fullPath).then((stat) => stat.size, () => -1);
       if (guard === 'text' || guard === 'unknown') {
@@ -964,10 +993,13 @@ ipcMain.handle('notes:write', async (_event, relativePath: string, content: stri
       }
       const dir = path.dirname(resolved.fullPath);
       mkdirSafeSync(resolved.repo, dir);
+      await unchanged?.();
       capturePreImage(resolved.repo, resolved.fullPath, 'overwrite');
-      await writeAtomically(resolved.fullPath, content, tmp, { root: resolved.repo });
+      await writeAtomically(resolved.fullPath, content, tmp, { root: resolved.repo, beforeReplace: unchanged });
+      ownSaves.set(own, textHash(content));
       return { success: true };
     } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === SAVE_CONFLICT) return { success: false, conflict: true, error: 'This file changed outside Neuron.' };
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Failed to write note ${relativePath}:`, err);
       return { success: false, error: message };
@@ -1085,6 +1117,7 @@ ipcMain.handle('notes:write-links', async (event, edits: unknown) => {
       if (!fs.existsSync(edit.fullPath)) return false;
       capturePreImage(repo, edit.fullPath, 'overwrite', { coalesce: false });
       await writeAtomically(edit.fullPath, edit.content, `${edit.fullPath}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`, { root: repo });
+      ownSaves.set(`${event.sender.id}\n${saveKey(edit.fullPath)}`, textHash(edit.content));
       return true;
     }).catch((error) => { console.error('Failed to rewrite links:', error); return false; });
     if (ok) written++;

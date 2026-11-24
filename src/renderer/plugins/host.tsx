@@ -5,7 +5,7 @@ import { activatePlugins, type RegisteredCommand, type RegisteredPanel } from '.
 import {
   connectorsOf, connectorStatus as statusOf, knownWorkspaceKeys, migrateConnectorValues, resolveWorkspacePlugins, secretFields,
   workspaceKey, workspacePluginsKey,
-  type Connector, type ConnectorSecrets, type ConnectorValues, type LegacyPlugins, type WorkspacePlugins,
+  type Connector, type ConnectorSecrets, type ConnectorStatus, type ConnectorValues, type LegacyPlugins, type WorkspacePlugins,
 } from './connectors';
 import { platform } from '../lib/platform';
 
@@ -49,7 +49,8 @@ interface PluginContextValue {
   connectorValues: (id: string) => Record<string, string>;
   /** Which secret fields are saved. The values never come back. */
   savedSecrets: (id: string) => Record<string, boolean>;
-  connectorStatus: (id: string) => 'connected' | 'not-set-up';
+  /** Configured when saved; Connected once a call through it has succeeded in this window. */
+  connectorStatus: (id: string) => ConnectorStatus;
   saveConnector: (id: string, values: Record<string, string>) => Promise<void>;
   disconnect: (id: string) => Promise<void>;
   runtimeFor: (pluginId: string) => HostRuntime;
@@ -74,6 +75,12 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
   const [mdxComponents, setMdxComponents] = useState<Record<string, ComponentType<Record<string, unknown>>>>({});
   const [values, setValues] = useState<ConnectorValues>({});
   const [secrets, setSecrets] = useState<ConnectorSecrets>({});
+  // Connectors whose last call in this window succeeded: what "Connected" means.
+  // Kept here only; a saved key is never decrypted to show a status (D43.5).
+  const [succeeded, setSucceeded] = useState<Record<string, boolean>>({});
+  const callEnded = useCallback((id: string, ok: boolean) => {
+    setSucceeded((current) => (!!current[id] === ok ? current : { ...current, [id]: ok }));
+  }, []);
 
   const manifests = useMemo(() => catalog.map((p) => p.manifest), [catalog]);
   const connectors = useMemo(() => connectorsOf(manifests), [manifests]);
@@ -153,7 +160,7 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
 
   // Connector settings are global. The first load after the change copies them
   // from the old per-plugin config; any later save broadcasts the key, which is
-  // also how a secret saved in Settings shows up as connected in every window.
+  // also how a secret saved in Settings shows up as configured in every window.
   useEffect(() => {
     let cancelled = false;
     const api = window.electronAPI;
@@ -171,6 +178,8 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
       if (cancelled) return;
       setValues(stored && typeof stored === 'object' ? stored : {});
       setSecrets(flags);
+      // Changed in another window: a key that worked here may have been replaced.
+      if (remote) setSucceeded({});
     };
     void load(false);
     const unsubscribe = api.settings.onChanged?.((key) => { if (key === CONNECTORS_KEY) void load(true); });
@@ -213,8 +222,8 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
   const connectorValues = useCallback((id: string) => values[id] ?? {}, [values]);
   const savedSecrets = useCallback((id: string) => secrets[id] ?? {}, [secrets]);
   const connectorStatus = useCallback(
-    (id: string) => statusOf(connectors.find((c) => c.id === id)?.fields ?? [], values[id], secrets[id]),
-    [connectors, values, secrets],
+    (id: string) => statusOf(connectors.find((c) => c.id === id)?.fields ?? [], values[id], secrets[id], succeeded[id]),
+    [connectors, values, secrets, succeeded],
   );
 
   const saveConnector = useCallback(async (id: string, input: Record<string, string>) => {
@@ -236,9 +245,11 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
     }
     const next = { ...valuesRef.current, [id]: plain };
     setValues(next);
+    // Changed settings have not been tried yet.
+    callEnded(id, false);
     await api.settings.set(CONNECTORS_KEY, next);
     setSecrets(await loadSecretFlags());
-  }, [connectors, loadSecretFlags]);
+  }, [connectors, loadSecretFlags, callEnded]);
 
   const disconnect = useCallback(async (id: string) => {
     const connector = connectors.find((c) => c.id === id);
@@ -248,9 +259,10 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
     const next = { ...valuesRef.current };
     delete next[id];
     setValues(next);
+    callEnded(id, false);
     await api.settings.set(CONNECTORS_KEY, next);
     setSecrets(await loadSecretFlags());
-  }, [connectors, loadSecretFlags]);
+  }, [connectors, loadSecretFlags, callEnded]);
 
   const runtimeFor = useCallback((pluginId: string): HostRuntime => {
     const b = bridgeRef.current;
@@ -277,7 +289,9 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
           // A plugin reaches only the connector it declares, never another one
           // that happens to be set up.
           if (!connectorId || request.provider !== connectorId) return { success: false, error: `${name} does not use ${request.provider}.` };
-          return api.ai.complete(request);
+          const result = await api.ai.complete(request);
+          callEnded(connectorId, result.success === true);
+          return result;
         },
       },
       net: {
@@ -294,7 +308,7 @@ export function PluginProvider({ catalog, bridge, workspace, children }: { catal
         },
       },
     };
-  }, [manifests]);
+  }, [manifests, callEnded]);
 
   // (Re)activate enabled plugins when the enabled set changes. We intentionally
   // depend only on which plugins are enabled — not on note state — so panels

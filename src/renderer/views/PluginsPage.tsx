@@ -47,7 +47,7 @@ function ConnectorLine({ manifest }: { manifest: PluginManifest }) {
   const status = connectorStatus(connector.id);
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-secondary)]" data-connector-line={connector.id}>
-      {status === 'connected' ? (
+      {status !== 'not-set-up' ? (
         <><span>Uses {connector.name}</span><ConnectorBadge status={status} /></>
       ) : (
         <>

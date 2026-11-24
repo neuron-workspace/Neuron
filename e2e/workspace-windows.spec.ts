@@ -164,7 +164,9 @@ test('Settings shows Connectors and no plugin switches; a saved key is never sho
   await claude.getByRole('button', { name: 'Set up Claude' }).click();
   await claude.getByLabel('Anthropic API key').fill('sk-ant-e2e-WRITE-ONLY');
   await claude.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(claude).toContainText('Connected');
+  // D43.5: a saved key is Configured; Connected only after a call with it succeeds.
+  await expect(claude).toContainText('Configured');
+  await expect(claude).not.toContainText('Connected');
   // On disk it is only ever the keychain's ciphertext.
   const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
   const onDisk = () => readFileSync(join(userData, 'neuron-settings.json'), 'utf8');

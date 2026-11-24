@@ -11,6 +11,8 @@ export interface NoteData {
 export interface SaveResult {
   success: boolean;
   error?: string;
+  /** Not written: the file changed outside Neuron while the save was on its way. */
+  conflict?: boolean;
 }
 
 /**

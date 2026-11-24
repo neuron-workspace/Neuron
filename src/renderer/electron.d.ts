@@ -113,7 +113,12 @@ export interface ElectronAPI {
   onWatchLimit: (callback: () => void) => () => void;
   /** A file's text, or a message starting "Error:" (TOO_LARGE_TO_OPEN past 25 MB for a note or document). */
   readNote: (relativePath: string) => Promise<string>;
-  writeNote: (relativePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
+  /**
+   * Write a file. With `base` (contentHash of the version the edit was based
+   * on), a file changed outside Neuron since is not written over: the answer
+   * is `conflict: true` and the caller shows ExternalChangeBar.
+   */
+  writeNote: (relativePath: string, content: string, base?: string) => Promise<{ success: boolean; error?: string; conflict?: boolean }>;
   deleteNote: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
   createSection: (relativePath: string) => Promise<{ success: boolean; error?: string }>;
   /** Rename or move a file or folder. Refuses to overwrite; moves a managed CSV's settings with it. */
@@ -165,7 +170,8 @@ export interface ElectronAPI {
   // Settings
   settings: {
     get: <T = unknown>(key: string) => Promise<T | null>;
-    set: (key: string, value: unknown) => Promise<{ success: boolean }>;
+    /** `success: false` with a plain `error` when the value is refused or the settings file could not be written. */
+    set: (key: string, value: unknown) => Promise<{ success: boolean; error?: string }>;
     onChanged: (callback: (key: string) => void) => () => void;
     /** Store a secret in the main process. There is no getter, deliberately. */
     setSecret: (scope: string, field: string, value: string) => Promise<{ success: boolean; error?: string }>;

@@ -1,6 +1,6 @@
 import { test, expect, openNote } from './fixtures';
 import type { Page } from '@playwright/test';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Pages built in MDX: full width, columns, and the data blocks (Stat, Chart,
@@ -275,6 +275,63 @@ test('an editable DbView ticks a task on disk; a plain one stays read-only', asy
   await expect.poll(() => db(workspace).find((row) => row.id === 'r1')!.values.done).toBe(true);
   await expect(editable.getByRole('checkbox', { name: 'Done: Write' })).toHaveAttribute('data-state', 'checked');
   await expect(page.locator('[data-db-embed-mode="table"]:not([data-db-embed-editable])').getByRole('checkbox').first()).toBeDisabled();
+});
+
+// R1: an embedded table gets the external-change bar the table surface has.
+// Saves are blocked (as a read-only file blocks them) so the edit is not on
+// disk when another program changes the file.
+function blockSaves(workspace: string, file: string) {
+  const win = process.platform === 'win32';
+  if (win) chmodSync(file, 0o444); else chmodSync(workspace, 0o555);
+  return () => (win ? chmodSync(file, 0o644) : chmodSync(workspace, 0o755));
+}
+async function embeddedConflict(page: Page, workspace: string) {
+  await open(page, workspace, 'pages-embed-conflict.mdx', ['<DbView source="pages.db" table="tasks" editable />']);
+  const embed = page.locator('[data-db-embed-editable]');
+  const cell = embed.getByRole('textbox', { name: 'Task: Review' });
+  await expect(cell).toBeVisible();
+  const file = join(workspace, 'pages.db');
+  const unblock = blockSaves(workspace, file);
+  await page.waitForTimeout(600);
+  try {
+    await cell.fill('Edited here');
+    await cell.blur();
+    await expect(embed.getByRole('alert').filter({ hasText: "Couldn't save pages:" })).toBeVisible({ timeout: 10_000 });
+  } finally {
+    unblock();
+  }
+  expect(read(workspace, 'pages.db')).not.toContain('Edited here');
+  writeFileSync(file, database(ROWS.map((row) => (row.id === 'r1' ? { ...row, values: { ...row.values, title: 'Changed outside' } } : row))));
+  const bar = embed.locator('[data-external-change="pages.db"]');
+  await expect(bar).toContainText('pages.db changed outside Neuron.', { timeout: 10_000 });
+  // The local edit stays until the user chooses, and nothing is written meanwhile.
+  await expect(embed.getByRole('textbox', { name: 'Task: Edited here' })).toHaveValue('Edited here');
+  await page.waitForTimeout(800);
+  expect(read(workspace, 'pages.db')).toContain('Changed outside');
+  return { embed, bar };
+}
+
+test('an embedded table changed on disk while an edit is not saved asks; Keep my version writes ours (R1)', async ({ page, workspace }) => {
+  const { bar } = await embeddedConflict(page, workspace);
+  await bar.getByRole('button', { name: 'Keep my version' }).click();
+  await expect(bar).toHaveCount(0);
+  await expect.poll(() => {
+    const titles = db(workspace).map((row) => row.values.title);
+    return titles.includes('Edited here') && !titles.includes('Changed outside');
+  }).toBe(true);
+});
+
+test('an embedded table changed on disk: Use the file on disk drops the edit and shows the outside version (R1)', async ({ page, workspace }) => {
+  const { embed, bar } = await embeddedConflict(page, workspace);
+  await bar.getByRole('button', { name: 'Use the file on disk' }).click();
+  await expect(bar).toHaveCount(0);
+  await expect(embed.getByRole('textbox', { name: 'Task: Changed outside' })).toHaveValue('Changed outside');
+  await expect(embed.getByRole('textbox', { name: 'Task: Review' })).toHaveValue('Review');
+  expect(db(workspace).map((row) => row.values.title)).toEqual(['Changed outside', 'Review', 'Ship']);
+  // Editing goes on from the outside version.
+  await embed.getByRole('textbox', { name: 'Task: Ship' }).fill('Shipped');
+  await embed.getByRole('textbox', { name: 'Task: Shipped' }).blur();
+  await expect.poll(() => db(workspace).map((row) => row.values.title)).toEqual(['Changed outside', 'Review', 'Shipped']);
 });
 
 test('typing / on an empty line in Live inserts a Chart block', async ({ page, workspace }) => {

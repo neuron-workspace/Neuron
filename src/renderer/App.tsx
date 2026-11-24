@@ -36,7 +36,7 @@ import './surfaces/MediaSurface'; // registers the video and audio surface
 import './surfaces/TextSurface'; // registers the plain text surface
 import { fileKind, isListedFile, MEDIA_KINDS, OPENS_AS_FILE, type FileKind } from '../main/file-kinds';
 import { TOO_LARGE_TO_OPEN, tooLargeToOpen } from '../main/file-limits';
-import { decideExternalChange } from './lib/external-change';
+import { decideExternalChange, sendSave } from './lib/external-change';
 import './surfaces/HtmxViewSurface'; // registers the .html view surface
 import './surfaces/DbSurface'; // registers the .db database surface
 import './surfaces/CanvasSurface'; // registers the .canvas JSON Canvas surface
@@ -235,7 +235,9 @@ export default function App() {
     setLayout(next);
     // Zen is never stored, nor the chrome it hid: what is stored during zen is
     // what leaving it restores, so a relaunch starts as zen found the window.
-    void window.electronAPI?.settings.set('layout', next.zen && zenPrevRef.current ? { ...zenPrevRef.current, zen: false } : next);
+    void window.electronAPI?.settings.set('layout', next.zen && zenPrevRef.current ? { ...zenPrevRef.current, zen: false } : next).then((result) => {
+      if (!result.success) setNotice(`The layout could not be saved, so the next launch will not restore it. ${result.error ?? ''}`.trim());
+    });
   }, []);
 
   const patchLayout = useCallback((patch: Partial<WorkbenchLayout>) => {
@@ -305,10 +307,20 @@ export default function App() {
       setActiveLayoutId(typeof active === 'string' && list.some((l) => l.id === active) ? active : null);
     });
   }, []);
+  const layoutsVersion = useRef(0);
   const storeLayouts = (list: SavedLayout[], active: string | null) => {
+    const before = { list: savedLayouts, active: activeLayoutId };
+    const version = ++layoutsVersion.current;
     setSavedLayouts(list); setActiveLayoutId(active);
-    void window.electronAPI?.settings.set('savedLayouts', list);
-    void window.electronAPI?.settings.set('activeLayoutId', active);
+    const api = window.electronAPI;
+    if (!api) return;
+    void Promise.all([api.settings.set('savedLayouts', list), api.settings.set('activeLayoutId', active)]).then((results) => {
+      const failed = results.find((result) => !result.success);
+      if (!failed) return;
+      // Not saved: the switcher goes back to what is, rather than list a layout that is not.
+      if (version === layoutsVersion.current) { setSavedLayouts(before.list); setActiveLayoutId(before.active); }
+      setNotice(`The layout could not be saved. ${failed.error ?? ''}`.trim());
+    });
   };
   const snapshotLayout = (): WorkbenchLayout => ({ ...layoutRef.current, zen: false });
   const applySavedLayout = (id: string) => {
@@ -450,7 +462,8 @@ export default function App() {
     // would echo back and could overwrite a newer choice made over there.
     if (remoteAppearance.current === JSON.stringify(appearance)) return;
     void window.electronAPI.settings.set('appearance', appearance).then((result) => {
-      if (!result.success) setNotice('Appearance settings could not be saved.');
+      // Shown in this window, not saved: say so rather than let it look kept.
+      if (!result.success) setNotice(`Appearance settings could not be saved, so other windows and the next launch will not use them. ${result.error ?? ''}`.trim());
     });
   }, [appearance, appearanceReady]);
 
@@ -946,22 +959,34 @@ export default function App() {
     setSaveStates((current) => ({ ...current, [path]: 'saving' }));
     savingDocs.current.add(path);
     inFlight.current.set(path, [...(inFlight.current.get(path) ?? []), value]);
-    let result: { success: boolean; error?: string };
-    try { result = await window.electronAPI.writeNote(path, value); } catch (error) { result = { success: false, error: String(error) }; }
+    let result: { success: boolean; error?: string; conflict?: boolean };
+    // Based on the version last known to be on disk: main refuses the save if
+    // the file has since changed outside Neuron.
+    const base = onDisk.current.get(path);
+    try { result = await sendSave(path, base, (hash) => window.electronAPI.writeNote(path, value, hash)); } catch (error) { result = { success: false, error: String(error) }; }
     if (version !== saveVersions.current.get(path)) return null;
     savingDocs.current.delete(path);
     // Saves of one file land in order (main queues them), so after the latest
     // only its text is on disk -- or, if it failed, what was there before.
     inFlight.current.delete(path);
+    if (result.conflict) {
+      // Not written: the user picks a version (ExternalChangeBar).
+      setConflict(path, true);
+      setSaveStates((current) => (path in current ? { ...current, [path]: 'error' } : current));
+      return null;
+    }
     if (result.success) { onDisk.current.set(path, value); failedSaves.current.delete(path); } else failedSaves.current.add(path);
     setSaveStates((current) => (path in current ? { ...current, [path]: result.success ? 'saved' : 'error' } : current));
     if (result.success && path === SHELL_CONFIG) offerShellConfig(value);
     if (!result.success) setNotice(`Changes to “${path}” could not be saved.`);
     return result;
-  }, [offerShellConfig]);
+  }, [offerShellConfig, setConflict]);
 
-  // The two ways out of a conflict (ExternalChangeBar).
-  const keepMyVersion = useCallback((path: string) => {
+  // The two ways out of a conflict (ExternalChangeBar). Keeping mine is based
+  // on the file as it is now, so main writes it over the outside version.
+  const keepMyVersion = useCallback(async (path: string) => {
+    const disk = await window.electronAPI.readNote(path);
+    if (!disk.startsWith('Error:')) onDisk.current.set(path, disk);
     setConflict(path, false);
     const mine = docsRef.current[path];
     if (mine !== undefined) void writeDoc(path, mine);
@@ -1257,7 +1282,12 @@ export default function App() {
 
   const updateBindings = useCallback((next: Bindings) => {
     setBindings(next);
-    void window.electronAPI?.settings.set('keybindings', next);
+    void window.electronAPI?.settings.set('keybindings', next).then((result) => {
+      if (result.success) return;
+      setNotice(`Keyboard shortcuts could not be saved. ${result.error ?? ''}`.trim());
+      // Back to what is saved, so the shortcuts list does not show a change that is not.
+      void window.electronAPI.settings.get<Bindings>('keybindings').then((stored) => setBindings(resolveBindings(stored)));
+    });
   }, []);
 
   // Global shortcut dispatcher, driven by the (configurable) binding map.
@@ -1455,6 +1485,7 @@ export default function App() {
             onOpenCommandPalette={() => setPaletteOpen(true)}
             onOpenSettings={() => openSettings('appearance')}
             onSwitchRepo={switchRepository}
+            onReloadRecents={reloadRepoState}
             onOpenRepo={openRepository}
             onCreateRepo={createRepository}
             layout={layout}

@@ -183,6 +183,24 @@ Live editor and Reading view, and resolved links form edges in the graph. In
 the current Reading view they are labels, not clickable navigation links; use
 the Explorer, command palette, or graph node to open the target.
 
+How a link finds its note (matching ignores capitals and the extension):
+
+- `[[Name]]` links by name. When several notes share it, the one in the
+  linking note's own folder wins; then the one with the shortest path (the
+  fewest folders from the workspace root); then the first alphabetically by
+  path.
+- `[[Folder/Name]]` is a path: the note at that path, or one whose path ends in
+  it. It never falls back to a note that only shares the name.
+- `[[/Name]]` is the note at the workspace root, and nothing else
+  (`[[/Folder/Name]]` is a full path from the root). This is a Neuron
+  extension: Obsidian shows such links as unresolved.
+- A note's `aliases:` (frontmatter) are names it can be linked by too. A
+  file's own name always wins over another note's alias; aliases follow the
+  same tie rules.
+
+Typing `[[` in the source editor offers every note and writes the shortest
+link that reaches it.
+
 Tags can be inline (`#project`) or stored in a frontmatter `tags` value. Choose
 **Tags** in the activity rail to see the collected tag list and filter the
 Explorer to notes containing a selected tag. The inline matcher expects a tag

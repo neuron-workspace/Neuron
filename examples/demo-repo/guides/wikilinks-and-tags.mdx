@@ -9,10 +9,13 @@ Write `[[Note name]]` to link to another note. For example, this links back to [
 Switch to the **Graph** tab in the sidebar to see every note as a node, with a line drawn for each wikilink. Click a node to open that note.
 
 <Callout type="info" title="How matching works">
-A wikilink matches a note by its name or its path, without the extension. When two notes share a name, the one in the linking note's folder wins, then the one closest to the workspace root, then the first by path. A path such as projects/Recovery reaches only that note. Typing `[[` in the source editor offers every note and writes the shortest link that reaches it, and a note's `aliases:` are names it can be linked by too.
+A wikilink matches a note by its name or its path, without the extension, and capitals do not matter. When two notes share a name, the one in the linking note's own folder wins; then the one with the shortest path (the fewest folders from the workspace root); then the first alphabetically by path. Typing `[[` in the source editor offers every note and writes the shortest link that reaches it.
 </Callout>
 
-So to reach the note in the projects section, link to [[projects/Recovery]].
+- `[[Name]]` links by name, with the rules above.
+- `[[Folder/Name]]` is a path: it reaches the note at that path, or one whose path ends in it, and never falls back to a note that only shares the name. So to reach the note in the projects section, link to [[projects/Recovery]].
+- `[[/Name]]` is the note named Name at the workspace root, and nothing else; `[[/Folder/Name]]` is a full path from the root. This is a Neuron extension: Obsidian shows such links as unresolved.
+- Aliases: a note's `aliases:` in its frontmatter are names it can be linked by too. A file's own name always wins over another note's alias, and aliases follow the same tie rules.
 
 ## Tags
 

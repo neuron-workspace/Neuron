@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { Plug, ShieldCheck } from 'lucide-react';
 import { usePlugins } from '../plugins/host';
-import type { Connector } from '../plugins/connectors';
+import type { Connector, ConnectorStatus } from '../plugins/connectors';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 
-export function ConnectorBadge({ status }: { status: 'connected' | 'not-set-up' }) {
-  return status === 'connected' ? <Badge variant="default">Connected</Badge> : <Badge variant="outline">Not set up</Badge>;
+/** Configured: saved. Connected: a call through it has succeeded in this window (D43.5). */
+export function ConnectorBadge({ status }: { status: ConnectorStatus }) {
+  if (status === 'connected') return <Badge variant="default">Connected</Badge>;
+  if (status === 'configured') return <Badge variant="info">Configured</Badge>;
+  return <Badge variant="outline">Not set up</Badge>;
 }
 
 function ConnectorForm({ connector, onDone }: { connector: Connector; onDone: () => void }) {
@@ -88,7 +91,7 @@ function ConnectorRow({ connector }: { connector: Connector }) {
         </div>
         {!editing && (
           <div className="flex shrink-0 gap-2">
-            {status === 'connected' ? (
+            {status !== 'not-set-up' ? (
               <>
                 <Button size="sm" variant="outline" onClick={() => setEditing(true)} aria-label={`Change ${connector.name}`}>Change</Button>
                 <Button size="sm" variant="ghost" onClick={() => void disconnect(connector.id)} aria-label={`Disconnect ${connector.name}`}>Disconnect</Button>

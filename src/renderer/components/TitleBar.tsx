@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Sparkles, PanelLeft, PanelRight, PanelBottom, PanelsTopLeft, Search,
-  FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Settings2, Share2, SlidersHorizontal } from 'lucide-react';
+  FolderGit2, ChevronDown, FolderOpen, FolderPlus, Cloud, Focus, RotateCcw, Settings2, Share2, SlidersHorizontal, X } from 'lucide-react';
 import type { RecentWorkspace, RepositoryInfo } from '../electron.d';
 import type { WorkbenchLayout } from '../lib/layout';
 import {
@@ -15,6 +15,7 @@ import { cn } from '../lib/utils';
 import { isMac, platform } from '../lib/platform';
 import { formatChord } from '../lib/keybindings';
 import { parentFolder, sharedName } from '../lib/workspace-names';
+import { useWorkspaceActions } from './workspace-actions';
 
 interface TitleBarProps {
   /** Saved-layouts control, rendered at the right of the bar. */
@@ -35,6 +36,8 @@ interface TitleBarProps {
   onOpenCommandPalette: () => void;
   onOpenSettings: () => void;
   onSwitchRepo: (dir: string) => void;
+  /** Read the recent list again (after one is removed from it). */
+  onReloadRecents: () => void;
   onOpenRepo: () => void;
   onCreateRepo: () => void;
   layout: WorkbenchLayout;
@@ -66,6 +69,34 @@ function IconButton({ label, active, onClick, children }: { label: string; activ
 // Two different folders with the same name need their location to tell them
 // apart; the palette lists workspaces too, so the rule lives in one place.
 export { parentFolder, sharedName };
+
+/**
+ * The switcher's recent workspaces. One whose folder is not found gets a
+ * "Remove from list" item, through the same removal the welcome page uses
+ * (useWorkspaceActions). Only the list entry goes; nothing on disk is touched.
+ */
+export function RecentWorkspaceItems({ recents, onSwitch, onReload }: { recents: RecentWorkspace[]; onSwitch: (dir: string) => void; onReload: () => void }) {
+  const actions = useWorkspaceActions(onReload);
+  return <>{recents.map((repo) => (
+    <React.Fragment key={repo.path}>
+      <DropdownMenuItem title={repo.path} data-missing={repo.missing || undefined}
+        className={cn(repo.missing && 'text-[var(--ink-muted)]')} onClick={() => onSwitch(repo.path)}>
+        <FolderGit2 className="h-4 w-4" />
+        <span className="truncate">{repo.name}</span>
+        {sharedName(recents, repo) && <span className="truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
+        {repo.missing
+          ? <span className="ml-auto shrink-0 pl-3 text-[11px] text-[var(--ink-muted)]">Folder not found</span>
+          : repo.cloud && <Cloud className="ml-auto h-3 w-3 text-[var(--ink-muted)]" />}
+      </DropdownMenuItem>
+      {repo.missing && (
+        <DropdownMenuItem data-remove-missing={repo.path} aria-label={`Remove ${repo.name} from list`}
+          className="pl-8 text-[12px] text-[var(--ink-secondary)]" onSelect={() => void actions.remove(repo.path)}>
+          <X className="h-3.5 w-3.5" /> Remove from list
+        </DropdownMenuItem>
+      )}
+    </React.Fragment>
+  ))}</>;
+}
 
 export default function TitleBar(props: TitleBarProps) {
   const { repository, recents } = props;
@@ -142,17 +173,7 @@ export default function TitleBar(props: TitleBarProps) {
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Recent</DropdownMenuLabel>
-                {recents.map((repo) => (
-                  <DropdownMenuItem key={repo.path} title={repo.path} data-missing={repo.missing || undefined}
-                    className={cn(repo.missing && 'text-[var(--ink-muted)]')} onClick={() => props.onSwitchRepo(repo.path)}>
-                    <FolderGit2 className="h-4 w-4" />
-                    <span className="truncate">{repo.name}</span>
-                    {sharedName(recents, repo) && <span className="truncate text-[11px] text-[var(--ink-muted)]">{parentFolder(repo.path)}</span>}
-                    {repo.missing
-                      ? <span className="ml-auto shrink-0 pl-3 text-[11px] text-[var(--ink-muted)]">Folder not found</span>
-                      : repo.cloud && <Cloud className="ml-auto h-3 w-3 text-[var(--ink-muted)]" />}
-                  </DropdownMenuItem>
-                ))}
+                <RecentWorkspaceItems recents={recents} onSwitch={props.onSwitchRepo} onReload={props.onReloadRecents} />
               </>
             )}
             <DropdownMenuSeparator />

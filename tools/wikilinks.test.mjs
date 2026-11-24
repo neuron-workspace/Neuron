@@ -254,5 +254,17 @@ assert.equal(relativeHref('note.md', 'x/y.md'), 'x/y.md');
   assert.equal(clashPlan.edits[0].content, '[[/Spec|Spec]]');
 }
 
+// D43.1: the rules above are documented where people read about links, the
+// root link included, with the warning that Obsidian does not resolve it.
+{
+  const { readFileSync } = await import('node:fs');
+  for (const doc of ['docs/features.md', 'examples/demo-repo/guides/wikilinks-and-tags.mdx']) {
+    const text = readFileSync(join(process.cwd(), doc), 'utf8');
+    for (const needle of ["linking note's own folder", 'shortest path', 'alphabetically', '`[[Folder/Name]]`', '`[[/Name]]`', 'workspace root', 'Obsidian shows such links as unresolved', 'aliases:']) {
+      assert.ok(text.includes(needle), `${doc} describes ${needle}`);
+    }
+  }
+}
+
 rmSync(out, { recursive: true, force: true });
-console.log(`wikilinks: resolution, aliases, autocomplete text and link rewrites verified`);
+console.log(`wikilinks: resolution, aliases, autocomplete text, link rewrites and their docs verified`);

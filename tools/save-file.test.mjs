@@ -53,8 +53,75 @@ try {
   const { outputFiles } = await build({ entryPoints: [path.join(root, 'src/main/save-file.ts')], bundle: true, platform: 'node', format: 'esm', write: false });
   const modulePath = path.join(temp, 'save-file.mjs');
   fs.writeFileSync(modulePath, outputFiles[0].text);
-  const { writeAtomically, createSaveQueue, saveKey, RENAME_ATTEMPTS } = await import(pathToFileURL(modulePath));
+  const { writeAtomically, createSaveQueue, saveKey, RENAME_ATTEMPTS, isOutsideChange, saveConflict, SAVE_CONFLICT, textHash } = await import(pathToFileURL(modulePath));
   const noWait = async () => {};
+
+  // R1: notes:write's check, over the in-memory disk. `own` is this window's last save.
+  const checked = (files, base, own = {}) => async () => {
+    if (isOutsideChange(files.has('note.md') ? files.get('note.md') : null, textHash(base), own.last && textHash(own.last))) throw saveConflict();
+  };
+
+  await check('R1: an unchanged file is written; a changed one is an outside change unless it is our own last save', async () => {
+    assert.equal(isOutsideChange('base', textHash('base'), undefined), false);
+    assert.equal(isOutsideChange('mine before', textHash('base'), textHash('mine before')), false);
+    assert.equal(isOutsideChange('theirs', textHash('base'), textHash('mine before')), true);
+    assert.equal(isOutsideChange('', textHash('base'), undefined), true, 'an emptied file is a change');
+    assert.equal(isOutsideChange(null, textHash('base'), undefined), false, 'a file that is gone is written anew');
+    assert.equal(textHash('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'hex SHA-256 of the UTF-8');
+    const { files, io } = memoryFs();
+    files.set('note.md', 'base');
+    await writeAtomically('note.md', 'new', 'note.md.r1a.tmp', { io, beforeReplace: checked(files, 'base') }, noWait);
+    assert.equal(files.get('note.md'), 'new');
+  });
+
+  await check('R1: changed outside while the save is being written: refused, the file untouched', async () => {
+    const { files, io } = memoryFs({ onWrite: async (file) => { if (file.endsWith('.tmp')) files.set('note.md', 'theirs'); } });
+    files.set('note.md', 'base');
+    const error = await writeAtomically('note.md', 'mine', 'note.md.r1b.tmp', { io, beforeReplace: checked(files, 'base') }, noWait).catch((e) => e);
+    assert.equal(error.code, SAVE_CONFLICT);
+    assert.equal(files.get('note.md'), 'theirs');
+    assert.deepEqual(temps(files), []);
+  });
+
+  await check('R1: changed outside between a check and a held rename: the retry checks again and refuses', async () => {
+    let held = true;
+    const { files, io } = memoryFs({ onRename: async () => { if (held) { held = false; files.set('note.md', 'theirs'); throw busy('EBUSY'); } } });
+    files.set('note.md', 'base');
+    const error = await writeAtomically('note.md', 'mine', 'note.md.r1c.tmp', { io, beforeReplace: checked(files, 'base') }, noWait).catch((e) => e);
+    assert.equal(error.code, SAVE_CONFLICT);
+    assert.equal(files.get('note.md'), 'theirs');
+    assert.deepEqual(temps(files), []);
+  });
+
+  await check('R1: the in-place fallback checks too', async () => {
+    let renames = 0;
+    const { files, io } = memoryFs({ onRename: async () => { if (++renames === RENAME_ATTEMPTS) files.set('note.md', 'theirs'); throw busy('EPERM'); } });
+    files.set('note.md', 'base');
+    let checks = 0;
+    const counted = async () => { checks++; await checked(files, 'base')(); };
+    const error = await writeAtomically('note.md', 'mine', 'note.md.r1d.tmp', { io, beforeReplace: counted }, noWait).catch((e) => e);
+    assert.equal(error.code, SAVE_CONFLICT);
+    assert.equal(checks, RENAME_ATTEMPTS + 1, 'before every rename and before writing in place');
+    assert.equal(files.get('note.md'), 'theirs');
+  });
+
+  await check('R1: our own back-to-back saves, all based on one version, never conflict; Keep my version then writes', async () => {
+    const { files, io } = memoryFs();
+    files.set('note.md', 'base');
+    const queue = createSaveQueue();
+    const own = {};
+    const save = (text, base) => queue(saveKey('note.md'), async () => {
+      await writeAtomically('note.md', text, `note.md.${text}.tmp`, { io, beforeReplace: checked(files, base, own) }, noWait);
+      own.last = text;
+    });
+    await Promise.all([save('one', 'base'), save('two', 'base'), save('three', 'base')]);
+    assert.equal(files.get('note.md'), 'three');
+    files.set('note.md', 'theirs');
+    await assert.rejects(save('four', 'base'), (e) => e.code === SAVE_CONFLICT);
+    assert.equal(files.get('note.md'), 'theirs');
+    await save('four', 'theirs');
+    assert.equal(files.get('note.md'), 'four');
+  });
 
   await check('binary writes round trip every byte value', async () => {
     const bytes = Buffer.from(Array.from({ length: 256 }, (_, n) => n));
