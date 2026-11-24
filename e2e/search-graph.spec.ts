@@ -110,8 +110,13 @@ test.describe('palette', () => {
     const two = join(workspace, '..', 'two', 'notes');
     for (const dir of [one, two]) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'elsewhere.md'), '# Elsewhere\n'); }
     await expect(page.locator('.note-row').first()).toBeVisible();
-    await page.evaluate(async (repos) => {
-      await (window as unknown as { electronAPI: any }).electronAPI.settings.set('repositories', repos);
+    // `repositories` is main's own key (P0-2): written from inside main, not through the renderer.
+    await app.evaluate(({ app: electronApp }, repositories) => {
+      const fs = process.mainModule!.require('node:fs') as typeof import('node:fs');
+      const file = `${electronApp.getPath('userData')}/neuron-settings.json`;
+      const settings = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      settings.repositories = repositories;
+      fs.writeFileSync(file, JSON.stringify(settings, null, 2));
     }, { current: workspace, recent: [workspace, one, two] });
     await page.reload();
     await expect(page.locator('.note-row').first()).toBeVisible();

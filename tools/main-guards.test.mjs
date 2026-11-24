@@ -17,6 +17,7 @@ const bundle = await build({ stdin: { contents: `
   export { createSaveQueue, saveKey, writeAtomically } from './src/main/save-file';
   export { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './src/main/file-limits';
   export { decodeSecret, hasStoredSecret, carriesApiKey, rendererSettingsValue } from './src/main/secret-storage';
+  export { checkRendererSetting } from './src/main/settings-schema';
   export * from './src/main/workspace-rename';
   export { fileKind } from './src/main/file-kinds';
   export * from './src/main/safe-fs';
@@ -105,7 +106,7 @@ const context = vm.createContext({
   writeSettings: (...args) => { effect('settings')(...args); return true; },
   secretCodec: () => keychain.codec, encodeSecret: (value) => `encrypted:${value}`,
   decodeSecret: policy.decodeSecret, hasStoredSecret: policy.hasStoredSecret, carriesApiKey: policy.carriesApiKey,
-  rendererSettingsValue: policy.rendererSettingsValue,
+  rendererSettingsValue: policy.rendererSettingsValue, checkRendererSetting: policy.checkRendererSetting,
   VIEW_TRUST_KEY: 'htmxViewApprovals',
   createAnthropic: () => (name) => ({ name }), createOpenAI: () => (name) => ({ name }),
   createGoogleGenerativeAI: () => (name) => ({ name }), createOpenRouter: () => (name) => ({ name }),
@@ -374,10 +375,27 @@ lstatError = Object.assign(new Error('denied'), { code: 'EACCES' });
 await rejectArgs('notes:delete', ['note.md']);
 lstatError = null;
 // Valid calls still reach their existing contracts after the type checks.
-assert.equal((await handlers.get('settings:set')(event, 'example', { enabled: true })).success, true);
-assert.equal(settings.example.enabled, true);
+assert.equal((await handlers.get('settings:set')(event, 'pluginstore:example:state', { enabled: true })).success, true);
+assert.equal(settings['pluginstore:example:state'].enabled, true);
 // Which HTML views are trusted is main's to write (7B): a renderer cannot trust a view nobody saw.
 await rejectArgs('settings:set', ['htmxViewApprovals', { '/workspace::view.html': { contentHash: 'a'.repeat(64), grantedAt: 'now' } }]);
+// P0-2: a key with no rule, a main-only key, and a value that does not fit its key all write nothing.
+{
+  const refusal = async (key, value) => {
+    const before = [JSON.stringify(settings), effects.length];
+    const result = await handlers.get('settings:set')(event, key, value);
+    assert.equal(result.success, false, key);
+    assert.deepEqual([JSON.stringify(settings), effects.length], before, `${key}: nothing is written`);
+    return result.error;
+  };
+  assert.equal(await refusal('example', { enabled: true }), 'Unknown settings key.');
+  assert.equal(await refusal('plugins', { enabled: {} }), 'Unknown settings key.', 'the legacy global record is read, never written');
+  assert.equal(await refusal('sync', { provider: 'folder', path: '/elsewhere' }), 'Reserved key.');
+  assert.equal(await refusal('repositories', { current: '/elsewhere', recent: [] }), 'Reserved key.');
+  assert.match(await refusal('layout', { sidebar: 'yes' }), /^Invalid value for settings key "layout": sidebar: /);
+  assert.match(await refusal('pluginstore:example:state', 'x'.repeat(64 * 1024)), /"pluginstore:example:state".*limit/);
+  assert.equal((await handlers.get('settings:set')(event, 'layout', { sidebar: false })).success, true);
+}
 assert.equal((await handlers.get('settings:set-secret')(event, 'provider', 'apiKey', 'value')).success, true);
 assert.equal(settings.__secrets.provider.apiKey, 'encrypted:value');
 assert.equal((await handlers.get('settings:set-secret')(event, 'provider', 'apiKey', '')).success, true);
@@ -550,7 +568,7 @@ for (const [key, value] of [
   assert.equal(JSON.stringify(settings), before);
   assert.equal(effects.length, writesBefore, 'nothing is written');
 }
-assert.equal((await handlers.get('settings:set')(event, 'test', { apiKeyHint: 'set it in Settings', note: 'apiKey' })).success, true,
+assert.equal((await handlers.get('settings:set')(event, 'pluginstore:p:k', { apiKeyHint: 'set it in Settings', note: 'apiKey' })).success, true,
   'the word in a value, or in a longer name, is not a key');
 
 // --- ai:complete ---------------------------------------------------------

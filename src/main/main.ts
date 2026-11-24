@@ -33,6 +33,7 @@ import { FILE_SCHEME, respondWithFile } from './file-protocol';
 import { NOTE_READ_LIMIT, TOO_LARGE_TO_OPEN, TOO_LARGE_TO_SAVE } from './file-limits';
 import { createSaveQueue, saveKey, writeAtomically } from './save-file';
 import { createSettingsReader } from './settings-file';
+import { checkRendererSetting } from './settings-schema';
 import { isWatchLimitError, watchWorkspace } from './workspace-watcher';
 import { ENTRY_LIMIT, walkWorkspace, type WorkspaceEntries } from './workspace-walk';
 import { moveRefusal, normalizeRelative, samePath, tableMetaMove } from './workspace-rename';
@@ -601,6 +602,10 @@ ipcMain.handle('settings:set', (event, key: string, value: unknown) => {
   // Not only where keys used to live: an apiKey anywhere in any value would be
   // plain text on disk and readable back by every renderer.
   if (carriesApiKey(value)) return { success: false, error: 'Use the secret store for keys.' };
+  // Every key has a rule (P0-2): unknown keys, main-only keys (`sync`,
+  // `repositories`...) and values that do not fit their key write nothing.
+  const verdict = checkRendererSetting(key, value);
+  if (!verdict.ok) return { success: false, error: verdict.error };
   const settings = readSettings();
   settings[key] = value;
   writeSettings(settings);
