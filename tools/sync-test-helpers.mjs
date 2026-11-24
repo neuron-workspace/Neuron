@@ -3,7 +3,7 @@
 // load it, and wait for libsodium. CommonJS on purpose: libsodium's Emscripten
 // glue uses require() and __dirname, which an ESM bundle does not have.
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -116,14 +116,18 @@ export function makeHelpers(sync) {
   const checkVectors = (name, actual) => {
     const file = join(fixturesDir, name);
     const json = `${JSON.stringify(actual, null, 2)}\n`;
-    if (!existsSync(file)) {
+    let text;
+    try {
+      text = readFileSync(file, 'utf-8');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
       assert.ok(process.argv.includes('--write-vectors'), `${file} is missing (run with --write-vectors to create it once)`);
       mkdirSync(fixturesDir, { recursive: true });
-      writeFileSync(file, json);
+      writeFileSync(file, json, { flag: 'wx' }); // exclusive create: never overwrites
       console.log(`  wrote ${file}`);
       return JSON.parse(json);
     }
-    const frozen = JSON.parse(readFileSync(file, 'utf-8'));
+    const frozen = JSON.parse(text);
     assert.deepEqual(actual, frozen, `${name}: output drifted from the frozen vectors`);
     return frozen;
   };
