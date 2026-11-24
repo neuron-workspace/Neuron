@@ -185,7 +185,7 @@ jobs:
             app.quit();
           });
           EOF
-          timeout 90 xvfb-run --auto-servernum npx electron "$RUNNER_TEMP/keychain-probe.cjs" --password-store=gnome-libsecret --enable-logging=stderr --vmodule='*os_crypt*=2,*key_storage*=2,*libsecret*=2' 2>&1 | grep -Ei 'keychain-probe|crypt|secret|keyring|key_storage|dbus' || true
+          timeout 90 xvfb-run --auto-servernum npx electron "$RUNNER_TEMP/keychain-probe.cjs" --password-store=gnome-libsecret --enable-logging=stderr --vmodule='*os_crypt*=2,*key_storage*=2,*libsecret*=2' > "$RUNNER_TEMP/keychain-probe.log" 2>&1 && echo "electron exit: 0" || echo "electron exit: $?"; tail -n 80 "$RUNNER_TEMP/keychain-probe.log"
       - name: Run Electron end-to-end tests
         if: env.RUN == 'true' && env.SPECS == 'all' && env.E2E_PAUSED != 'true'
         run: ${{ matrix.wrap }} npm run test:e2e
