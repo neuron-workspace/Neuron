@@ -1,0 +1,58 @@
+{
+  "note": "Inputs are XChaCha20 keystreams under BLAKE2b-256(label) unless given as hex.",
+  "devices": [
+    {
+      "boxSeed": "cea5eec014534327615599b45a7533e2db047884967d77b120707c47af1d7d0b",
+      "signSeed": "26dcb94d51d6e506795959f64cb6258a2d0730ce50c8107a3653dd7d07ba9e11",
+      "boxPublicKey": "9865037f1662bd99da0a647e97f797f5161aacfa90455833cecf6fa65988087c",
+      "boxPrivateKey": "c26c8c4561fabd2a0c32247cba103024a3fc82efbe7dcf004aa39bf37cc72c88",
+      "signPublicKey": "291268b16f0fb391fefb3bd9a154223a3c0104abcb6f76b0539a66244100d2d4",
+      "deviceId": "8cc60d8501a036a027a7c7076aebfc9d",
+      "identity": "{\"format\":\"neuron-sync-device\",\"version\":1,\"deviceId\":\"8cc60d8501a036a027a7c7076aebfc9d\",\"boxPub\":\"9865037f1662bd99da0a647e97f797f5161aacfa90455833cecf6fa65988087c\",\"signPub\":\"291268b16f0fb391fefb3bd9a154223a3c0104abcb6f76b0539a66244100d2d4\"}"
+    },
+    {
+      "boxSeed": "87c3cff942c6a4faf848b5c73f3fcecad95c0da537c9bfc092cae144fb111fd1",
+      "signSeed": "659ee56f607d043726de9b7bbda6131dc14d337446b34c09062a8c3989122526",
+      "boxPublicKey": "880170550b0b4650c6a86a265b5a2b342edc8073da704300b47337d9f1875147",
+      "boxPrivateKey": "28a961d5169e5c97e1b11ebc40bdde8caa5a062a72f5f998628ee7c6c8da4c75",
+      "signPublicKey": "1a7d23c4263c3ad49db156cb66e8430adb05bb3ac35c7a35b27d17ac860fbb4d",
+      "deviceId": "658c02399723fcbf74c60e607eece7ad",
+      "identity": "{\"format\":\"neuron-sync-device\",\"version\":1,\"deviceId\":\"658c02399723fcbf74c60e607eece7ad\",\"boxPub\":\"880170550b0b4650c6a86a265b5a2b342edc8073da704300b47337d9f1875147\",\"signPub\":\"1a7d23c4263c3ad49db156cb66e8430adb05bb3ac35c7a35b27d17ac860fbb4d\"}"
+    }
+  ],
+  "workspaceKey": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "subkeys": {
+    "commit": "4bbc57e543f97e49904175e2a28eeae270d6b372a70a75beab0cec4897526310",
+    "blobid": "bcd476e989f6b07ab1faaf81eee8b47fcbd3acdf9e971e2b689d1cc96937bb8e",
+    "history": "a1e0f9f4e8927308de2fa5fefb49c78226b33da8067dc3486d30156c6aebda42",
+    "cdc": "89caeaca322de06316238497cd506714a1f913c1dadd95ab39ad2152de3253e7",
+    "blobkey": "15895a8a3d9d9a6ffb648c20f119cbab4b34b896898627cdebd78b7daa41acde"
+  },
+  "recovery": [
+    {
+      "key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "text": "0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-0000-H7",
+      "wrappingKey": "7c8407b29b79799eb61e97ad68bea60eca89c4100b05d5be1610542eb908fd75"
+    },
+    {
+      "key": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "text": "ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZG-W8",
+      "wrappingKey": "4b81c88af7d357e21072a3b017db1e738cf17d4f4c6fd00d0813cfd0fb8f54d3"
+    },
+    {
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "text": "000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-SC",
+      "wrappingKey": "5c710a108986a669d10d20149502d2b7c4c864bdfe4db70d5e8155a48b23efcc"
+    },
+    {
+      "key": "e3da340c68a597bdac571a7d34e0da92f56d1846d1d790c0ad8e787e2825c922",
+      "text": "WFD3-8338-MPBV-VB2Q-39YK-9R6T-JBTP-T626-T7BS-1G5D-HSW7-WA15-S4H0-VH",
+      "wrappingKey": "fa5c9d6405c9cb28efc8321493c9c10d9d46ae1550edcdd3f47ac80564454d37"
+    }
+  ],
+  "passphrase": {
+    "passphrase": "correct horse battery staple",
+    "salt": "ebbc31b6e8f8b02bc75511790a66925c",
+    "key": "03161c858e1eea85bfbe7f6592b253b56304d6e78e027169036db03da1de7e4a"
+  }
+}
