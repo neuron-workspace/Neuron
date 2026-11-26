@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, crashReporter, protocol, safeStorage, utilityProcess } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { decideOpen, settingsSectionOf, ownsPtyKey, ptyKey, type SettingsSection, type WindowKind } from './workspace-windows';
 import { autoUpdater } from 'electron-updater';
@@ -15,7 +15,10 @@ import { initHtmxViews, getViewServerOrigin, revokeAllViewSessions, APPROVALS_KE
 import { DEV_URL, isAppContent, isSameOrigin } from './navigation';
 import { resolveInside, realpathInside } from './repoPath';
 import { folderKey, keyNames, listedWorkspaces, nameOf, startupRecents, uniqueRecents, withName } from './recentRepos';
-import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry } from './journal';
+import { capturePreImage, configureWriteJournal, listJournalEntries, restoreJournalEntry, type WriteJournal } from './journal';
+import { SyncHost, type SyncConfig } from './sync/host';
+import { IGNORE_FILE } from './sync/ignore';
+import { createWorkspaceIO } from './sync/workspace-io';
 import { installApplicationMenu } from './menu';
 import { copyTemplate, hasNotes, listTemplates, templatesRoot } from './templates';
 import { configureUpdater } from './updater';
@@ -318,6 +321,7 @@ function bindRepo(entry: AppWindow, dir: string | null): void {
   disposeWindowPtys(entry.window.webContents.id);
   entry.repo = dir;
   setupWatcher(entry);
+  reconcileSync();
   if (!entry.window.isDestroyed()) entry.window.webContents.send('repository:changed', dir ? repoInfo(dir) : null);
 }
 
@@ -368,6 +372,7 @@ function setupWatcher(entry: AppWindow) {
   if (!dir) return;
 
   entry.watcher = watchWorkspace(dir, (event, relativePath) => {
+    syncHosts.get(folderKey(dir))?.host.touch();
     if (entry.window.isDestroyed()) return;
     // Text files too (JSON, YAML, a README): an open one follows its file on
     // disk the way a note does. The renderer keeps them out of its notes.
@@ -388,6 +393,85 @@ function setupWatcher(entry: AppWindow) {
       entry.window.webContents.send('workspace:watch-limit');
     },
   });
+}
+
+// ==========================================================================
+// Sync (Phase 1): one utility process per workspace that is both open and
+// configured (D41). Main stays the only workspace writer, through the save
+// queue and the journal's required-capture writes (D42).
+// ==========================================================================
+
+let writeJournal: WriteJournal | null = null;
+const syncHosts = new Map<string, { dir: string; host: SyncHost }>();
+
+/** A workspace folder's saved sync settings (the main-only `sync` key), or null. */
+function syncConfigOf(dir: string): SyncConfig | null {
+  const all = readSettings().sync;
+  const workspaces = all && typeof all === 'object' ? (all as { workspaces?: unknown }).workspaces : undefined;
+  const key = folderKey(dir);
+  const entry = workspaces && typeof workspaces === 'object' && Object.hasOwn(workspaces, key) ? (workspaces as Record<string, unknown>)[key] : undefined;
+  if (!entry || typeof entry !== 'object') return null;
+  const { workspaceId, store, label } = entry as Record<string, unknown>;
+  return typeof workspaceId === 'string' && typeof store === 'string' && typeof label === 'string' ? { workspaceId, store, label } : null;
+}
+
+/** `.neuron/sync-ignore`, or '' when there is none. Unreadable stops the pass: never sync what was meant to stay. */
+async function readSyncIgnore(dir: string): Promise<string> {
+  let handle: fs.promises.FileHandle;
+  try { handle = await openSafe(dir, path.join(dir, IGNORE_FILE)); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw error;
+  }
+  try {
+    if ((await handle.stat()).size > 1024 * 1024) throw new Error(`${IGNORE_FILE} is larger than 1 MB`);
+    return await handle.readFile('utf-8');
+  } finally { await handle.close(); }
+}
+
+function newSyncHost(dir: string, journal: WriteJournal): SyncHost {
+  const lower = dir.toLowerCase();
+  return new SyncHost({
+    spawn: () => {
+      const child = utilityProcess.fork(path.join(__dirname, 'sync', 'worker.js'), [], { serviceName: 'Neuron Sync' });
+      return {
+        port: { postMessage: (message) => child.postMessage(message), onMessage: (listener) => child.on('message', listener) },
+        kill: () => { child.kill(); },
+        onExit: (listener) => { child.on('exit', listener); },
+      };
+    },
+    io: createWorkspaceIO({ root: dir, journal, queue: saveQueue, trash: (file) => shell.trashItem(file) }),
+    readIgnore: () => readSyncIgnore(dir),
+    userData: app.getPath('userData'),
+    codec: secretCodec(),
+    // Q19: warn, do not block.
+    warning: CLOUD_HINTS.some((hint) => lower.includes(hint))
+      ? 'This workspace is inside a folder another service already syncs (such as OneDrive or Dropbox). Two services changing the same files can conflict; choose one.'
+      : undefined,
+    onStatus: (status) => {
+      if (status.state === 'alarm' || status.state === 'paused') void diagnostics.write({ level: 'warn', category: 'sync.status', message: `${status.state}: ${status.reason ?? ''}` });
+    },
+  });
+}
+
+/** Start sync for configured workspaces a window shows; stop it for the rest. */
+function reconcileSync(): void {
+  const journal = writeJournal;
+  if (!journal) return;
+  const shown = new Map<string, string>();
+  for (const entry of appWindows.values()) if (entry.kind === 'workspace' && entry.repo) shown.set(folderKey(entry.repo), entry.repo);
+  for (const [key, { dir, host }] of syncHosts) {
+    if (shown.has(key) && syncConfigOf(dir)) continue;
+    host.stop();
+    syncHosts.delete(key);
+  }
+  for (const [key, dir] of shown) {
+    if (syncHosts.has(key)) continue;
+    const config = syncConfigOf(dir);
+    if (!config) continue;
+    const host = newSyncHost(dir, journal);
+    syncHosts.set(key, { dir, host });
+    host.start(config).catch((error) => void diagnostics.write({ level: 'warn', category: 'sync.start', message: error instanceof Error ? error.message : String(error) }));
+  }
 }
 
 // ==========================================================================
@@ -480,6 +564,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
     entry.watcher?.close();
     entry.watcher = null;
     appWindows.delete(id);
+    reconcileSync();
     if (lastWorkspaceId === id) lastWorkspaceId = null;
     if (kind === 'settings') settingsOpener = null;
   });
@@ -489,6 +574,7 @@ function createWindow(kind: WindowKind = 'workspace', repo: string | null = save
   app.once('before-quit', killAllPtys);
 
   setupWatcher(entry);
+  reconcileSync();
   return entry;
 }
 
@@ -1635,7 +1721,8 @@ app.on('ready', () => {
     category: 'app.crash-dumps',
     message: `Native crash dumps (local only, never uploaded): ${crashDumps}`,
   });
-  configureWriteJournal(app.getPath('userData'));
+  writeJournal = configureWriteJournal(app.getPath('userData'));
+  app.once('before-quit', () => { for (const { host } of syncHosts.values()) host.stop(); syncHosts.clear(); });
   migrateConnectorSecrets();
   ensureDefaultRepo();
   const workspace = workspacePathFromArgv(process.argv, app.isPackaged, isInstallWorkspace);

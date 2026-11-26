@@ -475,8 +475,9 @@ filesystem validation, including `.git`, `GIT~<digits>`, ADS, reserved devices a
 warnings. Schema-invalid NUL and >1024-byte paths are refused before planning.
 
 The pure planner compares the projected tree with the local snapshot. More than 50 actual
-overwrites/deletes, **or** more than 20% of the eligible local workspace, pauses the entire
-plan. The report includes all affected paths and a hash token over the exact actions/content
+overwrites/deletes, **or** at least 10 that are more than 20% of the eligible local workspace,
+pauses the entire plan. (Without the 10-file floor every remote edit in a small workspace
+would ask.) The report includes all affected paths and a hash token over the exact actions/content
 refs/expected hashes. `approveMassChange(token)` approves only that plan; changed plans need
 new approval. No workspace mutation or blob staging occurs while awaiting approval.
 

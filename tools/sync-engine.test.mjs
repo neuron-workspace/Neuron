@@ -180,8 +180,7 @@ try {
     const f = await fixture(); const [a, b] = f.devices;
     a.workspace.edit('note.md', 'base'); await quiet(f, 2);
     a.workspace.edit('note.md', 'incoming'); await pass(a);
-    const r = await b.engine.syncOnce(); assert.equal(r.status, 'approval-required');
-    await b.engine.approveMassChange(r.massChange.token);
+    // The user types between the plan and the write: the first read of note.md in the pass.
     let reads = 0;
     b.workspace.beforeRead = (p) => { if (p === 'note.md' && ++reads === 1) { b.workspace.edit(p, 'late typing'); b.workspace.beforeRead = null; } };
     const result = await pass(b, false);

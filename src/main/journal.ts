@@ -368,8 +368,11 @@ export class WriteJournal {
       const label = device.replace(/[^a-zA-Z0-9_-]/g, '_') || 'device';
       const date = new Date(this.now()).toISOString().replace(/[:.]/g, '-');
       const base = path.join(path.dirname(file), `${name} (conflict ${label} ${date})`);
+      const published = this.publishNew(workspaceRoot, base, ext, data);
+      if (published) return { path: published, conflict };
       destination = `${base}${ext}`;
-      // Reserve a unique name: repeated conflicts must never replace one another.
+      // No hard links on this drive (FAT/exFAT): reserve a unique name instead.
+      // ponytail: a crash here can still leave the empty reservation; only on such drives.
       for (let n = 1; ; n++) {
         try {
           fs.closeSync(openSafeSync(workspaceRoot, destination, 'create'));
@@ -388,6 +391,40 @@ export class WriteJournal {
       throw error;
     }
     return { path: destination, conflict };
+  }
+
+  /**
+   * Write `data` under the first free `<base>[ (n)]<ext>` without ever replacing
+   * a file: a complete, fsynced temp file is hard-linked into place, so a crash
+   * leaves at most a `.tmp` (skipped by the walk and by sync), never an empty or
+   * partial copy. Null when the drive has no hard links.
+   */
+  private publishNew(workspaceRoot: string, base: string, ext: string, data: string | Buffer): string | null {
+    const temp = `${base}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+    const fd = openSafeSync(workspaceRoot, temp, 'create');
+    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+      for (let n = 0; n <= 1000; n++) {
+        const destination = n === 0 ? `${base}${ext}` : `${base} (${n})${ext}`;
+        checkSafePath(workspaceRoot, destination, true);
+        try {
+          fs.linkSync(temp, destination);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === 'EEXIST') continue;
+          if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EXDEV' || code === 'ENOSYS') return null;
+          throw error;
+        }
+        if (process.platform !== 'win32') {
+          const dir = fs.openSync(path.dirname(destination), 'r');
+          try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+        }
+        return destination;
+      }
+      throw Object.assign(new Error('No free conflict-copy name'), { code: 'EEXIST' });
+    } finally {
+      try { fs.unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
   }
 
   /**
