@@ -26,7 +26,7 @@ libsodium 1.0.22 (`libsodium-wrappers-sumo` 0.8.4, D40). Nothing is hand-rolled.
 | `NSYB` | Blob (one encrypted chunk) |
 | `NSYC` | Commit |
 | `NSYE` | Key envelope |
-| `NSYK` | Reserved for checkpoints (not defined in v1 Phase 1a) |
+| `NSYK` | Signed, encrypted checkpoint (§13) |
 
 **Decoder rules.** Each decoder checks the size first. Then come magic, version and length
 fields, then signature or authentication, then parsing. Each decoder returns a whole object or
@@ -313,6 +313,7 @@ The test reports these near-cut cases and asserts (a) for them, but not the ≤ 
 | `commit.json` | A commit |
 | `envelopes.json` | All three envelope kinds |
 | `chunker.json` | Gear table, and 5 MiB boundaries before and after a one-byte insert |
+| `checkpoint.json` | NSYK checkpoint, fixed nonce, encoded bytes and hash |
 
 - The tests recompute every output from fixed inputs and fail on any drift. They also decode
   the frozen bytes.
@@ -322,3 +323,192 @@ The test reports these near-cut cases and asserts (a) for them, but not the ≤ 
   secretstream header, sealed-box ephemeral keys) is made deterministic by the test alone,
   through libsodium's `getRandomValue` hook. Production code has no seam for it.
 - **Regenerating.** `--write-vectors` creates missing fixture files and never overwrites one.
+
+## 12. Folder-store layout and discovery (Phase 1 B1)
+
+Each complete object name must match exactly one expression below before I/O. Hex is
+lowercase. Listing prefixes are only the root, a kind directory, `keys/<epoch>/`,
+`log/<deviceId>/`, or `blobs/<2 hex>/`; a start-after cursor is a complete valid name.
+
+| Object | Anchored regex |
+| --- | --- |
+| Manifest | `^neuron-sync\.json$` |
+| Public device discovery | `^devices/[0-9a-f]{32}\.json$` |
+| Envelope | `^keys/[1-9][0-9]{0,9}/(?:[0-9a-f]{32}\|recovery\|passphrase)\.env$` |
+| Commit | `^log/[0-9a-f]{32}/[1-9][0-9]{0,15}\.c$` |
+| Checkpoint | `^checkpoints/[0-9a-f]{64}\.k$` |
+| Blob | `^blobs/[0-9a-f]{2}/[0-9a-f]{64}$` |
+| Pairing mailbox | `^mailbox/[0-9a-f]{32}\.m$` |
+
+The vertical bars in the envelope regex above are alternation (escaped only for the
+Markdown table). Epochs additionally must be ≤ 2³¹, seqs safe integers, and a blob's
+two-character directory must equal the first two characters of its ID. Mailbox is the
+only removable object kind. Unknown files and provider clutter are ignored. Symlinks
+and junctions in the store are refused. The folder must already exist.
+
+`neuron-sync.json` is a strict JSON object:
+`{"format":"neuron-sync","version":1,"workspaceId":"<32 hex>"}` (≤ 512 bytes).
+Every pass reads it before either local or remote mutation. A different workspace ID
+refuses the pass without writing even local state. Malformed or missing manifests also
+stop sync. Setup requires no recognised objects, reserves the manifest with put-once,
+then writes discovery, epoch-1 device/recovery envelopes and the genesis self-add commit.
+Interrupted setup is refused as an existing store; it is never silently overwritten.
+
+Discovery objects are **exactly** the public identity format in §4 (≤ 512 bytes).
+Discovery supplies only the signing key: its derived ID must match the name, then the
+commit signature is verified before decryption. Discovery carries no authority, and
+its `boxPub` is never used to authorise or address another device. A device's authoritative
+`boxPub`, signing key and label come from verified `add` operations. A discovery/add
+signing-key mismatch is an alarm. Each device publishes discovery before its first commit.
+
+**Write-once and drive support.** On opening, FolderStore probes a hard link using two
+temporary names. `EPERM`, `ENOTSUP`, `EXDEV` or `ENOSYS` produces typed `no-hard-links`:
+“This drive's file system can't guarantee sync safely (no hard links). Use an NTFS, APFS
+or ext4 drive, or a folder on another drive.” FAT/exFAT and unsupported shares are refused.
+Every publication writes a same-directory temporary file, fsyncs it, links it to the final
+name, and removes only the temporary name. `EEXIST` returns `exists` without replacing the
+object. Later link failures are errors. **There is no `wx` final-object fallback, no
+torn-object recovery, and no deletion of invalid/empty published objects.** A crash before
+linking leaves ignorable temporary clutter; after linking, the object is complete. An empty
+or malformed final object fails its decoder and stops sync. Directory fsync is used on
+POSIX; Windows exposes no equivalent directory-fsync guarantee through this Node API.
+
+## 13. Checkpoint (NSYK)
+
+The byte framing is §7 with magic `NSYK`, including the same canonical header keys and
+16 MiB limit. The signature covers the NSYK prefix, header, nonce and ciphertext; it is
+verified before header parsing or AEAD decryption. Encryption uses the epoch's `commit`
+subkey and a fresh 24-byte nonce; AD includes the NSYK prefix. Cross-decoding as NSYC fails.
+The checkpoint name is the BLAKE2b-256 hash of its complete encoded bytes.
+
+The strict zod body is:
+
+| Field | Meaning |
+| --- | --- |
+| `epoch` | Current registry epoch, equal to the header |
+| `tree` | ≤ 20,000 `[path, versions]` tuples, sorted by path; unique paths |
+| `registry` | ≤ 1024 `{deviceId, signPub, boxPub, label, active}` entries, sorted by device ID |
+| `covered` | ≤ 1024 `{deviceId, seq, hash}` HWMs, sorted by device ID, no duplicate devices |
+| `heads` | ≤ 64 unique commit hashes, sorted |
+
+Each tree version is `{content, epoch, hash, deviceId, label, time}`: `content` is §7's
+content ref or null (a tombstone); `epoch` is the content's producing epoch; `hash` is its
+commit hash. The device, label and time use §7 bounds. Each path has 1–1024 versions,
+ordered by commit hash. Retaining competing versions is necessary for deterministic
+keep-both and edit-beats-delete after loading a checkpoint. Paths remain tuples, avoiding
+prototype-sensitive object keys. The same path validation applies at materialisation.
+
+Write after 200 commits or 5 MiB of encoded log since this device's last checkpoint.
+Its header seq is the signer's covered HWM. A receiver finds its signer among keys from
+verified add operations, checks signature/hash/schema, verifies all covered commits, and
+compares the entire snapshot to their causal replay. The signer must be active at that
+coverage. The newest valid checkpoint covering a prefix of the canonical replay order is
+the tree starting point, then the remaining commits are replayed. Concurrent non-prefix
+checkpoints are verified but not used as starting points. A checkpoint never substitutes
+for missing log evidence. Previously verified checkpoints disappearing is rollback, even
+when an older checkpoint is still available. This first implementation still verifies and
+folds covered history to validate the snapshot; checkpoints do not yet avoid that work.
+
+## 14. Registry, epochs and replay
+
+The genesis commit authorises its self-add. Thereafter a previously unknown device may
+self-add only at its own seq 1, with exactly that one device operation and at the current
+verified epoch. **Knowledge of the current WK is the joining authority** (obtained from
+an authenticated device envelope or recovery key). Discovery alone is not authority.
+An already authorised device may add another device. Self-add at seq 2 or later is refused.
+An existing identity cannot be substituted or re-added after revocation. Remove de-authorises
+the named active device. Rotate must advance exactly to e+1. Commits under obsolete or
+unannounced epochs are refused. Newly received commits cannot bypass a rotation/removal
+already observed locally by claiming older parents. This batch emits only add operations.
+
+Recovery join opens the highest numbered recovery envelope first, then older recovery
+envelopes needed to verify history and retain WK_1 for CDC. The highest available epoch
+must match verified rotations. There is no unsigned “latest epoch” field in the manifest;
+an extra envelope cannot authorise a rotation. Missing historic keys stop the join. No
+history-envelope format is introduced in this batch. All recovery checks finish before
+publishing the joining device's discovery, envelope and seq-1 self-add.
+
+Replay is causal: all parents and seenVector dependencies precede a commit, each device
+advances by exactly one seq, and ties between ready commits use ascending commit hash
+(binary string order, not locale). Own seenVector must be seq−1, every parent and its vector
+must be covered, and a device's predecessor must be an ancestor. New sequence gaps wait;
+already seen disappearing entries, unavailable named causal evidence, vector regression,
+old bytes under a new seq, or changed bytes at an existing seq stop both directions. Timestamps
+are display data only. New incomplete commits defer the whole pass until all referenced
+blobs authenticate, match their IDs/sizes, and reconstruct the signed file hash.
+
+Local state stores all observed log-name/hash pairs as well as HWMs. It checks their
+consistency on every read. **Known commit bytes are re-read to check equivocation:** fetching
+only above the HWM cannot detect replacement at an old name. An alarm is persisted and every
+later pass refuses until the caller explicitly clears it; clearing does not forget HWMs.
+State corruption never resets state. Local JSON is schema/size checked (128 MiB cap), written
+via temp + fsync + rename, mode 0600 where supported, with POSIX directory fsync. Secret
+device/workspace keys are supplied by the caller and are not serialized into this JSON.
+Local-state rollback as a whole cannot be detected without an independent trust anchor.
+
+Before publication, the exact encrypted local commits are saved in a durable pending plan;
+before each commit put, `{seq, hash}` is persisted as in-flight. Restart reads and verifies
+an existing object at that seq as this device's exact prepared commit, then adopts it. It
+never regenerates that sequence with another nonce/body. A different hash is an alarm.
+The caller must enforce one process per device/state directory; instances reject overlapping
+passes. Remote put-once also detects a concurrent publisher instead of overwriting it.
+
+## 15. Planning, apply and exclusions
+
+Remote verification precedes local preparation; local commits name the newest verified
+heads. Changes carry the last synced content ID as base, so a previously offline local edit
+still conflicts with a remote edit even though its new commit acknowledges the remote head.
+Puts consume only the version matching their base; deletes consume only that exact base.
+Other edited versions survive. Equal content needs only a new local base, with no redundant
+upload. Renames are delete + add. For competing live versions, the larger commit hash keeps
+the original name. Other versions use:
+
+`<name> (conflict, <device label>, <yyyy-mm-dd> <8 hex of losing content ID>).<ext>`
+
+The date is UTC from the losing signed commit, never from the receiving clock. Labels/stems
+are sanitised and bounded; paths are NFC. If the result is unsafe/too long, a root-level
+`Recovered <path hash> (conflict, …)` is used. Name/case/folder collisions also produce safe
+conflict copies, with a full commit-hash fallback for colliding short IDs. If that fallback
+also collides, the change is explicitly reported as refused, with content retained in the
+verified log. No unsafe original path is written. Portable validation is stricter than host
+filesystem validation, including `.git`, `GIT~<digits>`, ADS, reserved devices and MAX_PATH
+warnings. Schema-invalid NUL and >1024-byte paths are refused before planning.
+
+The pure planner compares the projected tree with the local snapshot. More than 50 actual
+overwrites/deletes, **or** more than 20% of the eligible local workspace, pauses the entire
+plan. The report includes all affected paths and a hash token over the exact actions/content
+refs/expected hashes. `approveMassChange(token)` approves only that plan; changed plans need
+new approval. No workspace mutation or blob staging occurs while awaiting approval.
+
+After approval, immutable blobs are staged and read back (size and full authenticated content)
+**before workspace apply**, with commits still unpublished. This conservative ordering lets
+a durable pending plan recover file contents after a crash without storing plaintext buffers
+in JSON. Then WorkspaceIO performs all writes/removes, and commits are published last.
+Before each mutation the file is read again and its first-epoch keyed hash compared with the
+planned value. A late edit is preserved; incoming content goes to a conflict name. Deletes
+that race an edit are refused. Journal capture failures must preserve the original and return
+the alternate path with `conflict:true`; unsuccessful deletes remain pending local content.
+After successful I/O a saved cursor and content comparison make retries idempotent. Base
+metadata only adopts observed successful content; unresolved local changes force a rescan.
+
+Size/mtime are candidate hints; keyed hashes decide uploads. CDC uses WK_1. Files are at most
+100 MiB, trees/workspaces 20,000 paths, commits/checkpoints 16 MiB. Oversized local batches
+spill across commits with 15 MiB JSON headroom. Transfers are currently sequential (one at
+a time, below the maximum four). Retained tombstones count toward the 20,000-path limit;
+the engine stops at the cap until a later GC protocol can safely retire them.
+
+Default exclusions, always returned as “not synced” when reported by the injected walk:
+
+- Symlinks; files over 100 MiB; existing main `fileKind` classification `blocked`.
+- `*.tmp`, `~$*`, `.~*`, trailing `~`, and `.conflict-in-progress` names.
+- `.DS_Store`, `Thumbs.db`, `desktop.ini`; hidden entries per the existing walk rules.
+- `.neuron` is default-deny except shared `styles/`, `fragments/`, `templates/`, `views/`,
+  `manifests/`, `tables/`, `variables.json` and `config.json`. Thus `layout.json`, window
+  state, caches, journal, sync state, trust, and unclassified future device state are
+  excluded. This follows actual app writes: the layout, HTML-view styles, fragments,
+  templates, manifests, variables and config, and CSV table metadata.
+
+Completed conflict copies are ordinary shared files. Exclusions never produce remote deletes.
+The injected B2 walk must report exclusions it removes itself if those are to appear in the
+combined UI report; files absent from its listing cannot be diagnosed by this library.
+`.neuron/sync-ignore`, watchers, IPC, keychain wrapping and app wiring belong to B2/S1c.

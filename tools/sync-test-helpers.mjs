@@ -15,7 +15,7 @@ export const fixturesDir = join(root, 'tools', 'fixtures', 'sync-v1');
 export async function loadSync(tag) {
   const { outputFiles } = await build({
     stdin: {
-      contents: ['sodium', 'codec', 'keys', 'format', 'chunker'].map((m) => `export * from './src/main/sync/${m}';`).join('\n'),
+      contents: ['sodium', 'codec', 'keys', 'format', 'chunker', 'types', 'folder-store', 'state-store', 'planner', 'remote', 'engine'].map((m) => `export * from './src/main/sync/${m}';`).join('\n'),
       resolveDir: root,
       loader: 'ts',
     },
