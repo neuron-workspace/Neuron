@@ -10,7 +10,7 @@ import { deriveDeviceId, derivePassphraseKey, deriveRecoveryWrappingKey, deriveS
 import { Rng, sodium, systemRng } from './sodium';
 
 export const FORMAT_VERSION = 1;
-export const MAGIC = { blob: 'NSYB', commit: 'NSYC', envelope: 'NSYE' } as const;
+export const MAGIC = { blob: 'NSYB', commit: 'NSYC', envelope: 'NSYE', checkpoint: 'NSYK' } as const;
 const PREFIX_BYTES = 5; // 4-byte magic + 1-byte version
 
 const KiB = 1024;
@@ -233,7 +233,7 @@ const chunkRefSchema = z.strictObject({
   blobKey: hashSchema,
   size: z.number().int().min(1).max(LIMITS.chunkMax),
 });
-const contentSchema = z.strictObject({
+export const contentSchema = z.strictObject({
   chunks: z.array(chunkRefSchema).max(LIMITS.chunksPerFile),
   size: z.number().int().min(0).max(LIMITS.fileMax),
   sha: hashSchema,
@@ -244,7 +244,7 @@ const changeSchema = z.discriminatedUnion('kind', [
   z.strictObject({ path: pathSchema, kind: z.literal('delete'), base: hashSchema, content: z.null(), mode: z.literal('file') }),
 ]);
 
-const deviceOpSchema = z.discriminatedUnion('op', [
+export const deviceOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('add'), deviceId: deviceIdSchema, boxPub: hashSchema, signPub: hashSchema, label: labelSchema }),
   z.strictObject({ op: z.literal('remove'), deviceId: deviceIdSchema }),
   z.strictObject({ op: z.literal('rotate'), epoch: epochSchema }),
@@ -319,16 +319,19 @@ export interface CommitInput {
 }
 
 function encodeCommitWith(rng: Rng, input: CommitInput, workspaceKey: Uint8Array, signer: CommitSigner): Uint8Array {
+  return encodeSigned(rng, input, checkCommitBody(input.body, input.epoch), workspaceKey, signer, MAGIC.commit);
+}
+
+function encodeSigned(rng: Rng, input: Omit<CommitInput, 'body'>, body: unknown, workspaceKey: Uint8Array, signer: CommitSigner, magic: string): Uint8Array {
   const s = sodium();
   requireKey(workspaceKey, 'workspace key');
   const header = checkCommitHeader({
     format: 'neuron-sync', version: FORMAT_VERSION, workspaceId: input.workspaceId,
     epoch: input.epoch, deviceId: deriveDeviceId(signer.signPublicKey), seq: input.seq,
   });
-  const body = checkCommitBody(input.body, header.epoch);
   const headerBytes = canonicalHeader(COMMIT_HEADER_SPEC.map(({ key }) => [key, header[key]] as const));
   if (headerBytes.length > LIMITS.commitHeaderMax) fail('size', 'commit header is too large');
-  const ad = concatBytes(prefix(MAGIC.commit), u16be(headerBytes.length), headerBytes);
+  const ad = concatBytes(prefix(magic), u16be(headerBytes.length), headerBytes);
   const nonce = rng(NONCE_BYTES);
   const ciphertext = s.crypto_aead_xchacha20poly1305_ietf_encrypt(utf8(JSON.stringify(body)), ad, null, nonce, deriveSubkey(workspaceKey, 'commit'));
   const signed = concatBytes(ad, nonce, ciphertext);
@@ -361,9 +364,14 @@ export interface DecodedCommit {
 
 /** Signature first (against the caller's key), then header, then decrypt, then body schema. */
 export function decodeCommit(bytes: Uint8Array, expect: CommitExpectation): DecodedCommit {
+  const decoded = decodeSigned(bytes, expect, MAGIC.commit);
+  return { ...decoded, body: checkCommitBody(decoded.body, decoded.header.epoch) };
+}
+
+function decodeSigned(bytes: Uint8Array, expect: CommitExpectation, magic: string): { header: CommitHeader; body: unknown; hash: string } {
   requireBytes(bytes);
   if (bytes.length < COMMIT_MIN_BYTES || bytes.length > LIMITS.commitMax) fail('size', 'commit size is out of range');
-  checkPrefix(bytes, MAGIC.commit);
+  checkPrefix(bytes, magic);
   const headerLength = readU16be(bytes, PREFIX_BYTES);
   const headerEnd = PREFIX_BYTES + 2 + headerLength;
   if (headerLength < 2 || headerLength > LIMITS.commitHeaderMax) fail('size', 'commit header length is out of range');
@@ -403,7 +411,56 @@ export function decodeCommit(bytes: Uint8Array, expect: CommitExpectation): Deco
     if (error instanceof SyncFormatError) throw error;
     return fail('shape', 'commit body is not JSON');
   }
-  return { header, body: checkCommitBody(json, header.epoch), hash: commitHash(bytes) };
+  return { header, body: json, hash: commitHash(bytes) };
+}
+
+// Checkpoints retain competing versions, including tombstones, so loading one
+// cannot erase an edit/delete conflict. Paths are tuples: JSON object keys such
+// as __proto__ must never be interpreted as a prototype.
+export const treeVersionSchema = z.strictObject({
+  content: contentSchema.nullable(), epoch: epochSchema, hash: hashSchema,
+  deviceId: deviceIdSchema, label: labelSchema, time: safeCount,
+});
+export const registryEntrySchema = z.strictObject({
+  deviceId: deviceIdSchema, signPub: hashSchema, boxPub: hashSchema,
+  label: labelSchema, active: z.boolean(),
+});
+export const checkpointBodySchema = z.strictObject({
+  epoch: epochSchema,
+  tree: z.array(z.tuple([pathSchema, z.array(treeVersionSchema).min(1).max(1024)])).max(LIMITS.changes),
+  registry: z.array(registryEntrySchema).max(LIMITS.seenVector),
+  covered: z.array(z.strictObject({ deviceId: deviceIdSchema, seq: safeCount, hash: hashSchema })).max(LIMITS.seenVector),
+  heads: z.array(hashSchema).max(LIMITS.parents),
+});
+export type TreeVersion = z.infer<typeof treeVersionSchema>;
+export type RegistryEntry = z.infer<typeof registryEntrySchema>;
+export type CheckpointBody = z.infer<typeof checkpointBodySchema>;
+
+function checkCheckpointBody(value: unknown): CheckpointBody {
+  const parsed = checkpointBodySchema.safeParse(value);
+  if (!parsed.success) fail('shape', 'invalid checkpoint body');
+  const body = parsed.data;
+  for (const names of [body.tree.map(([p]) => p), body.registry.map((r) => r.deviceId), body.covered.map((c) => c.deviceId), body.heads]) {
+    if (new Set(names).size !== names.length) fail('shape', 'duplicate checkpoint entry');
+  }
+  for (const r of body.registry) if (deriveDeviceId(fromHex(r.signPub, 32)) !== r.deviceId) fail('shape', 'checkpoint device key mismatch');
+  return body;
+}
+
+function encodeCheckpointWith(rng: Rng, input: Omit<CommitInput, 'body'> & { body: CheckpointBody }, workspaceKey: Uint8Array, signer: CommitSigner): Uint8Array {
+  const body = checkCheckpointBody(input.body);
+  if (body.epoch !== input.epoch) fail('shape', 'checkpoint epoch mismatch');
+  return encodeSigned(rng, input, body, workspaceKey, signer, MAGIC.checkpoint);
+}
+
+export const encodeCheckpoint = (input: Omit<CommitInput, 'body'> & { body: CheckpointBody }, key: Uint8Array, signer: CommitSigner): Uint8Array =>
+  encodeCheckpointWith(systemRng, input, key, signer);
+
+export function decodeCheckpoint(bytes: Uint8Array, expect: CommitExpectation): { header: CommitHeader; body: CheckpointBody; hash: string } {
+  const decoded = decodeSigned(bytes, expect, MAGIC.checkpoint);
+  const body = checkCheckpointBody(decoded.body);
+  if (body.epoch !== decoded.header.epoch) fail('shape', 'checkpoint epoch mismatch');
+  return { ...decoded, body };
 }
 
 // --- envelopes ----------------------------------------------------------------
@@ -575,6 +632,7 @@ export const openPassphraseEnvelope = (bytes: Uint8Array, context: EnvelopeConte
  * reference this (tools/sync-crypto.test.mjs checks).
  */
 export const formatTestSeams = {
+  encodeCheckpointWith,
   encodeCommitWith,
   encodeRecoveryEnvelopeWith,
   encodePassphraseEnvelopeWith,
