@@ -135,5 +135,13 @@ export function planSync(local: Map<string, string>, base: Set<string>, targets:
   actions.sort((a, b) => Number(!!a.target) - Number(!!b.target) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const destructive = actions.filter((a) => a.expected !== null).map((a) => a.path);
   const token = commitHash(utf8(JSON.stringify(actions)));
-  return { actions, destructive, token, needsApproval: destructive.length > 50 || destructive.length > local.size * 0.2 };
+  return { actions, destructive, token, needsApproval: massChange(destructive.length, local.size) };
+}
+
+/**
+ * Q15: pause above 50 files, or above 20% of the workspace -- but the 20% rule
+ * only from 10 files, or every remote edit in a small workspace would ask.
+ */
+export function massChange(destructive: number, workspaceFiles: number): boolean {
+  return destructive > 50 || (destructive >= 10 && destructive > workspaceFiles * 0.2);
 }

@@ -5,6 +5,31 @@ import { z } from 'zod';
 import { SyncError } from './types';
 import { openSafeSync } from '../safe-fs';
 
+/** A small JSON file only this user can read (the wrapped sync keys), written atomically. */
+export function writePrivate(file: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = `${file}.${randomUUID()}.tmp`;
+  const fd = fs.openSync(temp, 'wx', 0o600);
+  try { fs.writeFileSync(fd, JSON.stringify(value)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.renameSync(temp, file); } catch (error) { fs.rmSync(temp, { force: true }); throw error; }
+}
+
+/** The JSON writePrivate wrote, or null when there is none. Damage stops sync; it is never reset. */
+export function readPrivate(file: string): unknown {
+  try {
+    // One handle for the size check and the read, so both see the same file.
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    try {
+      if (fs.fstatSync(fd).size > 64 * 1024) throw new SyncError('state', 'Sync key file is too large');
+      return JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } finally { fs.closeSync(fd); }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if (error instanceof SyncError) throw error;
+    throw new SyncError('state', `Sync key file is unreadable: ${path.basename(file)}`);
+  }
+}
+
 export interface StateIO {
   read<T>(schema: z.ZodType<T>): Promise<T | null>;
   write<T>(value: T, schema: z.ZodType<T>): Promise<void>;

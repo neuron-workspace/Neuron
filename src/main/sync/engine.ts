@@ -50,6 +50,8 @@ export interface SyncReport {
 export interface EngineOptions extends Credentials {
   store: ObjectStore; workspace: WorkspaceIO; state: StateIO; device: DeviceKeys;
   now?: () => number;
+  /** This device's own exclusions (.neuron/sync-ignore): a reason, or null. Never deletes elsewhere. */
+  ignore?: (path: string) => string | null;
 }
 
 /** One instance per device/workspace. The caller must also prevent two processes
@@ -76,6 +78,9 @@ export class SyncEngine {
   }
   private save(state: EngineState): Promise<void> { return this.options.state.write(state, engineStateSchema); }
   private localHash(bytes: Uint8Array | null): string | null { return bytes === null ? null : blobId(bytes, this.idKey); }
+
+  /** This device's .neuron/sync-ignore rules; main reads the file before each pass. */
+  setIgnore(ignore: EngineOptions['ignore']): void { this.options.ignore = ignore; }
 
   async approveMassChange(token: string): Promise<void> {
     if (this.busy) throw new SyncError('busy', 'A sync pass is running');
@@ -176,8 +181,9 @@ export class SyncEngine {
     const key = o.keys.get(view.epoch);
     if (!key) throw new SyncError('alarm', 'Current epoch key is unavailable');
     const idKey = deriveSubkey(key, 'blobid'), blobKey = deriveSubkey(key, 'blobkey');
+    const ignored = (p: string) => o.ignore?.(p) ?? null;
     for (const file of listing) {
-      const reason = excluded(file) ?? unsafePath(file.path);
+      const reason = excluded(file) ?? ignored(file.path) ?? unsafePath(file.path);
       if (reason) { report.notSynced.push({ path: file.path, reason }); excludedPaths.add(file.path); continue; }
       const old = base.get(file.path);
       // Metadata is a candidate filter only; destructive apply re-reads every file.
@@ -201,7 +207,7 @@ export class SyncEngine {
       changes.push({ path: file.path, kind: 'put', base: oldContent ?? (old ? remoteBase?.content?.sha ?? null : null), content, mode: 'file' });
     }
     for (const [p, old] of base) if (!hashes.has(p) && !excludedPaths.has(p)) {
-      const reason = excluded({ path: p, size: old.size, mtimeMs: old.mtimeMs }) ?? unsafePath(p);
+      const reason = excluded({ path: p, size: old.size, mtimeMs: old.mtimeMs }) ?? ignored(p) ?? unsafePath(p);
       if (reason) { excludedPaths.add(p); report.notSynced.push({ path: p, reason }); continue; }
       if (!remoteFiles.has(p)) continue;
       const ref = await this.findBaseContent(view, p, old.hash);
@@ -229,6 +235,11 @@ export class SyncEngine {
     const targetHashes = new Map<string, string>();
     const targets = projected.files;
     if (targets.size > LIMITS.changes) throw new SyncError('size', 'Projected workspace exceeds 20,000 files');
+    // Ignored here means neither sent nor received; it still exists on other devices.
+    for (const p of [...targets.keys()]) {
+      const reason = excludedPaths.has(p) ? null : ignored(p);
+      if (reason) { excludedPaths.add(p); report.notSynced.push({ path: p, reason }); }
+    }
     for (const p of excludedPaths) targets.delete(p);
     for (const [p, v] of targets) {
       // Content hashes from epoch 1 already use the stable local hash key.

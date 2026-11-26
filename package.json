@@ -89,7 +89,7 @@
     "test:keybindings": "node tools/keybindings.test.mjs",
     "test:palette": "node tools/palette.test.mjs",
     "test:text-encoding": "node tools/text-encoding.test.mjs",
-    "test:sync": "node tools/sync-crypto.test.mjs && node tools/sync-chunker.test.mjs && node tools/sync-engine.test.mjs",
+    "test:sync": "node tools/sync-crypto.test.mjs && node tools/sync-chunker.test.mjs && node tools/sync-engine.test.mjs && node tools/sync-wiring.test.mjs",
     "test:callout-kind": "node tools/callout-kind.test.mjs && node tools/mdx-components.test.mjs && node tools/mdx-security.test.mjs",
     "test:workspace-windows": "node tools/workspace-windows.test.mjs",
     "test:connectors": "node tools/connectors.test.mjs",

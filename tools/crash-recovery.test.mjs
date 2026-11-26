@@ -18,7 +18,7 @@ const busy = () => Object.assign(new Error('rename blocked'), { code: 'EPERM' })
 let controller;
 const descriptors = new Set();
 const handles = new Set();
-const syncOps = new Set(['openSync', 'readFileSync', 'writeFileSync', 'fsyncSync', 'renameSync', 'unlinkSync', 'mkdirSync', 'readdirSync']);
+const syncOps = new Set(['openSync', 'readFileSync', 'writeFileSync', 'fsyncSync', 'renameSync', 'linkSync', 'unlinkSync', 'mkdirSync', 'readdirSync']);
 const asyncOps = new Set(['open', 'rename', 'unlink']);
 function point(label) {
   if (!controller) return;
@@ -72,6 +72,7 @@ const injected = new Proxy(fs, { get(target, key) {
     live();
     const label = key === 'openSync' ? `openSync:${args[1] & fs.constants.O_CREAT ? 'create' : 'read'}` : key;
     if (syncOps.has(key)) point(`${label}:before`);
+    if (key === 'linkSync' && controller?.noLinks) throw Object.assign(new Error('no hard links'), { code: 'EPERM' });
     let result;
     if (key === 'writeFileSync') {
       const bytes = Buffer.from(args[1]);
@@ -255,6 +256,8 @@ try {
           else { assert.equal(result.conflict, action === 'conflict'); assert.deepEqual(fs.readFileSync(result.path), incoming); }
         }
         complete(fs.readFileSync(f.file), `${action} ${at}`);
+        // No crash point may leave an empty or partial conflict copy beside the file.
+        for (const name of fs.readdirSync(f.ws)) if (name.includes('(conflict') && !name.endsWith('.tmp')) assert.deepEqual(fs.readFileSync(join(f.ws, name)), incoming, `${action} ${at}: ${name}`);
         if (action.startsWith('capture') || action === 'conflict') assert.deepEqual(fs.readFileSync(f.file), old);
         // Before restore's atomic rename, the current bytes must be intact.
         if (action === 'restore' && !trace.includes('renameSync:after')) assert.deepEqual(fs.readFileSync(f.file), incoming);
@@ -285,25 +288,30 @@ try {
     assert.equal(fs.readdirSync(f.ws).some(name => name.endsWith('.tmp')), false);
     checkEntries(f);
   });
-  await test('conflict copy publication never leaves an empty reservation after a crash', { skip: 'Known gap: writeUnattended reserves the conflict name with an empty file before atomic replacement. A process crash can leave that empty sibling; the original remains intact. Fix needs atomic no-replace publication or persisted reservation recovery.' }, async () => {
+  await test('conflict copies are published by hard link; repeated conflicts never replace one another', async () => {
     const f = fixture();
     fs.rmdirSync(f.ud); fs.writeFileSync(f.ud, 'unwritable store');
     controller = { trace: [], at: Infinity, dead: false };
-    // The first create is the conflict name reservation; stop after it exists.
-    // Find that boundary from a completed run, then replay in a fresh fixture.
-    await f.journal.writeUnattended(f.ws, f.file, incoming, 'device');
-    const at = controller.trace.indexOf('openSync:create:after') + 1;
-    assert.ok(at > 0);
+    const first = await f.journal.writeUnattended(f.ws, f.file, incoming, 'device');
+    const second = await f.journal.writeUnattended(f.ws, f.file, Buffer.from('second'), 'device');
+    assert.ok(controller.trace.includes('linkSync:after'), 'published by link');
+    assert.notEqual(first.path, second.path);
+    assert.deepEqual(fs.readFileSync(first.path), incoming);
+    assert.deepEqual(fs.readFileSync(second.path), Buffer.from('second'));
+    assert.deepEqual(fs.readFileSync(f.file), old);
+    assert.equal(fs.readdirSync(f.ws).some(name => name.endsWith('.tmp')), false);
     await reboot();
-    const broken = fixture();
-    fs.rmdirSync(broken.ud); fs.writeFileSync(broken.ud, 'unwritable store');
-    controller = { trace: [], at, dead: false };
-    await broken.journal.writeUnattended(broken.ws, broken.file, incoming, 'device').catch(() => {});
-    assert.equal(controller.dead, true);
+  });
+  await test('a drive without hard links falls back to a reserved name (known residual: crash leaves it empty)', async () => {
+    const f = fixture();
+    fs.rmdirSync(f.ud); fs.writeFileSync(f.ud, 'unwritable store');
+    controller = { trace: [], at: Infinity, dead: false, noLinks: true };
+    const result = await f.journal.writeUnattended(f.ws, f.file, incoming, 'device');
+    assert.equal(result.conflict, true);
+    assert.deepEqual(fs.readFileSync(result.path), incoming);
+    assert.deepEqual(fs.readFileSync(f.file), old);
+    assert.equal(fs.readdirSync(f.ws).some(name => name.endsWith('.tmp')), false);
     await reboot();
-    const copies = fs.readdirSync(broken.ws).filter(name => name.includes('(conflict') && !name.endsWith('.tmp'));
-    assert.ok(copies.length > 0);
-    for (const name of copies) assert.deepEqual(fs.readFileSync(join(broken.ws, name)), incoming);
   });
   console.log(`crash-recovery: ${cases} interruption/restart cases checked`);
 } finally {
